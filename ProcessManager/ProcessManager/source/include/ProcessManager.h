@@ -1,0 +1,48 @@
+#pragma once 
+#include <IProcessManager.h>
+#include <Process.h>
+#include <ProcessManagerParams.h>
+#include <zmq.hpp>
+#include <ProcessManagerCommands.h>
+
+namespace process_manager
+{
+	class ProcessManager : public IProcessManager
+	{
+	public:
+		int StartUp();
+
+		~ProcessManager();
+		ProcessManager(std::unique_ptr<ProcessManagerParams> args);
+		ProcessManager(ProcessManager&&) = default;
+		ProcessManager(const ProcessManager&) = delete;
+		ProcessManager& operator=(const ProcessManager&) = delete;
+
+		process_manager::SimpleHealthReportStruct GetSimplifiedHealthReport();
+
+		void Run() override;
+		int TearDown() override;
+		legacy::object::ObjectType GetType() const override;
+
+		static bool SortByDependencies(std::vector<std::string>& err, std::vector<process_manager::Process>& pList);
+		static std::unique_ptr<ProcessManagerParams> GenerateConfig();
+	private:
+		void StopAll();
+		bool ApplyCommandServerMessage(const ProcessManagerCommandStruct& message);
+		bool ProcessMessage(const std::vector<zmq::message_t>& messages);
+		bool CheckProcessConfig(std::vector<std::string>& err) const;
+		bool StartSequentialAsync() const;
+		std::vector<Process>::iterator GetProcess(std::string_view processName) const;
+		process_manager::RuntimeStateEnum GetProcessRuntimeState(std::string_view processName) const;
+
+
+		std::unique_ptr<ProcessManagerParams> processParams;
+		std::vector<std::string> errorList;
+		bool enabled = true;
+
+		zmq::context_t zmqContext;
+		zmq::socket_t listener;
+		zmq::socket_t statusPublisher;
+		zmq::socket_t simpleHealthPublisher;
+	};
+}
