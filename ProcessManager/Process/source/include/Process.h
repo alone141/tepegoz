@@ -41,6 +41,8 @@ namespace process_manager
 		bool NeedsRestart() const;
 		bool NeedsStart() const;
 		bool IsWorkingManually() const;
+		// A process with this pid, process group and cgroup belongs to the service.
+		bool IsMember(pid_t pid, pid_t pgid, const std::filesystem::path& cgroup) const;
 
 		void CheckConfig(std::vector<std::string>& errorList) const noexcept;
 		void CheckHeartbeat();

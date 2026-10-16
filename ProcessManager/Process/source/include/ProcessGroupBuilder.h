@@ -1,6 +1,7 @@
 #pragma once
 #include <iostream>
 #include <filesystem>
+#include <sys/types.h>
 
 //meliksahs bu buraya olmadi sanki
 namespace process_manager
@@ -12,6 +13,7 @@ namespace process_manager
         ProcessGroupBuilder& operator=(const ProcessGroupBuilder&) = delete;
 
         static ProcessGroupBuilder& GetInstance();
+        static std::filesystem::path GetCgroupPathOf(pid_t pid); // its cgroup v2 directory; empty when unknown
         std::filesystem::path GetParentGroupPath();
         void GenerateGroups() const;
     private:

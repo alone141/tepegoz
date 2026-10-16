@@ -2,7 +2,8 @@
 """
 Mock process-manager for testing the GUI.
 
-PUB  (bind)  – broadcasts array of DetailedHealthReport
+PUB  (bind)  – broadcasts array of DetailedHealthReport, GPU use included
+               (--no-gpu: as a manager on a machine without the NVIDIA driver)
 ROUTER (bind) – accepts DEALER commands with:
       identity = b"GUI" (or the CLI's b"PMC")
       frame0   = b"BPM"
@@ -28,6 +29,7 @@ from health_structs import (
     CommandEnum,
     CommandMessage,
     DetailedHealthReport,
+    GpuState,
     REPORT_SIZE,
     RuntimeState,
     make_command_message,   # only for size check
@@ -42,6 +44,11 @@ PROCESSES = [
     "telemetry_bridge",
     "logger_daemon",
 ]
+# The processes that use a GPU: (VRAM, utilization range in percent).
+GPU_USERS = {
+    "vision_pipeline": (2_100 * 1024 * 1024, (35, 90)),
+    "sensor_fusion":   (600 * 1024 * 1024, (5, 30)),
+}
 
 
 def make_report(
@@ -55,6 +62,9 @@ def make_report(
     missed: int,
     restarts: int,
     snap_ns: int,
+    gpu_state: GpuState = GpuState.SAMPLED,
+    gpu_util: int = 0,
+    vram: int = 0,
 ) -> DetailedHealthReport:
     r = DetailedHealthReport()
     name_bytes = name.encode("utf-8")[:63]
@@ -68,6 +78,9 @@ def make_report(
     r.runtimeHealth.missedBeats = missed
     r.runtimeHealth.restartCount = restarts
     r.snapshotTime = snap_ns
+    r.gpuUsage.state = int(gpu_state)
+    r.gpuUsage.utilizationPercent = gpu_util
+    r.gpuUsage.memoryUsageInBytes = vram
     return r
 
 
@@ -88,6 +101,10 @@ def main():
     parser.add_argument("--pub", default="tcp://*:6667")
     parser.add_argument("--router", default="tcp://*:5557")
     parser.add_argument("--interval", type=float, default=0.5)
+    parser.add_argument(
+        "--no-gpu", action="store_true",
+        help="report that the manager could not load the NVIDIA driver library",
+    )
     args = parser.parse_args()
 
     ctx = zmq.Context()
@@ -234,6 +251,12 @@ def main():
             ):
                 last_seen = start_times[name]
 
+            gpu_util = vram = 0
+            if name in GPU_USERS and states[name] == RuntimeState.RUNNING:
+                vram_base, (low, high) = GPU_USERS[name]
+                vram = vram_base + random.randint(-50, 50) * 1024 * 1024
+                gpu_util = random.randint(low, high)
+
             rep = make_report(
                 name=name,
                 pid=pids[name],
@@ -245,6 +268,9 @@ def main():
                 missed=missed[name],
                 restarts=restarts[name],
                 snap_ns=now,
+                gpu_state=GpuState.NO_DRIVER if args.no_gpu else GpuState.SAMPLED,
+                gpu_util=gpu_util,
+                vram=vram,
             )
             reports.append(rep)
 

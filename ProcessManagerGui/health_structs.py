@@ -4,9 +4,11 @@ Binary layouts matching the C++ side.
 Packing: _pack_ = 8  (8-byte alignment)
 
 === Health reports (ZMQ SUB) ===
-Message body = ARRAY of DetailedHealthReport (128 bytes each with pack=8)
+Message body = ARRAY of DetailedHealthReport (144 bytes each with pack=8)
   - raw concatenation  OR
   - [uint32_t count LE] + array
+Each report ends with the GPU use the manager sampled through NVML (GpuUsage).
+Managers from before GPU reporting sent 128-byte reports.
 
 === Commands (ZMQ DEALER → ROUTER) ===
 Identity set to b"GUI" (GUI_IDENTITY); the C++ CLI uses b"PMC"
@@ -49,6 +51,23 @@ class RuntimeState(IntEnum):
             return cls.UNKNOWN
 
 
+class GpuState(IntEnum):
+    """Wire values must match the C++ GpuUsageStateEnum."""
+    NOT_SAMPLED = 0  # the manager has not sampled the GPUs yet
+    SAMPLED     = 1
+    NO_DRIVER   = 2  # libnvidia-ml.so.1 could not be loaded
+    NO_DEVICE   = 3  # NVML finds no GPU
+    FAILED      = 4  # NVML failed; the manager's journal has its error code
+    STALLED     = 5  # no new sample for a while: a driver call is not returning
+
+    @classmethod
+    def from_byte(cls, value: int) -> "GpuState":
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.NOT_SAMPLED  # a state this GUI does not know: no data
+
+
 class RuntimeHealth(ctypes.Structure):
     _pack_ = 8
     _fields_ = [
@@ -57,6 +76,17 @@ class RuntimeHealth(ctypes.Structure):
         ("lastSeen",     ctypes.c_int64),   # ns
         ("missedBeats",  ctypes.c_int32),
         ("restartCount", ctypes.c_int32),
+    ]
+
+
+class GpuUsage(ctypes.Structure):
+    """GPU use of every process of a service, on every GPU."""
+    _pack_ = 8
+    _fields_ = [
+        ("memoryUsageInBytes", ctypes.c_uint64),
+        ("utilizationPercent", ctypes.c_int32),  # summed over GPUs (200: two busy GPUs); -1 unknown
+        ("state",              ctypes.c_uint8),  # GpuState; the other fields count only when SAMPLED
+        ("reserved",           ctypes.c_uint8 * 3),
     ]
 
 
@@ -69,11 +99,13 @@ class DetailedHealthReport(ctypes.Structure):
         ("cpuUsageInUsec",     ctypes.c_uint64),
         ("runtimeHealth",      RuntimeHealth),
         ("snapshotTime",       ctypes.c_int64),  # ns
+        ("gpuUsage",           GpuUsage),
     ]
 
 
 REPORT_SIZE = ctypes.sizeof(DetailedHealthReport)
-assert REPORT_SIZE == 128, f"Unexpected REPORT_SIZE={REPORT_SIZE}"
+assert REPORT_SIZE == 144, f"Unexpected REPORT_SIZE={REPORT_SIZE}"
+LEGACY_REPORT_SIZE = 128  # managers from before GPU reporting
 
 
 def parse_health_reports(data: bytes) -> List[DetailedHealthReport]:
@@ -97,12 +129,19 @@ def parse_health_reports(data: bytes) -> List[DetailedHealthReport]:
         if n > 0:
             return _unpack_array(data, n)
 
+    legacy = ""
+    if len(data) % LEGACY_REPORT_SIZE == 0:
+        legacy = (
+            f"\n  {len(data) // LEGACY_REPORT_SIZE} reports of {LEGACY_REPORT_SIZE} bytes fit: "
+            "the process manager predates GPU reporting and needs updating"
+        )
     raise ValueError(
         f"Cannot parse health-report array.\n"
         f"  received length = {len(data)} bytes\n"
         f"  REPORT_SIZE     = {REPORT_SIZE}\n"
         f"  remainder       = {len(data) % REPORT_SIZE}\n"
         f"  first 32 bytes  = {data[:32].hex(' ')}"
+        f"{legacy}"
     )
 
 
@@ -116,8 +155,12 @@ def _unpack_array(data: bytes, n: int) -> List[DetailedHealthReport]:
 
 
 def report_to_dict(report: DetailedHealthReport) -> dict:
+    """The report's fields; gpuUtilPct and vramBytes are None without GPU data."""
     name = report.processName.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
     rh = report.runtimeHealth
+    gpu = report.gpuUsage
+    gpu_state = GpuState.from_byte(gpu.state)
+    sampled = gpu_state == GpuState.SAMPLED
     return {
         "processName":        name,
         "pid":                int(report.pid),
@@ -129,6 +172,10 @@ def report_to_dict(report: DetailedHealthReport) -> dict:
         "missedBeats":        int(rh.missedBeats),
         "restartCount":       int(rh.restartCount),
         "snapshotTime":       int(report.snapshotTime),
+        "gpuState":           gpu_state,
+        "gpuUtilPct":         float(gpu.utilizationPercent)
+                              if sampled and gpu.utilizationPercent >= 0 else None,
+        "vramBytes":          int(gpu.memoryUsageInBytes) if sampled else None,
     }
 
 

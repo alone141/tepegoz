@@ -8,7 +8,8 @@ DEALER wire format (exactly as specified by you):
     send(CommandMessage)          # packed: uint8 cmd + char[32] name + char[32] args
     reply: [b"BPM"][b"1" | b"0"]  # accepted / refused
 
-SUB: receives array of DetailedHealthReport (raw or length-prefixed)
+SUB: receives array of DetailedHealthReport (raw or length-prefixed). The
+manager samples GPU use itself and sends it in each report.
 
 Layout: the sidebar lists the manager unit and every reported process; the
 pane on the right shows the selection — metric tiles, a state band and the
@@ -53,11 +54,11 @@ from PyQt6.QtWidgets import (
 from health_structs import (
     GUI_IDENTITY,
     CommandEnum,
+    GpuState,
     make_command_message,
     parse_health_reports,
     report_to_dict,
 )
-from gpu_sampler import GpuSampler, GpuProcessUsage
 from journal_view import (  # noqa: F401  re-exported: former home of these names
     JournalView,
     NO_PID_COLOR,
@@ -111,9 +112,17 @@ _color_for_pid = color_for_pid  # former name
 COMMAND_SEND_TIMEOUT_SEC = 3.0
 # A sent command still waiting for the manager's reply after this is forgotten.
 REPLY_TIMEOUT_SEC = 10.0
-# One worker round makes at most journalctl (5 s) or two nvidia-smi calls (3 s each), so
-# waiting this long never has to fall back to QThread.terminate() in practice.
+# One worker round makes at most one journalctl call (5 s), so waiting this long
+# never has to fall back to QThread.terminate() in practice.
 WORKER_STOP_TIMEOUT_MS = 8000
+# Tooltip of the GPU indicator for each state without GPU data.
+GPU_STATE_TEXT = {
+    GpuState.NOT_SAMPLED: "The process manager has not sampled the GPUs yet",
+    GpuState.NO_DRIVER: "The process manager could not load the NVIDIA driver library (libnvidia-ml.so.1)",
+    GpuState.NO_DEVICE: "The process manager finds no NVIDIA GPU",
+    GpuState.FAILED: "GPU sampling failed in the process manager; its journal has the NVML error",
+    GpuState.STALLED: "The process manager's GPU sampling stopped: a driver call is not returning",
+}
 
 
 def stop_workers(
@@ -348,7 +357,7 @@ class ZmqWorker(QObject):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Systemd / GPU / cgroup workers
+# Systemd / cgroup workers
 # ──────────────────────────────────────────────────────────────────────────────
 
 class SystemdLogWorker(QObject):
@@ -382,47 +391,6 @@ class SystemdLogWorker(QObject):
             while self._running and slept < interval_ms:
                 QThread.msleep(100)
                 slept += 100
-        self.finished.emit()
-
-    def stop(self):
-        self._running = False
-
-
-class GpuSampleWorker(QObject):
-    """nvidia-smi sampling off the UI thread."""
-
-    sampled = pyqtSignal(object, object, bool)  # map, error_or_None, available
-    finished = pyqtSignal()
-
-    def __init__(self, parent: Optional[QObject] = None):
-        super().__init__(parent)
-        self._running = False
-        self._sampler: Optional[GpuSampler] = None
-
-    @pyqtSlot()
-    def start(self):
-        self._running = True
-        self._sampler = GpuSampler()
-        self._sampler.init()
-        while self._running:
-            try:
-                if not self._sampler.available():
-                    self.sampled.emit({}, self._sampler.last_error(), False)
-                else:
-                    result = self._sampler.sample()
-                    err = None
-                    if self._sampler.last_error() and not result:
-                        err = self._sampler.last_error()
-                        result = {}
-                    self.sampled.emit(result, err, True)
-            except Exception as e:
-                self.sampled.emit({}, str(e), False)
-            slept = 0
-            while self._running and slept < 1000:
-                QThread.msleep(100)
-                slept += 100
-        if self._sampler:
-            self._sampler.shutdown()
         self.finished.emit()
 
     def stop(self):
@@ -806,14 +774,12 @@ class ProcessMonitorWindow(QMainWindow):
 
         self._prev: Dict[str, Tuple[int, int]] = {}   # name → (cpu_usec, snap_ns)
         self._current: Dict[str, dict] = {}
-        self._gpu_by_pid: Dict[int, GpuProcessUsage] = {}
         self._log_windows: Dict[str, ProcessLogWindow] = {}
         self._cgroup_members: dict = {}
         self._feed = FeedMonitor()
         self._stale = False  # the pages show data that stopped updating
         self._link_status: Optional[Tuple[str, str, str]] = None
-        self._last_gpu_error: Optional[str] = None
-        self._gpu_available = False
+        self._gpu_state: Optional[GpuState] = None  # from the last reports; None before any
         self._usage = UsageHistory()  # recorded from the start, for the graphs
         self._usage_window: Optional[UsageGraphWindow] = None
         self._auto_select = True  # show the first process once reports arrive
@@ -825,7 +791,6 @@ class ProcessMonitorWindow(QMainWindow):
         self._feed_timer.start()
         self._start_zmq_worker()
         self._start_systemd_worker()
-        self._start_gpu_worker()
         self._start_cgroup_members_worker()
         self._start_detail_journal_worker()
 
@@ -857,7 +822,7 @@ class ProcessMonitorWindow(QMainWindow):
 
         self.lbl_gpu = QLabel("GPU …")
         toolbar.addWidget(self.lbl_gpu)
-        self._update_gpu_status_label(False, "GPU sampler starting…")
+        self._show_gpu_state(None)
 
         self.btn_connection = QToolButton()
         self.btn_connection.setText("Connection")
@@ -985,9 +950,7 @@ class ProcessMonitorWindow(QMainWindow):
         self._auto_select = False
         self.stack.setCurrentWidget(self.detail)
         report = self._current.get(name)
-        self.detail.set_process(
-            name, report, self._gpu_for(report), self._cgroup_members.get(name) or []
-        )
+        self.detail.set_process(name, report, self._cgroup_members.get(name) or [])
         self.detail.set_stale(self._stale)
         worker = getattr(self, "detail_journal_worker", None)
         if worker is not None:
@@ -1000,18 +963,13 @@ class ProcessMonitorWindow(QMainWindow):
         if worker is not None:
             worker.set_process("")  # nothing to tail while the manager is shown
 
-    def _gpu_for(self, report: Optional[dict]) -> Optional[GpuProcessUsage]:
-        if not report or (report.get("pid") or 0) <= 0:  # -1: no process
-            return None
-        return self._gpu_by_pid.get(report["pid"])
-
     def _refresh_detail(self) -> None:
         name = self.detail.name
         if not name or self.stack.currentWidget() is not self.detail:
             return
         report = self._current.get(name)
         if report is not None:
-            self.detail.update_report(report, self._gpu_for(report))
+            self.detail.update_report(report)
 
     def _apply_stale(self) -> None:
         self.sidebar.set_stale(self._stale)
@@ -1069,7 +1027,7 @@ class ProcessMonitorWindow(QMainWindow):
         worker = getattr(self, worker_attr, None)
         thread = getattr(self, thread_attr, None)
         if worker is not None:
-            for name in ("sampled", "snapshot_ready", "members_ready", "lines_ready"):
+            for name in ("snapshot_ready", "members_ready", "lines_ready"):
                 signal = getattr(worker, name, None)
                 if signal is None:
                     continue
@@ -1088,14 +1046,6 @@ class ProcessMonitorWindow(QMainWindow):
         self.cgroup_members_thread.started.connect(self.cgroup_members_worker.start)
         self.cgroup_members_worker.members_ready.connect(self._on_cgroup_members)
         self.cgroup_members_thread.start()
-
-    def _start_gpu_worker(self):
-        self.gpu_thread = QThread()
-        self.gpu_worker = GpuSampleWorker()
-        self.gpu_worker.moveToThread(self.gpu_thread)
-        self.gpu_thread.started.connect(self.gpu_worker.start)
-        self.gpu_worker.sampled.connect(self._on_gpu_sampled)
-        self.gpu_thread.start()
 
     def _start_systemd_worker(self):
         self.systemd_thread = QThread()
@@ -1141,6 +1091,8 @@ class ProcessMonitorWindow(QMainWindow):
         for gone in set(self._current) - set(new_current):
             self._prev.pop(gone, None)
         self._current = new_current
+        if reports:  # one GPU sample for all of them; an empty array says nothing
+            self._on_gpu_state(reports[0]["gpuState"])
         if getattr(self, "cgroup_members_worker", None):
             self.cgroup_members_worker.set_names(sorted(self._current.keys()))
 
@@ -1167,12 +1119,6 @@ class ProcessMonitorWindow(QMainWindow):
     def _record_usage(self, now: float) -> None:
         """Sample every process for the usage graphs and the state band."""
         for name, r in self._current.items():
-            gpu = self._gpu_by_pid.get(r["pid"]) if r["pid"] else None
-            if self._gpu_available:  # not on the GPU list: using none of it
-                gpu_pct = gpu.util_pct if gpu else 0.0
-                vram = gpu.vram_bytes if gpu else 0
-            else:
-                gpu_pct = vram = None
             state = r.get("state")
             self._usage.add(
                 name,
@@ -1180,8 +1126,8 @@ class ProcessMonitorWindow(QMainWindow):
                     now,
                     r["_cpu_pct"],
                     r["memoryUsageInBytes"],
-                    gpu_pct,
-                    vram,
+                    r.get("gpuUtilPct"),  # None: the manager sent no GPU data
+                    r.get("vramBytes"),
                     None if state is None else int(state),
                 ),
             )
@@ -1234,35 +1180,32 @@ class ProcessMonitorWindow(QMainWindow):
     def _on_log(self, msg: str):
         self._show_status(msg)
 
-    def _update_gpu_status_label(
-        self, available: bool, err: Optional[str] = None
-    ) -> None:
-        if available:
-            self.lbl_gpu.setText("GPU ok")
-            self.lbl_gpu.setStyleSheet(pill_style("#4caf50"))
-            self.lbl_gpu.setToolTip("nvidia-smi sampling active")
+    def _show_gpu_state(self, state: Optional[GpuState]) -> None:
+        """The GPU indicator for the manager's GPU state (None: no report yet)."""
+        if state == GpuState.SAMPLED:
+            text, color = "GPU ok", "#4caf50"
+            tip = "GPU use sampled by the process manager through NVML"
+        elif state is None or state == GpuState.NOT_SAMPLED:
+            text, color = "GPU …", "orange"
+            tip = (
+                "Waiting for the process manager's first report"
+                if state is None else GPU_STATE_TEXT[state]
+            )
         else:
-            self.lbl_gpu.setText("GPU unavailable")
-            self.lbl_gpu.setStyleSheet(pill_style("#f44336"))
-            self.lbl_gpu.setToolTip(err or "nvidia-smi unavailable")
+            text, color = "GPU unavailable", "#f44336"
+            tip = GPU_STATE_TEXT.get(state, "The process manager sends no GPU data")
+        self.lbl_gpu.setText(text)
+        self.lbl_gpu.setStyleSheet(pill_style(color))
+        self.lbl_gpu.setToolTip(tip)
 
-    @pyqtSlot(object, object, bool)
-    def _on_gpu_sampled(self, result, err, available: bool):
-        new_map: Dict[int, GpuProcessUsage] = result if result else {}
-        failed = bool(err) and not new_map
-        if failed:
-            self._gpu_by_pid = {}
-            # Samples come every second; post an error once, not each time.
-            if err != self._last_gpu_error:
-                self._show_status(f"GPU sample error: {err}")
-        else:
-            self._gpu_by_pid = new_map
-        self._last_gpu_error = err if failed else None
-        self._gpu_available = available and not failed
-        self._update_gpu_status_label(
-            self._gpu_available, err if isinstance(err, str) else None
-        )
-        self._refresh_detail()
+    def _on_gpu_state(self, state: GpuState) -> None:
+        if state == self._gpu_state:
+            return
+        self._gpu_state = state
+        self._show_gpu_state(state)
+        # Reports come twice a second; post a lost GPU feed once, not each time.
+        if state not in (GpuState.SAMPLED, GpuState.NOT_SAMPLED):
+            self._show_status(f"No GPU data: {GPU_STATE_TEXT.get(state, state.name)}")
 
     @pyqtSlot(object)
     def _on_cgroup_members(self, mapping) -> None:
@@ -1358,7 +1301,6 @@ class ProcessMonitorWindow(QMainWindow):
         for worker_attr, thread_attr in (
             ("cgroup_members_worker", "cgroup_members_thread"),
             ("detail_journal_worker", "detail_journal_thread"),
-            ("gpu_worker", "gpu_thread"),
             ("systemd_worker", "systemd_thread"),
         ):
             pairs.append(self._detach_background_worker(worker_attr, thread_attr))

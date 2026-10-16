@@ -5,6 +5,27 @@
 #include <stdio.h>
 namespace fs = std::filesystem;
 using namespace process_manager;
+namespace
+{
+	// The cgroup v2 directory a /proc/<pid>/cgroup file names; empty when it names none.
+	fs::path ReadCgroupPath(const fs::path& cgroupFile)
+	{
+		std::ifstream cgroup_file(cgroupFile);
+		std::string line;
+
+		while (std::getline(cgroup_file, line))
+		{
+			// cgroup v2 format: "0::/path/to/cgroup"
+			size_t pos = line.find("0::");
+			if (pos != std::string::npos)
+			{
+				std::string path_suffix = line.substr(pos + 3);
+				return fs::path("/sys/fs/cgroup") / fs::path(path_suffix).relative_path();
+			}
+		}
+		return {};
+	}
+}
 ProcessGroupBuilder::ProcessGroupBuilder()
 {
 	this->parentPath = GetProcessGroupPath();
@@ -25,24 +46,14 @@ std::filesystem::path ProcessGroupBuilder::GetParentGroupPath()
 {
 	return parentPath;
 }
+fs::path ProcessGroupBuilder::GetCgroupPathOf(pid_t pid)
+{
+	return ReadCgroupPath(fs::path("/proc") / std::to_string(pid) / "cgroup");
+}
 fs::path ProcessGroupBuilder::GetProcessGroupPath()
 {
-	std::ifstream cgroup_file("/proc/self/cgroup");
-	std::string line;
-
-	if (cgroup_file.is_open())
-	{
-		while (std::getline(cgroup_file, line))
-		{
-			// cgroup v2 format: "0::/path/to/cgroup"
-			size_t pos = line.find("0::");
-			if (pos != std::string::npos)
-			{
-				std::string path_suffix = line.substr(pos + 3);
-				return fs::path("/sys/fs/cgroup") / fs::path(path_suffix).relative_path();
-			}
-		}
-	}
+	const fs::path path = ReadCgroupPath("/proc/self/cgroup");
+	if (!path.empty()) return path;
 	// Fallback if not running under systemd delegation or admin privs
 	return fs::path("/sys/fs/cgroup");
 }

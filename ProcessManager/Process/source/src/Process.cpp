@@ -583,6 +583,17 @@ bool Process::HasPid() const
 	return runtime.processHandle.pid > 0;
 }
 
+// The main process, or one in its process group. With a cgroup, also anything under it, as its memory
+// and CPU use count: a process that left the group, or outlived the main process, still belongs to it.
+bool Process::IsMember(pid_t pid, pid_t pgid, const fs::path& cgroup) const
+{
+	if (HasPid() && (pid == runtime.processHandle.pid || (pgid > 0 && pgid == runtime.processHandle.pgid))) return true;
+	if (!config.CreateProcessGroup || runtime.cgroup_path.empty() || cgroup.empty()) return false;
+
+	const auto& own = runtime.cgroup_path;
+	return std::mismatch(own.begin(), own.end(), cgroup.begin(), cgroup.end()).first == own.end();
+}
+
 pid_t Process::GetPid() const
 {
 	return runtime.processHandle.pid;

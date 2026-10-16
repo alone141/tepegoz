@@ -1,8 +1,8 @@
 """Usage graphs: CPU, memory and GPU use per process over recent time.
 
-Samples are recorded by the main window from health reports (GPU columns
-from nvidia-smi). The charts are drawn with QPainter, so graphing needs no
-dependency beyond PyQt6.
+Samples are recorded by the main window from health reports, GPU columns
+included: the process manager samples them. The charts are drawn with
+QPainter, so graphing needs no dependency beyond PyQt6.
 """
 
 from __future__ import annotations
@@ -189,7 +189,7 @@ class Metric:
     empty_text: str
 
 
-NO_GPU_TEXT = "No GPU data (nvidia-smi unavailable)"
+NO_GPU_TEXT = "No GPU data from the process manager"
 METRICS = (
     Metric("CPU %  (100 = one core)", lambda s: s.cpu_pct, False, 10.0, "No data yet"),
     Metric("Memory", lambda s: s.mem_bytes, True, 16 * 1024.0**2, "No data yet"),

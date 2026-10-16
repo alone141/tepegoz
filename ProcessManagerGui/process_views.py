@@ -252,12 +252,14 @@ def cpu_text(report: dict) -> str:
     return "—" if cpu is None else f"{cpu:.1f} %"
 
 
-def gpu_texts(gpu) -> Tuple[str, str]:
-    """(GPU %, VRAM) texts for a GpuProcessUsage, or dashes without one."""
-    if gpu is None:
-        return "—", "—"
-    util = "—" if gpu.util_pct is None else f"{gpu.util_pct:.1f} %"
-    return util, format_bytes(gpu.vram_bytes)
+def gpu_texts(report: dict) -> Tuple[str, str]:
+    """(GPU %, VRAM) texts of a report: dashes where the manager sent no GPU data."""
+    util = report.get("gpuUtilPct")
+    vram = report.get("vramBytes")
+    return (
+        "—" if util is None else f"{util:.1f} %",
+        "—" if vram is None else format_bytes(vram),
+    )
 
 
 def row_hint(report: dict) -> Tuple[str, str]:
@@ -1046,7 +1048,7 @@ class ProcessDetailPage(QWidget):
     # ── data in ───────────────────────────────────────────────────────────
 
     def set_process(
-        self, name: str, report: Optional[dict], gpu, members: Optional[Sequence]
+        self, name: str, report: Optional[dict], members: Optional[Sequence]
     ) -> None:
         self.name = name
         self.lbl_name.setText(name)
@@ -1056,15 +1058,15 @@ class ProcessDetailPage(QWidget):
         if report is None:
             self._show_no_report()
         else:
-            self.update_report(report, gpu)
+            self.update_report(report)
         self.tick(time.monotonic(), time.time())
 
-    def update_report(self, report: dict, gpu) -> None:
+    def update_report(self, report: dict) -> None:
         self.report = report
         state: RuntimeState = report["state"]
         self.pill.set_state(state, self._stale)
         self.lbl_meta.setText(meta_text(report))
-        gpu_pct, vram = gpu_texts(gpu)
+        gpu_pct, vram = gpu_texts(report)
         values = {
             "cpu": cpu_text(report),
             "mem": format_bytes(int(report.get("memoryUsageInBytes", 0))),

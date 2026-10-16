@@ -89,21 +89,21 @@ namespace process_manager
 		}
 		static legacy::enums::RetVal ReadConfiguration(const char* sectionDesc, const char* valueDesc, float& value)
 		{
-			double readValue;
+			double readValue = 0.0; // left unwritten when the key is missing
 			auto ret = GetObjectRef().conf->GetValueDouble(sectionDesc, valueDesc, &readValue);
 			value = static_cast<float>(readValue);
 			return ret;
 		}
 		static legacy::enums::RetVal ReadConfiguration(const char* sectionDesc, const char* valueDesc, bool& value)
 		{
-			bool readValue;
+			bool readValue = false; // left unwritten when the key is missing
 			auto ret = GetObjectRef().conf->GetValueBool(sectionDesc, valueDesc, &readValue);
 			value = static_cast<bool>(readValue);
 			return ret;
 		}
 		static legacy::enums::RetVal ReadConfiguration(const char* sectionDesc, const char* valueDesc, uint16_t& value)
 		{
-			uint32_t readValue;
+			uint32_t readValue = 0; // left unwritten when the key is missing
 			auto ret = GetObjectRef().conf->GetValueUInt(sectionDesc, valueDesc, &readValue);
 			value = static_cast<uint16_t>(readValue);
 			return ret;

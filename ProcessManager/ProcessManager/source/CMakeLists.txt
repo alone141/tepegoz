@@ -16,3 +16,4 @@ target_sources(ProcessManager
 
 target_include_directories(ProcessManager PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
 target_link_libraries(ProcessManager PUBLIC Process libzmq-static LegacyLibA)
+target_link_libraries(ProcessManager PRIVATE gpu_monitor)
