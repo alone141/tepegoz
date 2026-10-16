@@ -1,6 +1,8 @@
-#pragma once 
+#pragma once
 #include <chrono>
+#include <cstdint>
 #include <ctype.h>
+#include <sys/types.h>
 namespace process_manager
 {
 	enum class RuntimeStateEnum : uint8_t

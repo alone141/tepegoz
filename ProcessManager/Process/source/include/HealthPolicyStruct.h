@@ -1,10 +1,14 @@
-#pragma once 
+#pragma once
 #include <chrono>
+namespace config_section
+{
+	class ConfigSection;
+}
 namespace process_manager
 {
 	struct HealthPolicyStruct
 	{
-		void UpdateArgs(const char* sectionOrder);
+		void UpdateArgs(config_section::ConfigSection& section);
 
 		bool CheckHealth = false; //enable health checks //todo ENABLE HEARTBEAT meliksahs
 		std::chrono::milliseconds GracePeriodMs{ 5'000 }; //startup period

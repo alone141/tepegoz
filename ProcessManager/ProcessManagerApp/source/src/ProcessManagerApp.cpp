@@ -1,112 +1,83 @@
-#include <legacy/conf/ConfigurationManager.h>
-#include <legacy/conf/ConfigurationManagerStartParam.h>
-#include <legacy/logger/log_manager/TLogManager.hpp>
-#include <legacy/logger/log_manager/LogManagerParameter.h>
-#include <legacy/logger/log_adapter/FileLogAdapterArg.h>
-#include <legacy/logger/log_adapter/ConsoleLogAdapter.h>
-#include <legacy/timer/multi/MultiUseTimerStartupArgs.h>
-#include <legacy/oslib/file/FileManager.h>
-#include <legacy/oslib/file/File.h> 
 #include <ProcessManagerApp.h>
 #include <ProcessManager.h>
-#include <ConfigHelper.h>
+#include "ConfigSection.hpp"
+#include "Logger.hpp"
+#include <chrono>
 #include <iomanip>
+#include <iostream>
 #include <unordered_map>
 #include <thread>
 #include <zmq.hpp>
-using namespace legacy;
-using namespace legacy::enums;
-using namespace legacy::oslib;
-using namespace legacy::conf;
-using namespace legacy::mem;
-using namespace legacy::logger;
 using namespace process_manager;
 using namespace std;
 
 
-RetVal ProcessManagerApp::StartUp(const std::string& configPath)
+bool ProcessManagerApp::StartUp(const std::string& configPath)
 {
-	auto retVal = InitializeTimer();
-	retVal = InitializeLogManager();
+	InitializeLogger();
 
-	LOGF_INFO("PROCESMANAGER VERSION: %s", PROCESSMANAGER_VERSION_FULL);
+	logger::Info("PROCESMANAGER VERSION: %s", PROCESSMANAGER_VERSION_FULL);
 
 
 	// A file named with --config is used as given; only the installed one may fall back to the share directory.
 	const bool givenPath = !configPath.empty();
-	retVal = InitializeConfigManager(givenPath ? configPath.c_str() : PROCESS_MANAGER_CONFIG_FILE, !givenPath);
-	if (retVal != RetVal::Success) return retVal;
-	retVal = InitializeProcessManager();
+	config_section::ConfigValue document;
+	if (!LoadConfig(givenPath ? configPath : PROCESS_MANAGER_CONFIG_FILE, !givenPath, document)) return false;
 
-	if (retVal != RetVal::Success)
+	if (!InitializeProcessManager(document))
 	{
-		LOGF_ERROR("Process Manager failed to start");
+		logger::Error("Process Manager failed to start");
+		return false;
 	}
 
-	return retVal;
+	return true;
 }
 
-RetVal ProcessManagerApp::Run()
+void ProcessManagerApp::Run()
 {
 	if (processManager) processManager->Run();
-	LOGF_DEBUG("Exiting ProcessManager Thread");
-	return RetVal::Success;
+	logger::Debug("Exiting ProcessManager Thread");
 }
 
 // Called from main's signal thread: only asks the supervision thread to stop; Run() returns after.
-legacy::enums::RetVal process_manager::ProcessManagerApp::ShutdownSignalReceived(int signum)
+void process_manager::ProcessManagerApp::ShutdownSignalReceived(int signum)
 {
-	LOGF_WARNING(" ==== SHUTDOWN SIGNAL RECEIVED signum: %d  ==== ", signum)
+	logger::Warning(" ==== SHUTDOWN SIGNAL RECEIVED signum: %d  ==== ", signum);
 	if (processManager) processManager->RequestStop();
-	return RetVal::Success;
 }
 
-object::ObjectType process_manager::ProcessManagerApp::GetType() const
+bool ProcessManagerApp::LoadConfig(const std::string& configPath, bool allowFallback, config_section::ConfigValue& document)
 {
-	return legacy::object::ProcessManagerApp;
+	std::string path = configPath;
+	std::string error;
+	auto loaded = config_section::LoadConfigFile(path, document, error);
+	if (loaded == config_section::LoadCode::FileNotOpened && allowFallback)
+	{
+		logger::Warning("Config file could not found at %s", path.c_str());
+		path = PROCESS_MANAGER_SHARE_DIR"ProcessManagerConfig.yaml";
+		logger::Warning("Searching config file at %s", path.c_str());
+		loaded = config_section::LoadConfigFile(path, document, error);
+	}
+
+	if (loaded == config_section::LoadCode::FileNotOpened)
+	{
+		logger::Error("Config file %s could not be opened. Use --help flag for more information", path.c_str());
+		return false;
+	}
+	if (loaded == config_section::LoadCode::SyntaxError)
+	{
+		logger::Error("Config file %s is not valid YAML: %s", path.c_str(), error.c_str());
+		return false;
+	}
+
+	logger::Info("Configuration read from %s", path.c_str());
+	return true;
 }
 
-RetVal ProcessManagerApp::InitializeConfigManager(const char* configPath, bool allowFallback)
+bool ProcessManagerApp::InitializeProcessManager(const config_section::ConfigValue& document)
 {
-	static ConfigurationManager configManager;
-	auto file = legacy::mem::Alloc<File>::MakeUnique(configPath);
-	if (!file)
-	{
-		return RetVal::NullPointer;
-	}
-	if (file->Open() != RetVal::Success)
-	{
-		if (!allowFallback)
-		{
-			LOGF(object::ProcessManagerApp, LogLevel::Error, "Config file %s could not be opened", configPath);
-			cerr << "Config file " << configPath << " could not be opened" << endl;
-			return RetVal::FileNotOpened;
-		}
-		LOGF(object::ProcessManagerApp, LogLevel::Warning, "Config file could not found at %s", configPath);
-		LOGF(object::ProcessManagerApp, LogLevel::Warning, "Searching config file at %s", PROCESS_MANAGER_SHARE_DIR"ProcessManagerConfig.ini");
-		file = legacy::mem::Alloc<File>::MakeUnique(PROCESS_MANAGER_SHARE_DIR"ProcessManagerConfig.ini");
-
-	}
-	file->Close();
-	ConfigurationManagerStartParameter params{ move(file) };
-	auto ret = reinterpret_cast<ConfigurationManager*>(&configManager)->StartUp(&params);
-
-	if (!ret)
-	{
-		LOGF(object::ProcessManagerApp, LogLevel::Error, "ConfigurationManager Config file not found Use --help flag for more information");
-		LOGF(object::ProcessManagerApp, LogLevel::Error, "Use --help flag for more information");
-		return RetVal::FileNotOpened;
-	}
-
-	ConfigHelper::Initialize(&configManager);
-	LOGF(object::ProcessManagerApp, LogLevel::Info, "ConfigurationManager Initiliazed");
-
-	return RetVal::Success;
-}
-
-RetVal ProcessManagerApp::InitializeProcessManager()
-{
-	auto config = ProcessManager::GenerateConfig();
+	auto config = ProcessManager::GenerateConfig(document);
+	logger::Logger::Instance().SetMinimum(config->logLevel);
 	try
 	{
 		processManager = make_unique<ProcessManager>(move(config));
@@ -114,111 +85,40 @@ RetVal ProcessManagerApp::InitializeProcessManager()
 	catch (const zmq::error_t& e)
 	{
 		// For example another manager already holds the health ports.
-		LOGF_ERROR("Process manager sockets could not be opened: %s", e.what());
-		return RetVal::UnitStartUpFailure;
+		logger::Error("Process manager sockets could not be opened: %s", e.what());
+		return false;
 	}
 	auto cycleDetected = !processManager->StartUp();
-	return cycleDetected ? RetVal::UnitStartUpFailure : RetVal::Success;
+	return !cycleDetected;
 }
 
-RetVal ProcessManagerApp::InitializeTimer()
+void ProcessManagerApp::InitializeLogger()
 {
-	timer::MultiUseTimerStartupArgs params(&timerManager, 100);
-
-	auto ret = multiUseTimer.StartUp(&params);
-
-	return ret;
-}
-RetVal ProcessManagerApp::InitializeLogManager()
-{
-	auto StartTimeMs(Clock::GetMsec());
-	logManager = TLogManager<8, 1024>::GetInstance();
-	auto args = LogManagerParameter(&multiUseTimer);
-
-	auto ret = logManager->StartUp(&args);
-	logManager->Suspend();
-
-	bool fileEnable = true;
-
-	if (fileEnable)
+	logger::Settings settings;
+	settings.directory = PROCESS_MANAGER_LOG_DIR;
+	const auto opened = logger::Logger::Instance().Open(settings);
+	if (opened == logger::OpenCode::DirectoryFailed)
 	{
-		// FileLogAdapter::SetStartTime(AppConfiguration::GetObject().StartTimeMs);
-
-		int32_t logLvl = LogLevel::Debug;
-		auto logDirectory = PROCESS_MANAGER_LOG_DIR;
-
-		if (!oslib::FileManager::DirExists(logDirectory))
-		{
-			if (!oslib::FileManager::CreateDir(logDirectory, true))
-			{
-				ERROR_PRINT("File log directory creation error: \"%s\"", logDirectory);
-				////INFO_PRINT("RunTime %ld will not take file log!!!", AppConfiguration::GetObject().StartTimeMs);
-				fileEnable = false;
-			}
-		}
-
-		if (fileEnable)
-		{
-			char logFile[256];
-			time_t tm_ = (time_t)(StartTimeMs / 1000);
-			tm* now = localtime(&tm_);
-
-			snprintf(logFile, 256, "%04d_%02d_%02d_%02d_%02d_%02d", now->tm_year + 1900, now->tm_mon + 1, now->tm_mday, now->tm_hour, now->tm_min,
-				now->tm_sec);
-
-			oslib::FilePath logPath = oslib::FilePath(logDirectory) / logFile;
-
-			int32_t chunkFileSizePerLog = 100; /*AppConfiguration::GetObject().LoggerArgs.FileChunkSize*/;
-			FileLogAdapterArg arg{ logPath, &multiUseTimer, "PMLog", chunkFileSizePerLog };
-
-			if (!logManager->RegisterLogAdapter(&fileLogAdapter, &arg, logLvl))
-			{
-				DEBUG_PRINT("FileLogManager Register Error\n");
-			}
-			else
-			{
-				//INFO_PRINT("LogManager File Path=%s Registered\n", logPath.CStr());
-			}
-		}
+		logger::Error("File log directory creation error: \"%s\"; logging to the console only", PROCESS_MANAGER_LOG_DIR);
 	}
-
-	bool consoleEnable = true;
-
-	if (consoleEnable)
+	else if (opened == logger::OpenCode::FileFailed)
 	{
-		// ConsoleLogAdapter::SetStartTime(AppConfiguration::GetObject().StartTimeMs);
-
-		int32_t logLvl = LogLevel::Debug;
-
-		LogAdapterArg arg;
-		if (!logManager->RegisterLogAdapter(&consoleLogAdapter, &arg, logLvl))
-		{
-			DEBUG_PRINT("ConsoleLogManager Register Error\n");
-		}
-		else
-		{
-			//INFO_PRINT("LogManager Console Registered\n");
-		}
+		logger::Error("No log file could be opened in \"%s\"; logging to the console only", PROCESS_MANAGER_LOG_DIR);
 	}
-
-	return logManager->Resume();
 }
-RetVal ProcessManagerApp::TearDown()
+
+void ProcessManagerApp::TearDown()
 {
 	if (processManager) processManager->TearDown();
-
-	usleep(500);
-	logManager->Suspend();
-	logManager->ShutDown();
-	return RetVal::Success;
+	logger::Logger::Instance().Close();
 }
 
 bool ProcessManagerApp::ValidateConfig(string config)
 {
 	vector<string> err;
-	auto retVal = InitializeConfigManager(config.c_str(), false);
-	if (retVal != RetVal::Success) { return false; }
-	auto params = ProcessManager::GenerateConfig(&err);
+	config_section::ConfigValue document;
+	if (!LoadConfig(config, false, document)) { return false; }
+	auto params = ProcessManager::GenerateConfig(document, &err); // keys, values and service names
 	ProcessManager::SortByDependencies(err, params->processList); // duplicates, missing dependencies, cycles
 	for (const auto& process : params->processList)
 	{
@@ -231,10 +131,10 @@ bool ProcessManagerApp::ValidateConfig(string config)
 void ProcessManagerApp::PrintDependencyGraph(string config)
 {
 	vector<string> err;
-	auto retVal = InitializeConfigManager(config.c_str(), false);
-	if (retVal != RetVal::Success) return;
+	config_section::ConfigValue document;
+	if (!LoadConfig(config, false, document)) return;
 
-	auto params = ProcessManager::GenerateConfig(&err);
+	auto params = ProcessManager::GenerateConfig(document, &err);
 	ProcessManager::SortByDependencies(err, params->processList);
 
 	PrintErrors(err);

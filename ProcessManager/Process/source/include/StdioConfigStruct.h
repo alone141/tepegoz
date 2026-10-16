@@ -1,11 +1,15 @@
-#pragma once 
+#pragma once
 #include <StdioModeEnum.h>
 #include <filesystem>
+namespace config_section
+{
+	class ConfigSection;
+}
 namespace process_manager
 {
 	struct StdioPolicyStruct
 	{
-		void UpdateArgs(const char* sectionOrder);
+		void UpdateArgs(config_section::ConfigSection& section);
 
 
 		StdioModeEnum StdioMode = StdioModeEnum::Inherit;

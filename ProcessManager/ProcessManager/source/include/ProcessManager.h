@@ -25,10 +25,10 @@ namespace process_manager
 		void Run() override;
 		void RequestStop() override;
 		int TearDown() override;
-		legacy::object::ObjectType GetType() const override;
 
 		static bool SortByDependencies(std::vector<std::string>& err, std::vector<process_manager::Process>& pList);
-		static std::unique_ptr<ProcessManagerParams> GenerateConfig(std::vector<std::string>* errors = nullptr);
+		// Problems in the configuration go to errors when given, else to the log.
+		static std::unique_ptr<ProcessManagerParams> GenerateConfig(const config_section::ConfigValue& document, std::vector<std::string>* errors = nullptr);
 	private:
 		void StopAll();
 		void RetireProcess(Process& process);

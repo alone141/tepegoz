@@ -3,9 +3,10 @@
 #include <thread>
 #include <csignal>
 #include <cstdlib>
+#include <iostream>
 #include <pthread.h>
+#include <string>
 #include <HelperFunctions.h>
-#include <legacy/oslib/signal/SignalHelper.h>
 
 #include <NetworkLogger.h>
 #include <NetworkManager.h>
@@ -17,8 +18,6 @@ nwm::NetworkManager* gNetworkManager = nullptr;
 
 int main(int argc, char** argv)
 {
-	legacy::oslib::SignalHelper::BlockSoftwareTimerSignals();
-
 	std::string configPath;
 	const int exitCode = ParseInputFlags(argc, argv, configPath);
 	if (exitCode >= 0)
@@ -43,7 +42,7 @@ int main(int argc, char** argv)
 	//networkMaster = new process_manager::NetworkManager(portName);
 
 
-	if (manager->StartUp(configPath) != legacy::enums::RetVal::Success)
+	if (!manager->StartUp(configPath))
 	{
 		manager->TearDown();
 		return 1;

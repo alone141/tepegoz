@@ -1,11 +1,15 @@
-#pragma once 
+#pragma once
 #include <RestartModeEnum.h>
 #include <chrono>
+namespace config_section
+{
+	class ConfigSection;
+}
 namespace process_manager
 {
 	struct RestartPolicyStruct
 	{
-		void UpdateArgs(const char* sectionOrder);
+		void UpdateArgs(config_section::ConfigSection& section);
 		RestartModeEnum RestartMode = RestartModeEnum::OnFailure;
 		int MaxRestarts = 10; // in a row; a run of RestartResetMs or longer starts the count again
 		double BackoffMultiplier = 2.0;

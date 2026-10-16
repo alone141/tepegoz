@@ -5,8 +5,9 @@
 #include <sys/wait.h>
 #include <fstream>
 #include <fcntl.h>
-#include <legacy/common/logger/Log.h>
 #include <ProcessGroupBuilder.h>
+#include "ConfigSection.hpp"
+#include "Logger.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -96,9 +98,9 @@ namespace
 	}
 }
 
-int Process::UpdateArgs(const char* sectionOrder)
+int Process::UpdateArgs(config_section::ConfigSection& section)
 {
-	return config.UpdateArgs(sectionOrder);
+	return config.UpdateArgs(section);
 }
 
 Process::~Process()
@@ -110,8 +112,7 @@ Process::~Process()
 }
 
 Process::Process(Process&& other) noexcept
-	: legacy::type::IObject(std::move(other)),
-	runtime(std::move(other.runtime)),
+	: runtime(std::move(other.runtime)),
 	config(std::move(other.config))
 {
 	other.runtime.processHandle = ProcessHandleStruct{};
@@ -125,7 +126,6 @@ Process& Process::operator=(Process&& other) noexcept
 		{
 			RequestStopAndEscalate();
 		}
-		legacy::type::IObject::operator=(std::move(other));
 		runtime = std::move(other.runtime);
 		config = std::move(other.config);
 		other.runtime.processHandle = ProcessHandleStruct{};
@@ -137,7 +137,7 @@ void Process::StartProcess()
 {
 	if (HasPid())
 	{
-		LOGF_DEBUG("[%s] Already running as pid %d, not starting another instance", config.ProcessName.c_str(), runtime.processHandle.pid);
+		logger::Debug("[%s] Already running as pid %d, not starting another instance", config.ProcessName.c_str(), runtime.processHandle.pid);
 		return;
 	}
 	runtime.consecutiveRestarts = 0;
@@ -148,20 +148,20 @@ void Process::AutoRestart()
 {
 	if (HasPid()) return;
 	++runtime.consecutiveRestarts;
-	LOGF_INFO("[%s] Restart %d of at most %d in a row", config.ProcessName.c_str(), runtime.consecutiveRestarts, config.RestartPolicy.MaxRestarts);
+	logger::Info("[%s] Restart %d of at most %d in a row", config.ProcessName.c_str(), runtime.consecutiveRestarts, config.RestartPolicy.MaxRestarts);
 	Launch();
 }
 
 void Process::Launch()
 {
-	LOGF_DEBUG("[%s] Starting service...", config.ProcessName.c_str());
+	logger::Debug("[%s] Starting service...", config.ProcessName.c_str());
 	if (config.UseDisplay)
 	{
-		LOGF_DEBUG("[%s] Will use Display", config.ProcessName.c_str());
+		logger::Debug("[%s] Will use Display", config.ProcessName.c_str());
 	}
 	if (!config.StdioPolicy.StdioFilePath.empty())
 	{
-		LOGF_DEBUG("[%s] Logs will be stored in %s", config.ProcessName.c_str(), config.StdioPolicy.StdioFilePath.c_str());
+		logger::Debug("[%s] Logs will be stored in %s", config.ProcessName.c_str(), config.StdioPolicy.StdioFilePath.c_str());
 	}
 
 	ProcessHandleStruct pHandle;
@@ -186,7 +186,7 @@ void Process::Launch()
 		RemoveProcessGroup();
 		runtime.pipeFd.CloseRead();
 		runtime.pipeFd.CloseWrite();
-		LOGF_ERROR("[%s] fork() failed with : %s", config.ProcessName.c_str(), std::strerror(errno));
+		logger::Error("[%s] fork() failed with : %s", config.ProcessName.c_str(), std::strerror(errno));
 	}
 	if (pid == 0) //CHILD
 	{
@@ -266,7 +266,7 @@ void Process::RequestStop(const ProcessHandleStruct& pHandle, int sig) const
 	}
 	else
 	{
-		LOGF_VERBOSE("[%s] RequestStop pid %d with sig no %d", config.ProcessName.c_str(), pHandle.pid, sig);
+		logger::Verbose("[%s] RequestStop pid %d with sig no %d", config.ProcessName.c_str(), pHandle.pid, sig);
 		::kill(pHandle.pid, sig);
 	}
 }
@@ -279,7 +279,7 @@ void Process::ForceStop(const ProcessHandleStruct& pHandle) const
 // Blocking: only for shutdown and destruction. The supervision loop uses Stop() and AdvanceStop().
 void Process::RequestStopAndEscalate(std::chrono::milliseconds poll)
 {
-	LOGF_DEBUG("[%s] RequestStopAndEscalate with polling period %ld ms and ForceKilTimeout %ld ms ", config.ProcessName.c_str(), static_cast<long>(poll.count()), static_cast<long>(config.ForceKillTimeoutMs.count()));
+	logger::Debug("[%s] RequestStopAndEscalate with polling period %ld ms and ForceKilTimeout %ld ms ", config.ProcessName.c_str(), static_cast<long>(poll.count()), static_cast<long>(config.ForceKillTimeoutMs.count()));
 	if (runtime.processHandle.pid <= 0) return;
 
 	poll = std::max(poll, std::chrono::milliseconds(1));
@@ -306,7 +306,7 @@ void Process::Restart()
 // Stopped for missed heartbeats: the exit counts as a failure, and the restart policy restarts it.
 void Process::StopUnresponsive()
 {
-	LOGF_ERROR("[%s] Unresponsive: %d heartbeat periods without a heartbeat, stopping it", config.ProcessName.c_str(), runtime.runtimeHealth.missedBeats);
+	logger::Error("[%s] Unresponsive: %d heartbeat periods without a heartbeat, stopping it", config.ProcessName.c_str(), runtime.runtimeHealth.missedBeats);
 	runtime.restartRequested = false;
 	runtime.unresponsiveStop = true;
 	BeginStop();
@@ -316,7 +316,7 @@ void Process::BeginStop()
 {
 	if (!HasPid() || IsStopping()) return;
 
-	LOGF_DEBUG("[%s] Stopping pid %d, SIGKILL after %ld ms", config.ProcessName.c_str(), runtime.processHandle.pid, static_cast<long>(config.ForceKillTimeoutMs.count()));
+	logger::Debug("[%s] Stopping pid %d, SIGKILL after %ld ms", config.ProcessName.c_str(), runtime.processHandle.pid, static_cast<long>(config.ForceKillTimeoutMs.count()));
 	runtime.stopGroup = runtime.processHandle.pgid;
 	RequestStop(runtime.processHandle, SIGTERM);
 	runtime.stopPhase = StopPhaseEnum::Terminating;
@@ -338,7 +338,7 @@ void Process::AdvanceStop()
 
 	if (runtime.stopPhase == StopPhaseEnum::Terminating)
 	{
-		LOGF_DEBUG("[%s] Graceful shutdown failed ", config.ProcessName.c_str());
+		logger::Debug("[%s] Graceful shutdown failed ", config.ProcessName.c_str());
 		if (runtime.stopGroup > 0) ::kill(-runtime.stopGroup, SIGKILL);
 		else ForceStop(runtime.processHandle);
 		if (config.CreateProcessGroup) TerminateProcessGroup();
@@ -347,7 +347,7 @@ void Process::AdvanceStop()
 		return;
 	}
 
-	LOGF_ERROR("[%s] Force shutdown failed", config.ProcessName.c_str());
+	logger::Error("[%s] Force shutdown failed", config.ProcessName.c_str());
 	runtime.stopPhase = StopPhaseEnum::None;
 	runtime.stopGroup = -1;
 }
@@ -366,7 +366,7 @@ void Process::FinishStop()
 		TerminateProcessGroup(); // whatever the main process left behind in its cgroup
 		RemoveProcessGroup();
 	}
-	LOGF_DEBUG("[%s] Reaped & stop successful ", config.ProcessName.c_str());
+	logger::Debug("[%s] Reaped & stop successful ", config.ProcessName.c_str());
 }
 
 void Process::OverrideStartupArgs(std::vector<std::string> args)
@@ -379,14 +379,9 @@ void process_manager::Process::SetWorkMode(WorkModeEnum workMode)
 	config.WorkMode = workMode;
 }
 
-legacy::object::ObjectType Process::GetType() const
-{
-	return legacy::object::Process;
-}
-
 void Process::HeartbeatReceived()
 {
-	LOGF_DEBUG("[%s] Heartbeat received", config.ProcessName.c_str());
+	logger::Debug("[%s] Heartbeat received", config.ProcessName.c_str());
 
 	if (!IsHealthCheckActive()) return;
 	if (!HasPid()) return; // late, from an instance that has exited
@@ -412,7 +407,7 @@ void Process::CheckHeartbeat()
 	GetRuntimeStatus().missedBeats = (int)((Now() - GetRuntimeStatus().lastSeen) / config.HealthPolicy.HeartbeatPeriodMs);
 	if (GetRuntimeStatus().missedBeats > 0)
 	{
-		LOGF_DEBUG("[%s] Heartbeat missed", config.ProcessName.c_str());
+		logger::Debug("[%s] Heartbeat missed", config.ProcessName.c_str());
 	}
 	if (GetRuntimeStatus().missedBeats >= config.HealthPolicy.MissedHeartbeatThreshold)
 	{
@@ -728,22 +723,22 @@ pid_t Process::ReapExit()
 		}
 		if (!exits.IsTerminatedBySignal)
 		{
-			LOGF_INFO("[%s] pid %d exited with code %d", config.ProcessName.c_str(), pid, exits.ExitCode);
+			logger::Info("[%s] pid %d exited with code %d", config.ProcessName.c_str(), pid, exits.ExitCode);
 		}
 		else if (exits.TermSignal > 0)
 		{
-			LOGF_INFO("[%s] pid %d terminated by signal %d", config.ProcessName.c_str(), pid, exits.TermSignal);
+			logger::Info("[%s] pid %d terminated by signal %d", config.ProcessName.c_str(), pid, exits.TermSignal);
 		}
 		else
 		{
-			LOGF_INFO("[%s] pid %d is gone, exit status unknown", config.ProcessName.c_str(), pid);
+			logger::Info("[%s] pid %d is gone, exit status unknown", config.ProcessName.c_str(), pid);
 		}
 
 		const auto rMode = config.RestartPolicy.RestartMode;
 		if (!IsWorkingManually() && rMode != RestartModeEnum::Never && RestartLimitReached() &&
 			(rMode != RestartModeEnum::OnFailure || ExitedWithFailure()))
 		{
-			LOGF_ERROR("[%s] Not restarting: %d restarts in a row (MaxRestarts)", config.ProcessName.c_str(), runtime.consecutiveRestarts);
+			logger::Error("[%s] Not restarting: %d restarts in a row (MaxRestarts)", config.ProcessName.c_str(), runtime.consecutiveRestarts);
 		}
 		return pid;
 
@@ -801,7 +796,7 @@ void Process::AppendStdioOutput(std::string_view output)
 	for (size_t newline = line.find('\n'); newline != std::string::npos; newline = line.find('\n', start))
 	{
 		const std::string text = line.substr(start, newline - start);
-		LOGF_INFO("[%s] %s", config.ProcessName.c_str(), text.c_str());
+		logger::Info("[%s] %s", config.ProcessName.c_str(), text.c_str());
 		start = newline + 1;
 	}
 	line.erase(0, start);
@@ -812,7 +807,7 @@ void Process::AppendStdioOutput(std::string_view output)
 void Process::FlushStdioLine()
 {
 	if (runtime.stdioLine.empty()) return;
-	LOGF_INFO("[%s] %s", config.ProcessName.c_str(), runtime.stdioLine.c_str());
+	logger::Info("[%s] %s", config.ProcessName.c_str(), runtime.stdioLine.c_str());
 	runtime.stdioLine.clear();
 }
 
@@ -862,7 +857,7 @@ bool Process::SetupWorkingDirectory() const
 	{
 		if (::chdir(cwd.c_str()) != 0)
 		{
-			LOGF_DEBUG("[%s] chdir failed with %s", config.ProcessName.c_str(), std::strerror(errno));
+			ChildError(config.ProcessName.c_str(), "chdir failed"); // in the child: no logger, it takes a lock
 		}
 	}
 
@@ -879,7 +874,7 @@ bool process_manager::Process::SetupEnviromentVariables()
 	//{
 	//	if (setenv("PYTHONPATH", "/usr/local/lib/python3.10/site-packages", 1) != 0)
 	//	{
-	//		LOGF_DEBUG("[%s] setenv failed with %s", config.ProcessName.c_str(), std::strerror(errno));
+	//		logger::Debug("[%s] setenv failed with %s", config.ProcessName.c_str(), std::strerror(errno));
 	//	}
 	//}
 
@@ -922,9 +917,7 @@ bool Process::SetupStdioSettings() const
 		return SetupStdioFile(stdio.StdioFilePath.c_str());
 	}
 	default:
-		LOGF_DEBUG("[%s] Unknown stdiomode enum assuming ::inherit", config.ProcessName.c_str(), std::strerror(errno));
-		return true;
-		break;
+		return true; // an unknown mode keeps the manager's output, as Inherit does
 	}
 
 	return false;
@@ -940,7 +933,7 @@ bool Process::SetupChildGroupSettings() const
 	int fd = ::open(procs_file.c_str(), O_WRONLY);
 	if (fd < 0 || write(fd, pid_str.c_str(), pid_str.length()) < 0)
 	{
-		LOGF_ERROR("[%s] write() failed with : %s", config.ProcessName.c_str(), std::strerror(errno));
+		ChildError(config.ProcessName.c_str(), "Joining the service's cgroup failed"); // in the child: no logger
 		_exit(EXIT_FAILURE); // Immediate exit, bypass C++ destructors
 	}
 	close(fd);
@@ -957,8 +950,8 @@ bool Process::SetupProcessGroupSettings()
 	std::error_code ec;
 	if (!fs::create_directories(runtime.cgroup_path, ec) && ec)
 	{
-		LOGF_ERROR("[%s] Failed to create cgroup directory:  %s ", config.ProcessName.c_str(), std::strerror(errno));
-		LOGF_ERROR("[%s] Starting directly... ", config.ProcessName.c_str(), std::strerror(errno));
+		logger::Error("[%s] Failed to create cgroup directory:  %s ", config.ProcessName.c_str(), ec.message().c_str());
+		logger::Error("[%s] Starting directly... ", config.ProcessName.c_str());
 		config.CreateProcessGroup = false;
 		return false;
 	}
@@ -991,7 +984,7 @@ bool Process::RemoveProcessGroup() const
 	std::error_code ec;
 	if (!fs::remove(runtime.cgroup_path, ec) && ec)
 	{
-		LOGF_ERROR("[%s] Failed to delete cgroup directory:  %s", config.ProcessName.c_str(), std::strerror(errno));
+		logger::Error("[%s] Failed to delete cgroup directory:  %s", config.ProcessName.c_str(), std::strerror(errno));
 		return false;
 	}
 	return true;

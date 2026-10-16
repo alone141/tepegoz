@@ -1,14 +1,22 @@
 #pragma once
 #include <ProcessConfigParamsStruct.h>
-#include <legacy/common/type/IObject.h>
 
+#include <cstdint>
+#include <string>
 #include <string_view>
+#include <sys/types.h>
+#include <vector>
+
+namespace config_section
+{
+	class ConfigSection;
+}
 
 namespace process_manager
 {
 	// Owns its child process: a destroyed or overwritten Process stops the child it still holds,
 	// so copies are forbidden and a move hands the child over.
-	class Process : public legacy::type::IObject
+	class Process
 	{
 	public:
 		~Process();
@@ -21,7 +29,7 @@ namespace process_manager
 		void StartProcess(); // a start the restart policy did not ask for: re-arms MaxRestarts
 		void AutoRestart();
 
-		int UpdateArgs(const char* sectionOrder);
+		int UpdateArgs(config_section::ConfigSection& section); // ProcessConfigParams::UpdateArgs codes
 		pid_t ReapExit();
 
 		pid_t GetPid() const;
@@ -57,7 +65,6 @@ namespace process_manager
 
 		void OverrideStartupArgs(std::vector<std::string> args);
 		void SetWorkMode(WorkModeEnum workMode);
-		legacy::object::ObjectType GetType() const override;
 
 	private:
 		static auto Now()

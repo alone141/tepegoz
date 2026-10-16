@@ -1,5 +1,6 @@
 #include <ProcessConfigParamsStruct.h>
-#include <ConfigHelper.h>
+#include "ConfigSection.hpp"
+#include <climits>
 using namespace process_manager;
 
 // "pm" is the manager's own cgroup (task_pm), BPM/PMC/GUI are broker identities, "all" is the
@@ -13,57 +14,41 @@ bool process_manager::ProcessConfigParams::IsReservedName(const std::string& nam
 	return name.empty() || name.find('/') != std::string::npos;
 }
 
-int process_manager::ProcessConfigParams::UpdateArgs(const char* sectionOrder)
+int process_manager::ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
 {
-	const char* temp;
-	int tempInt;
-
-	auto retVal = ConfigHelper::ReadConfiguration(sectionOrder, "ProcessName", temp, "Process0");
-	if (retVal != legacy::enums::RetVal::Success) return -1;
-
-	this->ProcessName = std::string(temp);
+	this->ProcessName = section.ReadString("ProcessName", "");
+	if (ProcessName.empty()) return -1;
 	if (IsReservedName(ProcessName)) return -2;
 
-	retVal = ConfigHelper::ReadConfiguration(sectionOrder, "ExecutablePath", temp, "invalid");
-	if (retVal != legacy::enums::RetVal::Success) return -1;
+	this->ExecutablePath = std::filesystem::path(section.ReadString("ExecutablePath", ""));
+	if (ExecutablePath.empty()) return -1;
 
-	this->ExecutablePath = std::filesystem::path(temp);
+	// A list keeps an argument with spaces in one piece; a text is split at spaces.
+	Args = section.ReadList("Args", ' ');
+	this->Cwd = std::filesystem::path(section.ReadString("Cwd", ""));
 
-	ConfigHelper::ReadConfiguration(sectionOrder, "Args", temp, "");
-	ConfigHelper::SplitElementsToVector(temp, ' ', Args);
+	InheritParentEnviroment = section.ReadBool("InheritParentEnviroment", true);
+	UseDisplay = section.ReadBool("UseDisplay", false);
+	this->Display = section.ReadString("Display", ":1");
+	this->XAuthority = section.ReadString("XAuthority", "/home/user/.Xauthority");
 
-	ConfigHelper::ReadConfiguration(sectionOrder, "Cwd", temp, "");
-	this->Cwd = std::filesystem::path(temp);
-
-	ConfigHelper::ReadValue(sectionOrder, "InheritParentEnviroment", InheritParentEnviroment, true, 0, 1);
-	ConfigHelper::ReadValue(sectionOrder, "UseDisplay", UseDisplay, false, 0, 1);
-	ConfigHelper::ReadConfiguration(sectionOrder, "Display", temp, ":1");
-	this->Display = std::string(temp);
-	ConfigHelper::ReadConfiguration(sectionOrder, "XAuthority", temp, "/home/user/.Xauthority");
-	this->XAuthority = std::string(temp);
-
-	ConfigHelper::ReadValue(sectionOrder, "CreateProcessGroup", CreateProcessGroup, true, 0, 1);
+	CreateProcessGroup = section.ReadBool("CreateProcessGroup", true);
 
 	//meliksahs TODO implement later
-	//ConfigHelper::ReadValue(sectionOrder, "env_unset", env_unset, false, 0, 1);
+	//env_unset
 
 
-	ConfigHelper::ReadValue(sectionOrder, "ForceKillTimeoutMs", tempInt, 10000, 1000, INT_MAX);
-	ForceKillTimeoutMs = std::chrono::milliseconds(tempInt);
+	ForceKillTimeoutMs = std::chrono::milliseconds(section.ReadInt("ForceKillTimeoutMs", 10000, 1000, INT_MAX));
 
-	ConfigHelper::ReadConfiguration(sectionOrder, "DependsOn", temp, "");
-	ConfigHelper::SplitElementsToVector(temp, ' ', DependsOn);
+	DependsOn = section.ReadList("DependsOn", ' ');
+	EnviromentVariables = section.ReadAssignments("EnviromentVariables", ';');
 
-	ConfigHelper::ReadConfiguration(sectionOrder, "EnviromentVariables", temp, "");
-	ConfigHelper::SplitElementsToVector(temp, ';', EnviromentVariables);
+	// The choices in WorkModeEnum order; without one, [ProcessManager] Mode may apply (GenerateConfig).
+	this->WorkMode = static_cast<WorkModeEnum>(section.ReadChoice("WorkMode", { "Auto", "Manual" }, 1));
 
-	ConfigHelper::ReadConfiguration(sectionOrder, "WorkMode", temp, "Manual");
-	if (!strcmp(temp, "Auto")) { this->WorkMode = WorkModeEnum::Auto; }
-	else if (!strcmp(temp, "Manual")) { this->WorkMode = WorkModeEnum::Manual; }
-
-	StdioPolicy.UpdateArgs(sectionOrder);
-	RestartPolicy.UpdateArgs(sectionOrder);
-	HealthPolicy.UpdateArgs(sectionOrder);
+	StdioPolicy.UpdateArgs(section);
+	RestartPolicy.UpdateArgs(section);
+	HealthPolicy.UpdateArgs(section);
 
 	return 1;
 }

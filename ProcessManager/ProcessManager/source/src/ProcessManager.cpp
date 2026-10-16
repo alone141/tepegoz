@@ -4,22 +4,23 @@
 #include <queue>
 
 #include <ProcessManager.h>
-#include <ConfigHelper.h>
 #include <PipeStruct.h>
 
 #include <zmq_addon.hpp>
-
-#include <legacy/common/logger/Log.h>
 
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <string>
 #include <unistd.h>
+#include <vector>
 
 #include <ProcessGroupBuilder.h>
+#include "ConfigSection.hpp"
 #include "GpuMonitor.hpp"
+#include "Logger.hpp"
 using namespace process_manager;
 
 namespace
@@ -112,19 +113,19 @@ namespace
 			switch (state)
 			{
 			case process_manager::GpuUsageStateEnum::Sampled:
-				LOGF_INFO("GPU use is sampled through %s", gpu_monitor::nvml_library);
+				logger::Info("GPU use is sampled through %s", gpu_monitor::nvml_library);
 				break;
 			case process_manager::GpuUsageStateEnum::NoDriver:
-				LOGF_INFO("GPU use is not reported: %s could not be loaded (no NVIDIA driver)", gpu_monitor::nvml_library);
+				logger::Info("GPU use is not reported: %s could not be loaded (no NVIDIA driver)", gpu_monitor::nvml_library);
 				break;
 			case process_manager::GpuUsageStateEnum::NoDevice:
-				LOGF_INFO("GPU use is not reported: NVML finds no GPU");
+				logger::Info("GPU use is not reported: NVML finds no GPU");
 				break;
 			case process_manager::GpuUsageStateEnum::Failed:
-				LOGF_ERROR("GPU use is not reported: NVML failed with error %d", gpu.nvmlError);
+				logger::Error("GPU use is not reported: NVML failed with error %d", gpu.nvmlError);
 				break;
 			case process_manager::GpuUsageStateEnum::Stalled:
-				LOGF_ERROR("GPU use is not reported: no GPU sample for %lld ms, a driver call is not returning",
+				logger::Error("GPU use is not reported: no GPU sample for %lld ms, a driver call is not returning",
 					static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - gpu.takenAt).count()));
 				break;
 			default:
@@ -149,18 +150,18 @@ int ProcessManager::StartUp()
 	if (!errorList.empty())
 	{
 
-		LOGF_ERROR("================================================");
-		LOGF_ERROR("PLEASE FIX MENTIONED WARNINGS IN THE CONFIG FILE");
+		logger::Error("================================================");
+		logger::Error("PLEASE FIX MENTIONED WARNINGS IN THE CONFIG FILE");
 		for (const auto& error : errorList)
 		{
-			LOGF_ERROR("%s", error.c_str());
+			logger::Error("%s", error.c_str());
 		}
-		LOGF_ERROR("================================================");
+		logger::Error("================================================");
 
 	}
 	if (cycleDetected)
 	{
-		LOGF_ERROR("!!!PROCESS MANAGER CANNOT START WITH CYCLE DEPENDENCIES!!!");
+		logger::Error("!!!PROCESS MANAGER CANNOT START WITH CYCLE DEPENDENCIES!!!");
 		return 0;
 	}
 	return 1;
@@ -206,9 +207,9 @@ process_manager::SimpleHealthReportStruct process_manager::ProcessManager::GetSi
 
 void process_manager::ProcessManager::Run()
 {
-	LOGF_INFO("Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_DETAILED);
-	LOGF_INFO("Simplified Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_SIMPLE);
-	LOGF_INFO("Heartbeats will be listened from %s as %s", comm::COMMAND_SERVER_PORT, comm::PROCESS_MANAGER_ID.c_str());
+	logger::Info("Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_DETAILED);
+	logger::Info("Simplified Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_SIMPLE);
+	logger::Info("Heartbeats will be listened from %s as %s", comm::COMMAND_SERVER_PORT, comm::PROCESS_MANAGER_ID.c_str());
 	zmq::pollitem_t items[] = { { listener.handle(), 0, ZMQ_POLLIN, 0} };
 
 	// Sampled on a thread of its own: a driver call that hangs must not hold up the supervision.
@@ -267,13 +268,13 @@ void process_manager::ProcessManager::Run()
 			}
 			catch (const std::exception& e)
 			{
-				LOGF_DEBUG("%s", e.what());
+				logger::Debug("%s", e.what());
 				break;
 			}
 			ProcessMessage(messages);
 		}
 	}
-	LOGF_DEBUG("Exiting");
+	logger::Debug("Exiting");
 	StopAll(); // here, on the thread that supervises the processes
 
 	return;
@@ -285,13 +286,9 @@ void process_manager::ProcessManager::RequestStop()
 int process_manager::ProcessManager::TearDown()
 {
 	enabled = false;
-	LOGF_DEBUG("TearDown");
+	logger::Debug("TearDown");
 	StopAll();
 	return 0;
-}
-legacy::object::ObjectType process_manager::ProcessManager::GetType() const
-{
-	return legacy::object::ProcessManager;
 }
 // Blocking, for shutdown: every process gets SIGTERM at once, then all are waited for together.
 void process_manager::ProcessManager::StopAll()
@@ -330,36 +327,62 @@ bool process_manager::ProcessManager::IsStopInProgress() const
 	}
 	return false;
 }
-std::unique_ptr<ProcessManagerParams> process_manager::ProcessManager::GenerateConfig(std::vector<std::string>* errors)
+std::unique_ptr<ProcessManagerParams> process_manager::ProcessManager::GenerateConfig(const config_section::ConfigValue& document, std::vector<std::string>* errors)
 {
 	auto processManagerParams = std::make_unique<ProcessManagerParams>();
+	processManagerParams->document = document;
+	std::vector<std::string> problems;
+	const auto addProblems = [&problems](const std::vector<std::string>& found) { problems.insert(problems.end(), found.begin(), found.end()); };
 
-	const char* temp;
-	ConfigHelper::ReadConfiguration("ProcessManager", "Mode", temp, "Inherit");
-	const bool hasDefaultWorkMode = !strcmp(temp, "Manual") || !strcmp(temp, "Auto");
-	if (!strcmp(temp, "Manual")) { processManagerParams->workMode = WorkModeEnum::Manual; }
-	else if (!strcmp(temp, "Auto")) { processManagerParams->workMode = WorkModeEnum::Auto; }
-
-	char section[] = "0";
-	for (size_t i = 0; i < 10; i++)
+	config_section::ConfigSection top(document, "the configuration");
+	bool hasDefaultWorkMode = false;
+	if (const config_section::ConfigValue* managerValue = top.ReadSection("ProcessManager"))
 	{
-		section[0]++;
+		config_section::ConfigSection manager(*managerValue, "ProcessManager");
+		// Inherit: no default, so a service without a WorkMode of its own is Manual.
+		const int mode = manager.ReadChoice("Mode", { "Inherit", "Manual", "Auto" }, 0);
+		hasDefaultWorkMode = mode != 0;
+		processManagerParams->workMode = mode == 2 ? WorkModeEnum::Auto : WorkModeEnum::Manual;
+		// The choices in logger::Level order.
+		processManagerParams->logLevel = static_cast<logger::Level>(manager.ReadChoice("LogLevel", { "Verbose", "Debug", "Info", "Warning", "Error" }, 1));
+		addProblems(manager.Problems());
+	}
+	const config_section::ConfigValue* services = top.ReadSequence("Services");
+	addProblems(top.Problems());
+
+	for (size_t i = 0; services != nullptr && i < services->children.size(); i++)
+	{
+		const config_section::ConfigValue& item = services->children[i];
+		const config_section::ConfigValue* name = config_section::FindValue(item, "ProcessName");
+		const std::string label = name != nullptr && !name->text.empty() ? "service '" + name->text + "'" : "service " + std::to_string(i + 1);
+		config_section::ConfigSection section(item, label);
+		if (!section.ReadBool("Enabled", true)) continue; // switched off: nothing else of it is read or checked
+
 		Process process;
 		const int loaded = process.UpdateArgs(section);
 		if (loaded == -2)
 		{
-			const std::string error = "[" + std::string(section) + "] ProcessName '" + process.GetProcessName() +
-				"' is reserved (pm, all, BPM, PMC, GUI) or contains '/'; service ignored";
-			LOGF_ERROR("%s", error.c_str());
-			if (errors) errors->push_back(error);
+			problems.push_back(label + ": ProcessName is reserved (pm, all, BPM, PMC, GUI) or contains '/'; service ignored");
+			continue;
 		}
-		if (loaded != 1) continue;
+		if (loaded != 1)
+		{
+			problems.push_back(label + ": ProcessName and ExecutablePath are required; service ignored");
+			continue;
+		}
+		addProblems(section.Problems());
 		// [ProcessManager] Mode applies to every service without a WorkMode of its own.
-		if (hasDefaultWorkMode && ConfigHelper::ReadConfiguration(section, "WorkMode", temp, "") != legacy::enums::RetVal::Success)
+		if (hasDefaultWorkMode && !section.Has("WorkMode"))
 		{
 			process.SetWorkMode(processManagerParams->workMode);
 		}
 		processManagerParams->processList.emplace_back(std::move(process));
+	}
+
+	for (const auto& problem : problems)
+	{
+		if (errors) errors->push_back(problem);
+		else logger::Error("%s", problem.c_str());
 	}
 
 	return processManagerParams;
@@ -475,18 +498,18 @@ bool process_manager::ProcessManager::ApplyToAll(ProcessManagerCommandEnum comma
 	}
 	if (command == ProcessManagerCommandEnum::StartService || command == ProcessManagerCommandEnum::RestartService)
 	{
-		LOGF_DEBUG("--start all received, resetting config");
+		logger::Debug("--start all received, resetting config");
 		for (auto& process : processParams->processList)
 		{
 			RetireProcess(process); // the new instances start once these have exited
 		}
-		processParams = GenerateConfig(); //reset the runtime params
+		processParams = GenerateConfig(processParams->document); //reset the runtime params
 
 		std::vector<std::string> errors;
 		SortByDependencies(errors, processParams->processList);
 		for (const auto& error : errors)
 		{
-			LOGF_ERROR("%s", error.c_str());
+			logger::Error("%s", error.c_str());
 		}
 		for (auto& process : processParams->processList)
 		{
@@ -504,7 +527,7 @@ void process_manager::ProcessManager::StartDependencies(const Process& process) 
 		auto dependency = GetProcess(dependsOn);
 		if (dependency == processParams->processList.end())
 		{
-			LOGF_ERROR("[%s] Cannot start missing dependency %s", process.GetProcessName().c_str(), dependsOn.c_str());
+			logger::Error("[%s] Cannot start missing dependency %s", process.GetProcessName().c_str(), dependsOn.c_str());
 			continue;
 		}
 		dependency->StartProcess(); // no-op while it runs
@@ -513,7 +536,7 @@ void process_manager::ProcessManager::StartDependencies(const Process& process) 
 
 bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessManagerCommandStruct& message)
 {
-	LOGF_DEBUG("Command received");
+	logger::Debug("Command received");
 	const auto& command = message.command;
 	const std::string processName = FixedString(message.ServiceName, sizeof(message.ServiceName));
 	if (processName == "all")
@@ -523,7 +546,7 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
 	auto it = GetProcess(processName);
 	if (it == processParams->processList.end())
 	{
-		std::cout << "Cannot find " << processName << std::endl;
+		logger::Warning("Cannot find %s", processName.c_str());
 		return false;
 	}
 	else if (command == ProcessManagerCommandEnum::StartService)
@@ -543,13 +566,11 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
 	{
 		if (it->HasPid())
 		{
-			LOGF_ERROR("[%s] Already running, stop it before starting it with other arguments", processName.c_str());
+			logger::Error("[%s] Already running, stop it before starting it with other arguments", processName.c_str());
 			return false;
 		}
-		std::vector<std::string> args;
 		const std::string argsText = FixedString(message.Args, sizeof(message.Args));
-		ConfigHelper::SplitElementsToVector(argsText.c_str(), ' ', args);
-		it->OverrideStartupArgs(args);
+		it->OverrideStartupArgs(config_section::SplitList(argsText, ' '));
 
 		it->StartProcess();
 		it->SetWorkMode(WorkModeEnum::Auto);

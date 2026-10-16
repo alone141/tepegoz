@@ -1,11 +1,11 @@
 #include <HealthPolicyStruct.h>
-#include <ConfigHelper.h>
+#include "ConfigSection.hpp"
+#include <climits>
 using namespace process_manager;
-void process_manager::HealthPolicyStruct::UpdateArgs(const char* sectionOrder)
+void process_manager::HealthPolicyStruct::UpdateArgs(config_section::ConfigSection& section)
 {
-	int temp = 0;
-	ConfigHelper::ReadValue(sectionOrder, "CheckHealth", CheckHealth, false, 0, 1);
-	ConfigHelper::ReadValue(sectionOrder, "GracePeriodMs", temp, 5000, 0, INT_MAX); GracePeriodMs = std::chrono::milliseconds(temp);
-	ConfigHelper::ReadValue(sectionOrder, "HeartbeatPeriodMs", temp, 1000, 1, INT_MAX); HeartbeatPeriodMs = std::chrono::milliseconds(temp);
-	ConfigHelper::ReadValue(sectionOrder, "MissedHeartbeatThreshold", MissedHeartbeatThreshold, 5, 1, 1000);
+	CheckHealth = section.ReadBool("CheckHealth", false);
+	GracePeriodMs = std::chrono::milliseconds(section.ReadInt("GracePeriodMs", 5000, 0, INT_MAX));
+	HeartbeatPeriodMs = std::chrono::milliseconds(section.ReadInt("HeartbeatPeriodMs", 1000, 1, INT_MAX));
+	MissedHeartbeatThreshold = section.ReadInt("MissedHeartbeatThreshold", 5, 1, 1000);
 }

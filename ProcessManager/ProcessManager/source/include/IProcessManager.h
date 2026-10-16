@@ -1,8 +1,7 @@
 #pragma once
-#include <legacy/common/type/IObject.h>
 namespace process_manager {
 
-	class IProcessManager : public legacy::type::IObject {
+	class IProcessManager {
 	public:
 		virtual int StartUp() = 0;
 		virtual int TearDown() = 0;

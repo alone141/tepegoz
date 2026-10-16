@@ -1,10 +1,11 @@
 #pragma once
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <filesystem>
+#include <sys/types.h>
 #include <vector>
 
-#include <legacy/common/type/Arguments.h>
 #include <StdioConfigStruct.h>
 #include <RestartPolicyStruct.h>
 #include <HealthPolicyStruct.h>
@@ -17,11 +18,11 @@
 namespace process_manager
 {
 
-	struct ProcessConfigParams : public legacy::type::Arguments
+	struct ProcessConfigParams
 	{
 
-		// 1 when loaded, -1 when the section has no service, -2 when ProcessName is reserved.
-		int UpdateArgs(const char* sectionOrder);
+		// 1 when loaded, -1 when ProcessName or ExecutablePath is missing, -2 when ProcessName is reserved.
+		int UpdateArgs(config_section::ConfigSection& section);
 		static bool IsReservedName(const std::string& name);
 
 		std::string ProcessName;
