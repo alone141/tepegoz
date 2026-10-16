@@ -8,7 +8,8 @@ Message body = ARRAY of DetailedHealthReport (144 bytes each with pack=8)
   - raw concatenation  OR
   - [uint32_t count LE] + array
 Each report ends with the GPU use the manager sampled through NVML (GpuUsage).
-Managers from before GPU reporting sent 128-byte reports.
+Managers from before GPU reporting sent 128-byte reports. A payload that fits both
+sizes (9 x 128 = 8 x 144 bytes) is told apart by the GPU fields: memory is 0 unless SAMPLED.
 
 === Commands (ZMQ DEALER → ROUTER) ===
 Identity set to b"GUI" (GUI_IDENTITY); the C++ CLI uses b"PMC"
@@ -83,7 +84,7 @@ class GpuUsage(ctypes.Structure):
     """GPU use of every process of a service, on every GPU."""
     _pack_ = 8
     _fields_ = [
-        ("memoryUsageInBytes", ctypes.c_uint64),
+        ("memoryUsageInBytes", ctypes.c_uint64),  # 0 unless state is SAMPLED
         ("utilizationPercent", ctypes.c_int32),  # summed over GPUs (200: two busy GPUs); -1 unknown
         ("state",              ctypes.c_uint8),  # GpuState; the other fields count only when SAMPLED
         ("reserved",           ctypes.c_uint8 * 3),
@@ -116,19 +117,26 @@ def parse_health_reports(data: bytes) -> List[DetailedHealthReport]:
     if not data:
         return []
 
+    layouts = []
     # length-prefixed?
     if len(data) >= 4:
         count = int.from_bytes(data[:4], "little", signed=False)
         body = data[4:]
         if 0 < count < 10_000 and len(body) == count * REPORT_SIZE:
-            return _unpack_array(body, count)
+            layouts.append((body, count))
 
     # raw concatenation
     if len(data) % REPORT_SIZE == 0:
-        n = len(data) // REPORT_SIZE
-        if n > 0:
-            return _unpack_array(data, n)
+        layouts.append((data, len(data) // REPORT_SIZE))
 
+    for body, n in layouts:
+        reports = _unpack_array(body, n)
+        if all(_gpu_fields_consistent(r) for r in reports):
+            return reports
+
+    mismatch = ""
+    if layouts:
+        mismatch = f"\n  read as {REPORT_SIZE}-byte reports, a report has GPU memory without a sampled GPU"
     legacy = ""
     if len(data) % LEGACY_REPORT_SIZE == 0:
         legacy = (
@@ -141,8 +149,15 @@ def parse_health_reports(data: bytes) -> List[DetailedHealthReport]:
         f"  REPORT_SIZE     = {REPORT_SIZE}\n"
         f"  remainder       = {len(data) % REPORT_SIZE}\n"
         f"  first 32 bytes  = {data[:32].hex(' ')}"
-        f"{legacy}"
+        f"{mismatch}{legacy}"
     )
+
+
+def _gpu_fields_consistent(report: DetailedHealthReport) -> bool:
+    # The manager sends GPU memory only in a SAMPLED report. Bytes of 128-byte reports read as 144-byte ones
+    # put the second report's name in the first one's GPU fields, which fails this.
+    gpu = report.gpuUsage
+    return gpu.state == GpuState.SAMPLED or gpu.memoryUsageInBytes == 0
 
 
 def _unpack_array(data: bytes, n: int) -> List[DetailedHealthReport]:

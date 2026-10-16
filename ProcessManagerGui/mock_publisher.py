@@ -251,8 +251,11 @@ def main():
             ):
                 last_seen = start_times[name]
 
+            gpu_state = GpuState.NO_DRIVER if args.no_gpu else GpuState.SAMPLED
             gpu_util = vram = 0
-            if name in GPU_USERS and states[name] == RuntimeState.RUNNING:
+            if gpu_state != GpuState.SAMPLED:
+                gpu_util = -1  # what the manager sends without GPU data (memory stays 0)
+            elif name in GPU_USERS and states[name] == RuntimeState.RUNNING:
                 vram_base, (low, high) = GPU_USERS[name]
                 vram = vram_base + random.randint(-50, 50) * 1024 * 1024
                 gpu_util = random.randint(low, high)
@@ -268,7 +271,7 @@ def main():
                 missed=missed[name],
                 restarts=restarts[name],
                 snap_ns=now,
-                gpu_state=GpuState.NO_DRIVER if args.no_gpu else GpuState.SAMPLED,
+                gpu_state=gpu_state,
                 gpu_util=gpu_util,
                 vram=vram,
             )

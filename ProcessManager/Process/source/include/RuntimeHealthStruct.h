@@ -62,7 +62,7 @@ namespace process_manager
 	};
 	struct GpuUsageStruct
 	{
-		uint64_t memoryUsageInBytes = 0; // every process of the service, on every GPU
+		uint64_t memoryUsageInBytes = 0; // every process of the service, on every GPU; 0 unless Sampled (the GUI checks it)
 		int32_t utilizationPercent = -1; // SM use summed over its processes and GPUs (200: two busy GPUs); -1 unknown
 		GpuUsageStateEnum state = GpuUsageStateEnum::NotSampled; // the other fields count only when Sampled
 		uint8_t reserved[3] = {}; // sent as raw bytes: no padding left uninitialized
