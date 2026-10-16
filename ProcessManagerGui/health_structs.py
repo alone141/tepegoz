@@ -9,10 +9,11 @@ Message body = ARRAY of DetailedHealthReport (128 bytes each with pack=8)
   - [uint32_t count LE] + array
 
 === Commands (ZMQ DEALER → ROUTER) ===
-Identity set to b"PMC"
+Identity set to b"GUI" (GUI_IDENTITY); the C++ CLI uses b"PMC"
 Multipart:
   frame 0 : b"BPM"
   frame 1 : packed CommandMessage (65 bytes)
+The manager answers a command from b"GUI" with [b"BPM"][b"1" accepted | b"0" refused].
 
 struct CommandMessage {
     uint8_t command;          // CommandEnum
@@ -157,6 +158,11 @@ def format_bytes(n: int) -> str:
 # Commands (DEALER)
 # ──────────────────────────────────────────────────────────────────────────────
 
+# The manager's GUI_ID: commands from it are answered, and it does not clash
+# with the C++ CLI, which connects as b"PMC".
+GUI_IDENTITY = b"GUI"
+
+
 class CommandEnum(IntEnum):
     """Must match the C++ CommandEnum wire values."""
     START   = 78
@@ -177,16 +183,21 @@ COMMAND_SIZE = ctypes.sizeof(CommandMessage)
 assert COMMAND_SIZE == 65, f"Unexpected COMMAND_SIZE={COMMAND_SIZE}"
 
 
-def _utf8_fit(text: str, max_bytes: int) -> bytes:
-    """Encode UTF-8 without splitting a multi-byte character."""
+COMMAND_TEXT_MAX_BYTES = 31  # char[32] fields, the last byte stays NUL
+
+
+def _encode_field(text: str, what: str) -> bytes:
+    """UTF-8 bytes for a command field, refusing text that does not fit.
+
+    Truncating would address a different (or no) process: the manager
+    matches the whole name.
+    """
     raw = text.encode("utf-8")
-    if len(raw) <= max_bytes:
-        return raw
-    raw = raw[:max_bytes]
-    while raw and (raw[-1] & 0xC0) == 0x80:
-        raw = raw[:-1]
-    if raw and (raw[-1] & 0xC0) == 0xC0:
-        raw = raw[:-1]
+    if len(raw) > COMMAND_TEXT_MAX_BYTES:
+        raise ValueError(
+            f"{what} is {len(raw)} bytes; commands carry at most "
+            f"{COMMAND_TEXT_MAX_BYTES}"
+        )
     return raw
 
 
@@ -195,16 +206,16 @@ def make_command_message(
     service_name: str,
     args: str = "",
 ) -> bytes:
-    """Build the binary payload that is sent as the second multipart frame."""
+    """Build the binary payload that is sent as the second multipart frame.
+
+    Raises ValueError when the service name or args do not fit.
+    """
     msg = CommandMessage()
     msg.command = int(command)
 
     # c_char arrays are C strings: assign bytes without forcing a 32-byte
-    # pad (ctypes copies and NUL-terminates). Cap at 31 so the last byte
-    # stays NUL — same as the original packer.
-    name_b = _utf8_fit(service_name, 31)
-    args_b = _utf8_fit(args, 31)
-    msg.ServiceName = name_b
-    msg.Args = args_b
+    # pad (ctypes copies and NUL-terminates).
+    msg.ServiceName = _encode_field(service_name, "process name")
+    msg.Args = _encode_field(args, "args")
 
     return bytes(msg)

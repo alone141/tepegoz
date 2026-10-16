@@ -24,7 +24,7 @@ using namespace process_manager;
 using namespace std;
 
 
-RetVal ProcessManagerApp::StartUp()
+RetVal ProcessManagerApp::StartUp(const std::string& configPath)
 {
 	auto retVal = InitializeTimer();
 	retVal = InitializeLogManager();
@@ -32,7 +32,9 @@ RetVal ProcessManagerApp::StartUp()
 	LOGF_INFO("PROCESMANAGER VERSION: %s", PROCESSMANAGER_VERSION_FULL);
 
 
-	retVal = InitializeConfigManager(PROCESS_MANAGER_CONFIG_FILE);
+	// A file named with --config is used as given; only the installed one may fall back to the share directory.
+	const bool givenPath = !configPath.empty();
+	retVal = InitializeConfigManager(givenPath ? configPath.c_str() : PROCESS_MANAGER_CONFIG_FILE, !givenPath);
 	if (retVal != RetVal::Success) return retVal;
 	retVal = InitializeProcessManager();
 
@@ -51,10 +53,12 @@ RetVal ProcessManagerApp::Run()
 	return RetVal::Success;
 }
 
+// Called from main's signal thread: only asks the supervision thread to stop; Run() returns after.
 legacy::enums::RetVal process_manager::ProcessManagerApp::ShutdownSignalReceived(int signum)
 {
 	LOGF_WARNING(" ==== SHUTDOWN SIGNAL RECEIVED signum: %d  ==== ", signum)
-		return TearDown();
+	if (processManager) processManager->RequestStop();
+	return RetVal::Success;
 }
 
 object::ObjectType process_manager::ProcessManagerApp::GetType() const
@@ -62,7 +66,7 @@ object::ObjectType process_manager::ProcessManagerApp::GetType() const
 	return legacy::object::ProcessManagerApp;
 }
 
-RetVal ProcessManagerApp::InitializeConfigManager(const char* configPath)
+RetVal ProcessManagerApp::InitializeConfigManager(const char* configPath, bool allowFallback)
 {
 	static ConfigurationManager configManager;
 	auto file = legacy::mem::Alloc<File>::MakeUnique(configPath);
@@ -72,6 +76,12 @@ RetVal ProcessManagerApp::InitializeConfigManager(const char* configPath)
 	}
 	if (file->Open() != RetVal::Success)
 	{
+		if (!allowFallback)
+		{
+			LOGF(object::ProcessManagerApp, LogLevel::Error, "Config file %s could not be opened", configPath);
+			cerr << "Config file " << configPath << " could not be opened" << endl;
+			return RetVal::FileNotOpened;
+		}
 		LOGF(object::ProcessManagerApp, LogLevel::Warning, "Config file could not found at %s", configPath);
 		LOGF(object::ProcessManagerApp, LogLevel::Warning, "Searching config file at %s", PROCESS_MANAGER_SHARE_DIR"ProcessManagerConfig.ini");
 		file = legacy::mem::Alloc<File>::MakeUnique(PROCESS_MANAGER_SHARE_DIR"ProcessManagerConfig.ini");
@@ -97,7 +107,16 @@ RetVal ProcessManagerApp::InitializeConfigManager(const char* configPath)
 RetVal ProcessManagerApp::InitializeProcessManager()
 {
 	auto config = ProcessManager::GenerateConfig();
-	processManager = make_unique<ProcessManager>(move(config));
+	try
+	{
+		processManager = make_unique<ProcessManager>(move(config));
+	}
+	catch (const zmq::error_t& e)
+	{
+		// For example another manager already holds the health ports.
+		LOGF_ERROR("Process manager sockets could not be opened: %s", e.what());
+		return RetVal::UnitStartUpFailure;
+	}
 	auto cycleDetected = !processManager->StartUp();
 	return cycleDetected ? RetVal::UnitStartUpFailure : RetVal::Success;
 }
@@ -186,7 +205,7 @@ RetVal ProcessManagerApp::InitializeLogManager()
 }
 RetVal ProcessManagerApp::TearDown()
 {
-	processManager->TearDown();
+	if (processManager) processManager->TearDown();
 
 	usleep(500);
 	logManager->Suspend();
@@ -194,26 +213,28 @@ RetVal ProcessManagerApp::TearDown()
 	return RetVal::Success;
 }
 
-void ProcessManagerApp::ValidateConfig(string config)
+bool ProcessManagerApp::ValidateConfig(string config)
 {
 	vector<string> err;
-	auto retVal = InitializeConfigManager(config.c_str());
-	if (retVal != RetVal::Success) { return; }
-	auto params = ProcessManager::GenerateConfig();
+	auto retVal = InitializeConfigManager(config.c_str(), false);
+	if (retVal != RetVal::Success) { return false; }
+	auto params = ProcessManager::GenerateConfig(&err);
+	ProcessManager::SortByDependencies(err, params->processList); // duplicates, missing dependencies, cycles
 	for (const auto& process : params->processList)
 	{
 		process.CheckConfig(err);
 	}
 	PrintErrors(err);
+	return err.empty();
 }
 
 void ProcessManagerApp::PrintDependencyGraph(string config)
 {
 	vector<string> err;
-	auto retVal = InitializeConfigManager(config.c_str());
+	auto retVal = InitializeConfigManager(config.c_str(), false);
 	if (retVal != RetVal::Success) return;
 
-	auto params = ProcessManager::GenerateConfig();
+	auto params = ProcessManager::GenerateConfig(&err);
 	ProcessManager::SortByDependencies(err, params->processList);
 
 	PrintErrors(err);
@@ -281,7 +302,7 @@ void ProcessManagerApp::PrintProcessStatus()
 			<< std::setw(wPid) << "Process Id"
 			<< std::setw(wStatus) << "Process Status"
 			<< std::setw(wMissed) << "Missed Beats"
-			<< std::setw(wStart) << "Start Count"
+			<< std::setw(wStart) << "Restarts"
 			<< std::setw(wCpu) << "CPU Usage(us)"
 			<< std::setw(wMem) << "Memory Usage(MB)" << '\n';
 
@@ -334,34 +355,46 @@ void ProcessManagerApp::PrintProcessStatus()
 	}
 }
 
-void ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum command, const std::string& serviceName)
+bool ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum command, const std::string& serviceName)
 {
-	ProcessManagerCommandStruct message;
-	memcpy(message.ServiceName, serviceName.data(), 32);
-	//memcpy(message.Args, serviceName.data(), 32);
+	ProcessManagerCommandStruct message{};
+	if (serviceName.size() >= sizeof(message.ServiceName))
+	{
+		cerr << "Service name '" << serviceName << "' is longer than " << sizeof(message.ServiceName) - 1 << " bytes" << endl;
+		return false;
+	}
+	memcpy(message.ServiceName, serviceName.data(), serviceName.size());
 	message.command = command;
 	zmq::context_t context(1);
 	zmq::socket_t s(context, zmq::socket_type::dealer);
 	s.set(zmq::sockopt::routing_id, comm::COMMAND_SERVER_ID);
+	// Give up when the manager is not running instead of waiting for it forever.
+	s.set(zmq::sockopt::immediate, 1);
+	s.set(zmq::sockopt::sndtimeo, 2000);
+	s.set(zmq::sockopt::linger, 2000);
 	s.connect(comm::COMMAND_SERVER_PORT);
-	s.send(zmq::buffer(comm::PROCESS_MANAGER_ID), zmq::send_flags::sndmore);
-	s.send(zmq::buffer((void*)&message, sizeof(ProcessManagerCommandStruct)), zmq::send_flags::none);
+	const bool sent = s.send(zmq::buffer(comm::PROCESS_MANAGER_ID), zmq::send_flags::sndmore)
+		&& s.send(zmq::buffer((void*)&message, sizeof(ProcessManagerCommandStruct)), zmq::send_flags::none);
+	if (!sent)
+	{
+		cerr << "Process manager is not reachable at " << comm::COMMAND_SERVER_PORT << endl;
+	}
+	return sent;
 }
 
-void ProcessManagerApp::SendStartService(std::string serviceName)
+bool ProcessManagerApp::SendStartService(std::string serviceName)
 {
-	ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum::StartService, serviceName);
+	return ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum::StartService, serviceName);
 }
-void ProcessManagerApp::SendKillService(std::string serviceName)
+bool ProcessManagerApp::SendKillService(std::string serviceName)
 {
-	ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum::StopService, serviceName);
+	return ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum::StopService, serviceName);
 }
-void ProcessManagerApp::SendDisableService(std::string serviceName)
+bool ProcessManagerApp::SendDisableService(std::string serviceName)
 {
-	ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum::DisableService, serviceName);
+	return ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum::DisableService, serviceName);
 }
-void process_manager::ProcessManagerApp::SendRestartService(std::string serviceName)
+bool process_manager::ProcessManagerApp::SendRestartService(std::string serviceName)
 {
-	ProcessManagerApp::SendKillService(serviceName);
-	ProcessManagerApp::SendStartService(serviceName);
+	return ProcessManagerApp::SendCommandMessage(ProcessManagerCommandEnum::RestartService, serviceName);
 }

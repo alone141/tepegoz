@@ -103,7 +103,8 @@ STATE_LABELS: Dict[RuntimeState, str] = {
 ALIVE_STATES = (RuntimeState.STARTING, RuntimeState.RUNNING, RuntimeState.UNHEALTHY)
 # Which command makes sense in which state.
 ACTION_STATES: Dict[CommandEnum, Tuple[RuntimeState, ...]] = {
-    CommandEnum.START: (RuntimeState.STOPPED, RuntimeState.UNKNOWN, RuntimeState.UNHEALTHY),
+    # Not UNHEALTHY: that process is usually still alive; Restart replaces it.
+    CommandEnum.START: (RuntimeState.STOPPED, RuntimeState.UNKNOWN),
     CommandEnum.STOP: (RuntimeState.RUNNING, RuntimeState.STARTING, RuntimeState.UNHEALTHY),
     CommandEnum.RESTART: (
         RuntimeState.RUNNING,
@@ -221,7 +222,9 @@ def uptime_text(state: RuntimeState, start_ns: int, snap_ns: int) -> str:
 def last_seen_text(report: dict) -> str:
     snap = report.get("snapshotTime", 0)
     last = report.get("lastSeen", 0)
-    return format_duration_ns(snap - last if last else 0) + " ago"
+    if not last:
+        return "never"
+    return format_duration_ns(snap - last) + " ago"
 
 
 def snapshot_clock(snap_ns: int) -> str:
@@ -236,7 +239,7 @@ def meta_text(report: dict) -> str:
     snap = report.get("snapshotTime", 0)
     return " · ".join(
         (
-            f"PID {pid}" if pid else "PID —",
+            f"PID {pid}" if pid > 0 else "PID —",  # the manager reports -1 for none
             f"up {uptime_text(report['state'], report.get('start_time', 0), snap)}",
             f"last seen {last_seen_text(report)}",
             f"snapshot {snapshot_clock(snap)}",

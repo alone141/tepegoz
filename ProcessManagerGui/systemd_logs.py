@@ -14,6 +14,8 @@ from typing import List, Optional, Sequence, Tuple
 
 SERVICE_UNIT = "processmanager.service"
 CGROUP_ROOT = "/sys/fs/cgroup"
+# The manager's own cgroup; every task_<name> it creates sits next to it.
+MANAGER_CGROUP = "task_pm"
 REFRESH_MS = 2000
 # Number of journal *entries* (each line shown in full — no field ellipsis).
 JOURNAL_LINES = 50
@@ -92,7 +94,11 @@ def _format_short_iso(entry: dict, pid: Optional[int], message: str) -> str:
 
 
 def parse_journal_json(text: str) -> List[JournalLine]:
-    """Parse newline-delimited journalctl -o json records."""
+    """Parse newline-delimited journalctl -o json records.
+
+    The callers pass --all: without it journalctl writes fields over 4096
+    bytes as null, so a long message (a stack trace) would show as blank.
+    """
     lines: List[JournalLine] = []
     for raw in (text or "").splitlines():
         raw = raw.strip()
@@ -212,18 +218,29 @@ def index_task_cgroups(root: str = CGROUP_ROOT) -> dict:
 def find_task_cgroup_sysfs(
     process_name: str, root: str = CGROUP_ROOT
 ) -> Optional[str]:
+    """sysfs path of task_<processName>, also once the manager has removed it.
+
+    A stopped service's directory is gone, but its journal entries keep the
+    path, which is the sibling of the manager's own cgroup.
+    """
     want = task_cgroup_name(process_name)
     if not process_name or not os.path.isdir(root):
         return None
+    manager_dir = None
     try:
         for dirpath, _dirnames, _files in os.walk(root):
             try:
-                if os.path.basename(dirpath) == want:
-                    return dirpath
+                base = os.path.basename(dirpath)
             except OSError:
                 continue
+            if base == want:
+                return dirpath
+            if base == MANAGER_CGROUP and manager_dir is None:
+                manager_dir = dirpath
     except OSError:
         return None
+    if manager_dir:
+        return os.path.dirname(manager_dir).rstrip("/") + "/" + want
     return None
 
 
@@ -330,7 +347,7 @@ def fetch_journal_pid(
         return [], "journalctl not found on PATH"
     code, out, err = _run(
         exe,
-        [f"_PID={int(pid)}", "-n", str(lines), "--no-pager", "-o", "json"],
+        [f"_PID={int(pid)}", "-n", str(lines), "--no-pager", "--all", "-o", "json"],
     )
     if code != 0 and not out.strip():
         return [], err.strip() or f"journalctl failed (exit {code})"
@@ -350,6 +367,7 @@ def fetch_journal_cgroup(
             "-n",
             str(lines),
             "--no-pager",
+            "--all",
             "-o",
             "json",
         ],
@@ -368,7 +386,7 @@ def fetch_journal(
         return [], "journalctl not found on PATH"
     code, out, err = _run(
         exe,
-        ["-u", unit, "-n", str(lines), "--no-pager", "-o", "json"],
+        ["-u", unit, "-n", str(lines), "--no-pager", "--all", "-o", "json"],
     )
     if code != 0 and not out.strip():
         return [], err.strip() or f"journalctl failed (exit {code})"

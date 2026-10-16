@@ -8,88 +8,112 @@ const char* ConfigTemplate =
 "\n\
 ; Auto: Automatically start all registered services at the program start \n\
 ; Manual: Wait for a start signal --start \n\
+; A service's own WorkMode overrides this \n\
 [ProcessManager] \n\
 Mode = Auto \n\
  \n\
  \n\
-; We can have services numbered from[1] - [9] \n\
+; We can have services numbered from [1] - [9] \n\
 ; Each service MUST have a ProcessName and ExecutablePath \n\
 ; All other parameters are optional \n\
-; If you want to not ignore a service change its number to 'x' \n\
-; Eg[3] ->[x] Now[x] is ignored and will not be included in any conditions \n\
+; To ignore a service, change its number to 'x' \n\
+; Eg [3] -> [x] Now [x] is ignored and will not be included in any conditions \n\
  \n\
  \n\
 [1] \n\
 ; MUST: Process name used for logging and on the DependsOn list \n\
+; pm, all, BPM, PMC and GUI are reserved, and the name cannot contain '/' \n\
 ProcessName = keepalive \n\
-; MUST: Path of the Executable.Must be absolute path \n\
-ExecutablePath = / opt / app / bin / keepalive \n\
-; OPTIONAL: Program argumets. Must be seperated by empty space' ' \n\
+; MUST: Path of the Executable. Must be absolute path \n\
+ExecutablePath = /opt/app/bin/keepalive \n\
+; OPTIONAL: Program arguments. Must be separated by empty space ' ' \n\
 ; EXAMPLE: --port 1001 --silent \n\
 ; DEFAULT: Empty \n\
 Args = 10 \n\
 ; OPTIONAL: Directory that the executable will run in \n\
 ; DEFAULT: Empty \n\
-Cwd = / opt / app \n\
-; OPTIONAL: Weather the service should have its own cgroup or not \n\
+Cwd = /opt/app \n\
+; OPTIONAL: Auto: started with the manager and restarted by RestartMode. Manual: waits for --start \n\
+; DEFAULT: [ProcessManager] Mode, else Manual \n\
+WorkMode = Auto \n\
+; OPTIONAL: Whether the service should have its own cgroup or not \n\
 ; DEFAULT: True \n\
 CreateProcessGroup = True \n\
-; UNUSED \n\
-InheritParentEnviroment = false \n\
-; OPTIONAL: Directory that the executable will run in \n\
+; OPTIONAL: Start with the manager's environment (true) or an empty one (false), plus EnviromentVariables \n\
+; DEFAULT: true \n\
+InheritParentEnviroment = true \n\
+; OPTIONAL: Where stdout and stderr go \n\
 ; DEFAULT: Inherit \n\
-; Inherit: Output terminal will be same as the process manager \n\
-; Pipe: Output will be redirected to the process manager \n\
+; Inherit: Output terminal will be same as the process manager (under systemd: a journal stream of its own) \n\
+; Pipe: Each line is logged by the process manager \n\
 ; File: Output will be redirected to a file \n\
 ; NullDevice: Output will be redirected to void \n\
 StdioMode = NullDevice \n\
-; OPTIONAL: Only available in StdioMode::File \n\
-; DEFAULT: / tmp / output.txt \n\
+; OPTIONAL: Only available in StdioMode::File. Its directory must exist \n\
+; DEFAULT: /tmp/output.txt \n\
 ; Redirected output will be written to this file \n\
-StdioFilePath = / opt / app / output.txt \n\
+StdioFilePath = /opt/app/output.txt \n\
 ; OPTIONAL: Only available in StdioMode::File \n\
 ; DEFAULT: false \n\
 StdioAppend = false \n\
-; OPTIONAL: Waits x ms to call force shutdown \n\
+; OPTIONAL: Waits x ms after SIGTERM before SIGKILL, at least 1000 \n\
 ; DEFAULT: 10000 \n\
-ForceKillTimeoutMs = 100 \n\
+ForceKillTimeoutMs = 10000 \n\
 ; OPTIONAL: Service will start after all dependencies are met \n\
 ; DEFAULT: Empty \n\
-; Dependencies are consisted of ProcessName seperated By ' ' \n\
+; Dependencies are consisted of ProcessName separated By ' ' \n\
 ; EXAMPLE: sleep ssh \n\
-DependsOn = keepalive2 \n\
-; OPTIONAL: Service will start after all dependencies are met \n\
+DependsOn = \n\
+; OPTIONAL: Environment variables, separated by ';' \n\
 ; DEFAULT: Empty \n\
-; EnviromentVariables, seperated by ';' \n\
 EnviromentVariables = PYTHONPATH=/usr/local/lib/python3.10/site-packages \n\
 ; OPTIONAL: Conditions for restart \n\
 ; DEFAULT: OnFailure \n\
 ; Never: Never restart \n\
-; OnFailure: Only after exit code is not 0 \n\
-; Always: Always restart after any exit \n\
-; User: User controls the start ups \n\
+; OnFailure: After a non-zero exit code, a crash (a signal other than SIGTERM, SIGINT, SIGHUP, SIGPIPE) or missed heartbeats \n\
+; Always: After any exit, and after missed heartbeats \n\
+; UnlessStopped: Same as Always \n\
+; In every mode a stop command keeps the service stopped \n\
 RestartMode = Always \n\
-; OPTIONAL: Maximum number of restarts \n\
+; OPTIONAL: Maximum number of restarts in a row \n\
 ; DEFAULT: 5 \n\
-; Restarting is given up  after this count \n\
+; Restarting is given up after this count; a run of RestartResetMs or longer starts the count again \n\
 MaxRestarts = 5 \n\
+; OPTIONAL: Waits x ms after an exit before the first restart \n\
+; DEFAULT: 1000 \n\
+RestartDelayMs = 1000 \n\
+; OPTIONAL: Each further restart in a row waits this many times longer, at most 5 minutes \n\
+; DEFAULT: 2.0 \n\
+BackoffMultiplier = 2.0 \n\
+; OPTIONAL: A run at least this long (ms) resets the restart count and the delay \n\
+; DEFAULT: 60000 \n\
+RestartResetMs = 60000 \n\
 ; OPTIONAL: Does service has a heartbeat mechanism with ZMQ \n\
 ; DEFAULT: false \n\
-; Heartbeats are ZMQ dealer packets send to 'insertportnumber' \n\
+; Heartbeats are ZMQ dealer messages to 'BPM' through tcp://localhost:5557 \n\
 ; With ZMQ identity same as the ProcessName \n\
 CheckHealth = true \n\
-; OPTIONAL: After restarts waits x ms to listen to heartbeats \n\
+; OPTIONAL: After a start, waits x ms before heartbeats are checked \n\
 ; DEFAULT: 5000 \n\
 GracePeriodMs = 20000 \n\
 ; OPTIONAL: How freqent are the heartbeats \n\
 ; DEFAULT: 1000 \n\
 HeartbeatPeriodMs = 1500 \n\
-; OPTIONAL: After missing x heartbeats restart the service \n\
-; DEFAULT: 5 \n\
+; OPTIONAL: After x heartbeat periods without one the service is Unhealthy and restarted (per RestartMode) \n\
+; DEFAULT: 5, at least 1 \n\
 MissedHeartbeatThreshold = 20 \n\
+; OPTIONAL: Sets DISPLAY and XAUTHORITY for a graphical service \n\
+; DEFAULT: false \n\
+UseDisplay = false \n\
+; OPTIONAL: Only with UseDisplay \n\
+; DEFAULT: :1 \n\
+Display = :1 \n\
+; OPTIONAL: Only with UseDisplay \n\
+; DEFAULT: /home/user/.Xauthority \n\
+XAuthority = /home/user/.Xauthority \n\
 ";
 
-int ParseInputFlags(const int& argc, char**& argv)
+int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 {
 	const std::string prog = (argc > 0 && argv && argv[0]) ? argv[0] : "netmgr";
 
@@ -108,7 +132,7 @@ int ParseInputFlags(const int& argc, char**& argv)
 
 // Positional: command + rest (e.g. start --only A B)
 	options.add_options("Commands")
-		("command", "Command: validate|graph|stop|status|generate", cxxopts::value<std::string>()->default_value(""));
+		("command", "Command: validate|graph|status|generate", cxxopts::value<std::string>()->default_value(""));
 
 	options.parse_positional({ "command" }); // first non-option becomes command
 	options.positional_help("COMMAND [OPTIONS]");
@@ -135,11 +159,11 @@ int ParseInputFlags(const int& argc, char**& argv)
 			<< "  generate   Generates an example config\n"
 			<< "\n";
 
-		return 1;
+		return 0;
 	}
 
 
-	if ((cmd == "validate" || cmd == "graph" || cmd == "start"))
+	if ((cmd == "validate" || cmd == "graph"))
 	{
 		if (config.empty())
 		{
@@ -152,44 +176,45 @@ int ParseInputFlags(const int& argc, char**& argv)
 	if (cmd == "status")
 	{
 		process_manager::ProcessManagerApp::PrintProcessStatus();
-		return 1;
+		return 0;
 	}
 	else if (cmd == "generate")
 	{
 		GenerateTemplateConfig();
-		return 1;
+		return 0;
 	}
 	else if (cmd == "validate")
 	{
-		process_manager::ProcessManagerApp::ValidateConfig(config);
-		return 1;
+		return process_manager::ProcessManagerApp::ValidateConfig(config) ? 0 : 1;
 	}
 	else if (cmd == "graph")
 	{
 		process_manager::ProcessManagerApp::PrintDependencyGraph(config);
+		return 0;
+	}
+	else if (!cmd.empty())
+	{
+		std::cerr << "Unknown command '" << cmd << "'. Use --help to list the commands.\n";
 		return 1;
 	}
 	else if (!startCmd.empty())
 	{
-		process_manager::ProcessManagerApp::SendStartService(startCmd);
-		return 1;
+		return process_manager::ProcessManagerApp::SendStartService(startCmd) ? 0 : 1;
 	}
 	else if (!disableCmd.empty())
 	{
-		process_manager::ProcessManagerApp::SendDisableService(disableCmd);
-		return 1;
+		return process_manager::ProcessManagerApp::SendDisableService(disableCmd) ? 0 : 1;
 	}
 	else if (!killCmd.empty())
 	{
-		process_manager::ProcessManagerApp::SendKillService(killCmd);
-		return 1;
+		return process_manager::ProcessManagerApp::SendKillService(killCmd) ? 0 : 1;
 	}
 	else if (!restartCmd.empty())
 	{
-		process_manager::ProcessManagerApp::SendRestartService(restartCmd);
-		return 1;
+		return process_manager::ProcessManagerApp::SendRestartService(restartCmd) ? 0 : 1;
 	}
-	return 0;
+	configPath = config;
+	return -1;
 }
 void GenerateTemplateConfig()
 {

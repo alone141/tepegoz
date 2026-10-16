@@ -10,6 +10,7 @@
 #include <ProcessManagerCommands.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace process_manager {
@@ -19,7 +20,7 @@ namespace process_manager {
 		ProcessManagerApp() = default;
 		~ProcessManagerApp() = default;
 
-		legacy::enums::RetVal StartUp();
+		legacy::enums::RetVal StartUp(const std::string& configPath = ""); // empty: the installed config
 		legacy::enums::RetVal InitializeProcessManager();
 		legacy::enums::RetVal InitializeLogManager();
 		legacy::enums::RetVal InitializeTimer();
@@ -31,19 +32,20 @@ namespace process_manager {
 		legacy::object::ObjectType GetType() const override;
 
 
-		static legacy::enums::RetVal InitializeConfigManager(const char* configPath);
+		// allowFallback: try the share directory's copy when configPath cannot be opened.
+		static legacy::enums::RetVal InitializeConfigManager(const char* configPath, bool allowFallback);
 
-		static void ValidateConfig(std::string config);
+		static bool ValidateConfig(std::string config); // true when no problem was found
 		static void PrintDependencyGraph(std::string config);
 
 		static void PrintProcessStatus();
-		static void SendStartService(std::string serviceName);
-		static void SendDisableService(std::string serviceName);
-		static void SendKillService(std::string serviceName);
-		static void SendRestartService(std::string serviceName);
+		static bool SendStartService(std::string serviceName);
+		static bool SendDisableService(std::string serviceName);
+		static bool SendKillService(std::string serviceName);
+		static bool SendRestartService(std::string serviceName);
 	private:
 		static void PrintErrors(const std::vector<std::string>& errList);
-		static void SendCommandMessage(ProcessManagerCommandEnum command, const std::string& serviceName);
+		static bool SendCommandMessage(ProcessManagerCommandEnum command, const std::string& serviceName);
 
 		std::unique_ptr<IProcessManager> processManager;
 		legacy::logger::ILogManager* logManager;

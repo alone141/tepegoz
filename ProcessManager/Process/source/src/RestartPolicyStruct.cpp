@@ -12,6 +12,11 @@ void process_manager::RestartPolicyStruct::UpdateArgs(const char* sectionOrder)
 	else if (!strcmp(temp, "UnlessStopped")) { this->RestartMode = RestartModeEnum::UnlessStopped; }
 
 	ConfigHelper::ReadValue(sectionOrder, "MaxRestarts", MaxRestarts, 5, 0, 1000);
+	ConfigHelper::ReadValue(sectionOrder, "BackoffMultiplier", BackoffMultiplier, 2.0, 1.0, 10.0);
+
+	int tempInt = 0;
+	ConfigHelper::ReadValue(sectionOrder, "RestartDelayMs", tempInt, 1000, 0, INT_MAX); RestartDelayMs = std::chrono::milliseconds(tempInt);
+	ConfigHelper::ReadValue(sectionOrder, "RestartResetMs", tempInt, 60000, 0, INT_MAX); RestartResetMs = std::chrono::milliseconds(tempInt);
 
 
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <string>
 #include <filesystem>
 #include <vector>
@@ -11,6 +12,7 @@
 #include <ProcessHandle.h>
 #include <PipeStruct.h>
 #include <RuntimeHealthStruct.h>
+#include <StopPhaseEnum.h>
 #include <WorkModeEnum.h>
 namespace process_manager
 {
@@ -18,7 +20,9 @@ namespace process_manager
 	struct ProcessConfigParams : public legacy::type::Arguments
 	{
 
+		// 1 when loaded, -1 when the section has no service, -2 when ProcessName is reserved.
 		int UpdateArgs(const char* sectionOrder);
+		static bool IsReservedName(const std::string& name);
 
 		std::string ProcessName;
 		std::filesystem::path ExecutablePath;
@@ -27,6 +31,8 @@ namespace process_manager
 		std::filesystem::path Cwd;
 		bool InheritParentEnviroment = true;
 		bool UseDisplay = false;
+		std::string Display = ":1";
+		std::string XAuthority = "/home/user/.Xauthority";
 
 		//meliksahs TODO
 		//std::unordered_map<std::string, std::string> env_overrides;
@@ -48,7 +54,7 @@ namespace process_manager
 		StdioPolicyStruct StdioPolicy{};
 		RestartPolicyStruct RestartPolicy{};
 		HealthPolicyStruct HealthPolicy{};
-		WorkModeEnum WorkMode;
+		WorkModeEnum WorkMode = WorkModeEnum::Manual;
 
 		//std::unordered_map<std::string, std::string> metadata;
 
@@ -61,5 +67,16 @@ namespace process_manager
 		PipeStruct pipeFd{};
 		RuntimeHealthStruct runtimeHealth{};
 		std::filesystem::path cgroup_path;
+
+		StopPhaseEnum stopPhase = StopPhaseEnum::None;
+		std::chrono::high_resolution_clock::time_point stopDeadline{};
+		pid_t stopGroup = -1; // process group being stopped; outlives the reaped leader
+		bool restartRequested = false;
+		bool healthCheckSuspended = false;
+		bool unresponsiveStop = false;
+		std::string stdioLine;
+
+		std::chrono::high_resolution_clock::time_point exitTime{};
+		int consecutiveRestarts = 0;
 	};
 }

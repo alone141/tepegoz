@@ -4,9 +4,10 @@ Mock process-manager for testing the GUI.
 
 PUB  (bind)  – broadcasts array of DetailedHealthReport
 ROUTER (bind) – accepts DEALER commands with:
-      identity = b"PMC"
+      identity = b"GUI" (or the CLI's b"PMC")
       frame0   = b"BPM"
       frame1   = packed CommandMessage (65 B)
+    and answers the GUI identity with [b"BPM"][b"1" | b"0"], as the manager does.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import zmq
 
 from health_structs import (
     COMMAND_SIZE,
+    GUI_IDENTITY,
     CommandEnum,
     CommandMessage,
     DetailedHealthReport,
@@ -97,7 +99,7 @@ def main():
     router = ctx.socket(zmq.ROUTER)
     router.bind(args.router)
     print(f"[ROUTER] bound to {args.router}")
-    print("Expecting DEALER identity = 'PMC', frames: 'BPM' + CommandMessage(65 B)\n")
+    print("Expecting DEALER identity = 'GUI' (or the CLI's 'PMC'), frames: 'BPM' + CommandMessage(65 B)\n")
 
     # simulated state
     states     = {n: RuntimeState.RUNNING for n in PROCESSES}
@@ -156,8 +158,8 @@ def main():
                 print(f"← from identity={identity!r}  topic={topic!r}  "
                       f"payload={len(payload) if payload else 0} B")
 
-                if identity != b"PMC":
-                    print(f"   WARNING: expected identity 'PMC', got {identity!r}")
+                if identity not in (GUI_IDENTITY, b"PMC"):
+                    print(f"   WARNING: expected identity 'GUI' or 'PMC', got {identity!r}")
                 if topic != b"BPM":
                     print(f"   WARNING: expected topic 'BPM', got {topic!r}")
 
@@ -171,6 +173,9 @@ def main():
                     args = cmd_msg.Args.split(b"\x00", 1)[0].decode(errors="replace")
                     print(f"   CMD={cmd}  ServiceName={svc!r}  Args={args!r}")
 
+                    accepted = svc in states and cmd in (
+                        CommandEnum.START, CommandEnum.STOP, CommandEnum.RESTART
+                    )
                     if svc in states:
                         if cmd == CommandEnum.START:
                             states[svc] = RuntimeState.STARTING
@@ -183,6 +188,9 @@ def main():
                             states[svc] = RuntimeState.STARTING
                             restarts[svc] += 1
                             print(f"   → restarting {svc}")
+                    if identity == GUI_IDENTITY:
+                        # Like the manager: [BPM][b"1" accepted | b"0" refused], GUI only.
+                        router.send_multipart([identity, b"BPM", b"1" if accepted else b"0"])
                 else:
                     print(f"   payload size mismatch "
                           f"(got {len(payload) if payload else 0}, expected {COMMAND_SIZE})")

@@ -3,9 +3,10 @@
 Process Manager Health Monitor – PyQt6 + ZMQ
 
 DEALER wire format (exactly as specified by you):
-    setsockopt(IDENTITY, b"PMC")
+    setsockopt(IDENTITY, b"GUI")
     send(b"BPM", SNDMORE)
     send(CommandMessage)          # packed: uint8 cmd + char[32] name + char[32] args
+    reply: [b"BPM"][b"1" | b"0"]  # accepted / refused
 
 SUB: receives array of DetailedHealthReport (raw or length-prefixed)
 
@@ -22,6 +23,7 @@ import argparse
 import os
 import statistics
 import sys
+import threading
 import time
 from collections import deque
 from queue import Empty, SimpleQueue
@@ -49,6 +51,7 @@ from PyQt6.QtWidgets import (
 )
 
 from health_structs import (
+    GUI_IDENTITY,
     CommandEnum,
     make_command_message,
     parse_health_reports,
@@ -104,6 +107,42 @@ from usage_graphs import UsageGraphWindow, UsageHistory, UsageSample
 
 _color_for_pid = color_for_pid  # former name
 
+# A command the broker has not accepted by then is dropped, not sent later.
+COMMAND_SEND_TIMEOUT_SEC = 3.0
+# A sent command still waiting for the manager's reply after this is forgotten.
+REPLY_TIMEOUT_SEC = 10.0
+# One worker round makes at most journalctl (5 s) or two nvidia-smi calls (3 s each), so
+# waiting this long never has to fall back to QThread.terminate() in practice.
+WORKER_STOP_TIMEOUT_MS = 8000
+
+
+def stop_workers(
+    pairs: List[Tuple[Optional[QObject], Optional[QThread]]],
+    timeout_ms: int = WORKER_STOP_TIMEOUT_MS,
+) -> List[QThread]:
+    """Ask every worker to stop, then wait for all of them against one deadline.
+
+    Stopping them one after another made closing take the sum of their
+    rounds. Returns the threads that had to be terminated (a last resort).
+    """
+    threads = []
+    for worker, thread in pairs:
+        if worker is not None:
+            worker.stop()
+        if thread is not None:
+            thread.quit()
+            threads.append(thread)
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    late = [
+        thread
+        for thread in threads
+        if not thread.wait(max(0, int((deadline - time.monotonic()) * 1000)))
+    ]
+    for thread in late:
+        thread.terminate()
+        thread.wait(1000)
+    return late
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ZMQ Worker
@@ -131,7 +170,11 @@ class ZmqWorker(QObject):
         self._dealer: Optional[zmq.Socket] = None
         self._command_queue: SimpleQueue = SimpleQueue()  # (label, payload)
         self._pending: Optional[Tuple[str, bytes]] = None  # command being sent
+        self._pending_since = 0.0  # monotonic time the pending command was taken
         self._pending_logged = False
+        self._awaiting: Deque[Tuple[float, str]] = deque()  # (sent at, label), oldest first
+        self._finished = False  # the loop has ended; nothing drains the queue
+        self._finish_lock = threading.Lock()
 
     @pyqtSlot()
     def start(self):
@@ -147,25 +190,31 @@ class ZmqWorker(QObject):
 
             # DEALER – exact identity required by process manager
             self._dealer = self._ctx.socket(zmq.DEALER)
-            self._dealer.setsockopt(zmq.IDENTITY, b"PMC")
+            self._dealer.setsockopt(zmq.IDENTITY, GUI_IDENTITY)
             self._dealer.setsockopt(zmq.SNDHWM, 100)
             self._dealer.setsockopt(zmq.SNDTIMEO, 500)
             self._dealer.setsockopt(zmq.LINGER, 0)
+            # Refuse sends while the broker is unreachable instead of queueing
+            # them to fire whenever it comes back.
+            self._dealer.setsockopt(zmq.IMMEDIATE, 1)
             self._dealer.connect(self.dealer_endpoint)
 
             self.connection_status.emit("connected")
             self.log_message.emit(
                 f"SUB → {self.sub_endpoint}  |  "
-                f"DEALER(identity=PMC) → {self.dealer_endpoint}"
+                f"DEALER(identity={GUI_IDENTITY.decode()}) → {self.dealer_endpoint}"
             )
         except zmq.ZMQError as e:
+            self._running = False
+            self._cleanup()
+            self._finish("connection failed")
             self.connection_status.emit(f"error: {e}")
             self.log_message.emit(f"ZMQ connect failed: {e}")
-            self._running = False
             return
 
         poller = zmq.Poller()
         poller.register(self._sub, zmq.POLLIN)
+        poller.register(self._dealer, zmq.POLLIN)  # the manager's replies
 
         while self._running:
             # ── drain command queue in order (thread-safe SimpleQueue) ──
@@ -175,6 +224,7 @@ class ZmqWorker(QObject):
                         self._pending = self._command_queue.get_nowait()
                     except Empty:
                         break
+                    self._pending_since = time.monotonic()
                     self._pending_logged = False
                 label, payload = self._pending
                 try:
@@ -183,12 +233,21 @@ class ZmqWorker(QObject):
                     #   send(CommandMessage)
                     self._dealer.send(b"BPM", flags=zmq.SNDMORE | zmq.NOBLOCK)
                     self._dealer.send(payload, flags=zmq.NOBLOCK)
+                    self._awaiting.append((time.monotonic(), label))
                     self.log_message.emit(f"Sent {label}")
                 except zmq.Again:
-                    # Keep it first in line; say so once, not every poll.
+                    # No broker connection: retry briefly, then give up rather
+                    # than fire the command whenever the broker comes back.
+                    if time.monotonic() - self._pending_since > COMMAND_SEND_TIMEOUT_SEC:
+                        self.log_message.emit(
+                            f"Not sent {label}: process manager not reachable at "
+                            f"{self.dealer_endpoint}"
+                        )
+                        self._pending = None
+                        continue
                     if not self._pending_logged:
                         self.log_message.emit(
-                            f"Waiting to send {label} (DEALER queue full)"
+                            f"Waiting to send {label} (connecting to {self.dealer_endpoint})"
                         )
                         self._pending_logged = True
                     break
@@ -202,14 +261,17 @@ class ZmqWorker(QObject):
             except zmq.ZMQError:
                 break
 
+            if self._dealer in events:
+                self._read_replies()
+
             if self._sub in events:
                 try:
                     frames = self._sub.recv_multipart(flags=zmq.NOBLOCK)
                     data = frames[-1]          # last frame = payload
-                    if data:
-                        reports = parse_health_reports(data)
-                        dicts = [report_to_dict(r) for r in reports]
-                        self.reports_received.emit(dicts)
+                    # An empty payload is a manager with no processes left.
+                    reports = parse_health_reports(data)
+                    dicts = [report_to_dict(r) for r in reports]
+                    self.reports_received.emit(dicts)
                 except zmq.Again:
                     pass
                 except ValueError as e:
@@ -217,16 +279,64 @@ class ZmqWorker(QObject):
                 except Exception as e:
                     self.log_message.emit(f"Recv error: {e}")
 
+        self._running = False  # also when the poller failed
         self._cleanup()
+        self._finish("connection closed")
         self.connection_status.emit("disconnected")
 
     def stop(self):
         self._running = False
 
-    def send_command(self, command: CommandEnum, service_name: str, args: str = ""):
-        """Thread-safe: SimpleQueue from any thread; worker drains it."""
+    def send_command(self, command: CommandEnum, service_name: str, args: str = "") -> bool:
+        """Thread-safe: SimpleQueue from any thread; worker drains it.
+
+        Returns False when the worker loop has ended, so nothing would send it.
+        Raises ValueError when the name or args do not fit the command message.
+        """
         payload = make_command_message(command, service_name, args)
-        self._command_queue.put((f"{command.name} for {service_name}", payload))
+        with self._finish_lock:
+            if self._finished:
+                return False
+            self._command_queue.put((f"{command.name} for {service_name}", payload))
+        return True
+
+    def _read_replies(self) -> None:
+        """The manager answers each command from the GUI identity with b"1" or b"0"."""
+        while True:
+            try:
+                frames = self._dealer.recv_multipart(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                return
+            except zmq.ZMQError as e:
+                self.log_message.emit(f"Reply error: {e}")
+                return
+            reply = frames[-1] if frames else b""
+            if reply not in (b"1", b"0"):
+                continue  # not a command reply (version info, for one)
+            now = time.monotonic()
+            while self._awaiting and now - self._awaiting[0][0] > REPLY_TIMEOUT_SEC:
+                self._awaiting.popleft()
+            label = self._awaiting.popleft()[1] if self._awaiting else "Command"
+            if reply == b"1":
+                self.log_message.emit(f"{label}: accepted by the process manager")
+            else:
+                self.log_message.emit(
+                    f"{label}: refused by the process manager (unknown process, or not possible now)"
+                )
+
+    def _finish(self, reason: str) -> None:
+        """End of the loop: report every command that will never be sent."""
+        with self._finish_lock:
+            self._finished = True
+        dropped = [self._pending] if self._pending is not None else []
+        self._pending = None
+        while True:
+            try:
+                dropped.append(self._command_queue.get_nowait())
+            except Empty:
+                break
+        for label, _payload in dropped:
+            self.log_message.emit(f"Not sent {label}: {reason}")
 
     def _cleanup(self):
         if self._sub:
@@ -527,14 +637,21 @@ class ProcessLogWindow(QMainWindow):
             self.lbl_meta.setStyleSheet(mono_style("#f44336"))
         self._journal.show([(0, error)] if error and not pairs else pairs)
 
+    def detach_worker(self) -> Tuple[Optional[QObject], Optional[QThread]]:
+        """Hand the worker and its thread to the caller, who stops them."""
+        worker = getattr(self, "_worker", None)
+        thread = getattr(self, "_thread", None)
+        if worker is not None:
+            try:
+                worker.lines_ready.disconnect()
+            except TypeError:
+                pass
+        self._worker = None
+        self._thread = None
+        return worker, thread
+
     def closeEvent(self, event):
-        if getattr(self, "_worker", None):
-            self._worker.stop()
-        if getattr(self, "_thread", None):
-            self._thread.quit()
-            if not self._thread.wait(4000):
-                self._thread.terminate()
-                self._thread.wait(1000)
+        stop_workers([self.detach_worker()])
         super().closeEvent(event)
 
 
@@ -767,7 +884,7 @@ class ProcessMonitorWindow(QMainWindow):
         self.edit_dealer = QLineEdit(self.dealer_endpoint)
         self.edit_dealer.setPlaceholderText("tcp://host:port")
         self.edit_dealer.setToolTip(
-            "ZMQ DEALER endpoint (ROUTER side). Identity is fixed to 'PMC'"
+            "ZMQ DEALER endpoint (ROUTER side). Identity is fixed to 'GUI'"
         )
         self.edit_dealer.setClearButtonEnabled(True)
         self.edit_dealer.returnPressed.connect(self._reconnect)
@@ -777,7 +894,7 @@ class ProcessMonitorWindow(QMainWindow):
         self.btn_reconnect.setToolTip("Apply new endpoints and reconnect")
         self.btn_reconnect.clicked.connect(self._reconnect)
         strip.addWidget(self.btn_reconnect)
-        wire = ElidedLabel("identity PMC · frames BPM + CommandMessage (65 B)")
+        wire = ElidedLabel("identity GUI · frames BPM + CommandMessage (65 B)")
         wire.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         wire.setStyleSheet(mono_style(TEXT_MUTED))
         strip.addWidget(wire)
@@ -884,7 +1001,7 @@ class ProcessMonitorWindow(QMainWindow):
             worker.set_process("")  # nothing to tail while the manager is shown
 
     def _gpu_for(self, report: Optional[dict]) -> Optional[GpuProcessUsage]:
-        if not report or not report.get("pid"):
+        if not report or (report.get("pid") or 0) <= 0:  # -1: no process
             return None
         return self._gpu_by_pid.get(report["pid"])
 
@@ -926,29 +1043,29 @@ class ProcessMonitorWindow(QMainWindow):
 
         self.worker_thread.start()
 
-    def _stop_zmq_worker(self, timeout_ms: int = 4000) -> None:
-        if hasattr(self, "worker") and self.worker is not None:
+    def _stop_zmq_worker(self, timeout_ms: int = WORKER_STOP_TIMEOUT_MS) -> None:
+        stop_workers([self._detach_zmq_worker()], timeout_ms)
+
+    def _detach_zmq_worker(self) -> Tuple[Optional[QObject], Optional[QThread]]:
+        worker = getattr(self, "worker", None)
+        thread = getattr(self, "worker_thread", None)
+        if worker is not None:
             for sig in (
-                self.worker.reports_received,
-                self.worker.connection_status,
-                self.worker.log_message,
+                worker.reports_received,
+                worker.connection_status,
+                worker.log_message,
             ):
                 try:
                     sig.disconnect()
                 except TypeError:
                     pass
-            self.worker.stop()
-        if hasattr(self, "worker_thread") and self.worker_thread is not None:
-            self.worker_thread.quit()
-            if not self.worker_thread.wait(timeout_ms):
-                self.worker_thread.terminate()
-                self.worker_thread.wait(1000)
         self.worker = None
         self.worker_thread = None
+        return worker, thread
 
-    def _stop_background_worker(
-        self, worker_attr: str, thread_attr: str, timeout_ms: int
-    ) -> None:
+    def _detach_background_worker(
+        self, worker_attr: str, thread_attr: str
+    ) -> Tuple[Optional[QObject], Optional[QThread]]:
         worker = getattr(self, worker_attr, None)
         thread = getattr(self, thread_attr, None)
         if worker is not None:
@@ -960,14 +1077,9 @@ class ProcessMonitorWindow(QMainWindow):
                     signal.disconnect()
                 except TypeError:
                     pass
-            worker.stop()
-        if thread is not None:
-            thread.quit()
-            if not thread.wait(timeout_ms):
-                thread.terminate()
-                thread.wait(1000)
         setattr(self, worker_attr, None)
         setattr(self, thread_attr, None)
+        return worker, thread
 
     def _start_cgroup_members_worker(self):
         self.cgroup_members_thread = QThread()
@@ -1147,7 +1259,9 @@ class ProcessMonitorWindow(QMainWindow):
             self._gpu_by_pid = new_map
         self._last_gpu_error = err if failed else None
         self._gpu_available = available and not failed
-        self._update_gpu_status_label(available, err if isinstance(err, str) else None)
+        self._update_gpu_status_label(
+            self._gpu_available, err if isinstance(err, str) else None
+        )
         self._refresh_detail()
 
     @pyqtSlot(object)
@@ -1206,7 +1320,7 @@ class ProcessMonitorWindow(QMainWindow):
         self.btn_reconnect.setEnabled(True)
         self._show_status(
             f"Connecting to SUB={self.sub_endpoint}  "
-            f"DEALER={self.dealer_endpoint}  (id=PMC)"
+            f"DEALER={self.dealer_endpoint}  (id={GUI_IDENTITY.decode()})"
         )
 
     def _send_cmd(self, cmd: CommandEnum, name: str):
@@ -1220,14 +1334,37 @@ class ProcessMonitorWindow(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        if not getattr(self, "worker", None):
+        worker = getattr(self, "worker", None)
+        try:
+            queued = worker is not None and worker.send_command(cmd, name, args="")
+        except ValueError as e:
+            self._show_status(f"{cmd.name} for {name} not sent: {e}")
+            return
+        if not queued:
             self._show_status("Not connected — command not sent")
             return
-        self.worker.send_command(cmd, name, args="")
         # The worker reports "Sent …" once the command is actually handed off.
         self._show_status(f"Sending {cmd.name} for {name}…")
 
     def closeEvent(self, event):
+        # Every worker, the log windows' included, is told to stop before any is
+        # waited for, so they wind down together.
+        pairs = []
+        for w in list(self._log_windows.values()):
+            try:
+                pairs.append(w.detach_worker())
+            except RuntimeError:
+                pass
+        for worker_attr, thread_attr in (
+            ("cgroup_members_worker", "cgroup_members_thread"),
+            ("detail_journal_worker", "detail_journal_thread"),
+            ("gpu_worker", "gpu_thread"),
+            ("systemd_worker", "systemd_thread"),
+        ):
+            pairs.append(self._detach_background_worker(worker_attr, thread_attr))
+        pairs.append(self._detach_zmq_worker())
+        stop_workers(pairs)
+
         for w in list(self._log_windows.values()):
             try:
                 w.close()
@@ -1239,15 +1376,6 @@ class ProcessMonitorWindow(QMainWindow):
                 self._usage_window.close()
             except RuntimeError:
                 pass
-        self._stop_background_worker(
-            "cgroup_members_worker", "cgroup_members_thread", 4000
-        )
-        self._stop_background_worker(
-            "detail_journal_worker", "detail_journal_thread", 12000
-        )
-        self._stop_background_worker("gpu_worker", "gpu_thread", 4000)
-        self._stop_background_worker("systemd_worker", "systemd_thread", 12000)
-        self._stop_zmq_worker(timeout_ms=4000)
         super().closeEvent(event)
 
 

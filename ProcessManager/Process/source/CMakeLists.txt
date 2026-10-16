@@ -14,6 +14,7 @@ target_sources(Process
 	${CMAKE_CURRENT_LIST_DIR}/include/StdioConfigStruct.h
 	${CMAKE_CURRENT_LIST_DIR}/include/RuntimeHealthStruct.h
 	${CMAKE_CURRENT_LIST_DIR}/include/StdioModeEnum.h
+	${CMAKE_CURRENT_LIST_DIR}/include/StopPhaseEnum.h
 	${CMAKE_CURRENT_LIST_DIR}/include/ProcessGroupBuilder.h
 
 	PRIVATE

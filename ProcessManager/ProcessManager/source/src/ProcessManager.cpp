@@ -12,9 +12,21 @@
 #include <legacy/common/logger/Log.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 
 #include <ProcessGroupBuilder.h>
 using namespace process_manager;
+
+namespace
+{
+	constexpr int max_messages_per_cycle = 64;
+
+	std::string FixedString(const char* text, size_t capacity)
+	{
+		return std::string(text, ::strnlen(text, capacity));
+	}
+}
 
 int ProcessManager::StartUp()
 {
@@ -96,9 +108,20 @@ void process_manager::ProcessManager::Run()
 		for (auto& process : processParams->processList)
 		{
 			process.CheckHeartbeat();
+			process.AdvanceStop();
 			process.ReapExit();
+			process.DrainStdioPipe();
 			status.emplace_back(process.GetHealthReport());
 		}
+		for (auto& process : retiring)
+		{
+			process.AdvanceStop();
+			process.ReapExit();
+			process.DrainStdioPipe();
+		}
+		retiring.erase(std::remove_if(retiring.begin(), retiring.end(),
+			[](const Process& p) { return !p.HasPid(); }), retiring.end());
+
 		zmq::message_t detailedReport(status.data(), sizeof(process_manager::DetailedHealthReportStruct) * status.size());
 		statusPublisher.send(detailedReport, zmq::send_flags::none);
 
@@ -107,25 +130,41 @@ void process_manager::ProcessManager::Run()
 		//listener.send(zmq::buffer(comm::GUI_ID), zmq::send_flags::sndmore);
 		simpleHealthPublisher.send(simplifiedReport, zmq::send_flags::none);
 
-		zmq::poll(items, 1, std::chrono::milliseconds(500));
-		const auto messageReceived = items[0].revents & ZMQ_POLLIN;
-
-
-		if (!messageReceived) continue;
-
-		std::vector<zmq::message_t> messages;
-
+		// Pipe output is drained once per pass above, so a pass comes at least every 500 ms.
+		const auto timeout = IsStopInProgress() ? std::chrono::milliseconds(50) : std::chrono::milliseconds(500);
 		try
 		{
-			(void)zmq::recv_multipart(listener, std::back_inserter(messages));
+			zmq::poll(items, 1, timeout);
 		}
-		catch (const std::exception& e) { LOGF_DEBUG("%s", e.what()); }
+		catch (const zmq::error_t& e)
+		{
+			if (e.num() != EINTR) throw;
+		}
 
-		bool result = ProcessMessage(messages);
+		// Take every queued message, so a backlog never makes a healthy process look silent.
+		for (int i = 0; i < max_messages_per_cycle; ++i)
+		{
+			std::vector<zmq::message_t> messages;
+			try
+			{
+				if (!zmq::recv_multipart(listener, std::back_inserter(messages), zmq::recv_flags::dontwait)) break;
+			}
+			catch (const std::exception& e)
+			{
+				LOGF_DEBUG("%s", e.what());
+				break;
+			}
+			ProcessMessage(messages);
+		}
 	}
 	LOGF_DEBUG("Exiting");
+	StopAll(); // here, on the thread that supervises the processes
 
 	return;
+}
+void process_manager::ProcessManager::RequestStop()
+{
+	enabled = false;
 }
 int process_manager::ProcessManager::TearDown()
 {
@@ -138,31 +177,74 @@ legacy::object::ObjectType process_manager::ProcessManager::GetType() const
 {
 	return legacy::object::ProcessManager;
 }
+// Blocking, for shutdown: every process gets SIGTERM at once, then all are waited for together.
 void process_manager::ProcessManager::StopAll()
 {
 	for (auto& process : processParams->processList)
 	{
-		process.DisableHealthCheck();
-		process.RequestStopAndEscalate(std::chrono::milliseconds(500));
+		process.SuspendHealthCheck();
+		process.Stop();
+	}
+	for (auto& process : retiring)
+	{
+		process.Stop();
+	}
+	while (IsStopInProgress())
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		for (auto& process : processParams->processList) process.AdvanceStop();
+		for (auto& process : retiring) process.AdvanceStop();
 	}
 }
-std::unique_ptr<ProcessManagerParams> process_manager::ProcessManager::GenerateConfig()
+void process_manager::ProcessManager::RetireProcess(Process& process)
+{
+	process.SuspendHealthCheck();
+	process.Stop();
+	if (process.HasPid()) retiring.push_back(std::move(process));
+}
+bool process_manager::ProcessManager::IsStopInProgress() const
+{
+	for (const auto& process : processParams->processList)
+	{
+		if (process.IsStopping()) return true;
+	}
+	for (const auto& process : retiring)
+	{
+		if (process.IsStopping()) return true;
+	}
+	return false;
+}
+std::unique_ptr<ProcessManagerParams> process_manager::ProcessManager::GenerateConfig(std::vector<std::string>* errors)
 {
 	auto processManagerParams = std::make_unique<ProcessManagerParams>();
 
-	Process process;
+	const char* temp;
+	ConfigHelper::ReadConfiguration("ProcessManager", "Mode", temp, "Inherit");
+	const bool hasDefaultWorkMode = !strcmp(temp, "Manual") || !strcmp(temp, "Auto");
+	if (!strcmp(temp, "Manual")) { processManagerParams->workMode = WorkModeEnum::Manual; }
+	else if (!strcmp(temp, "Auto")) { processManagerParams->workMode = WorkModeEnum::Auto; }
+
 	char section[] = "0";
 	for (size_t i = 0; i < 10; i++)
 	{
 		section[0]++;
-		if (process.UpdateArgs(section) != 1) continue;
-		processManagerParams->processList.emplace_back(process);
+		Process process;
+		const int loaded = process.UpdateArgs(section);
+		if (loaded == -2)
+		{
+			const std::string error = "[" + std::string(section) + "] ProcessName '" + process.GetProcessName() +
+				"' is reserved (pm, all, BPM, PMC, GUI) or contains '/'; service ignored";
+			LOGF_ERROR("%s", error.c_str());
+			if (errors) errors->push_back(error);
+		}
+		if (loaded != 1) continue;
+		// [ProcessManager] Mode applies to every service without a WorkMode of its own.
+		if (hasDefaultWorkMode && ConfigHelper::ReadConfiguration(section, "WorkMode", temp, "") != legacy::enums::RetVal::Success)
+		{
+			process.SetWorkMode(processManagerParams->workMode);
+		}
+		processManagerParams->processList.emplace_back(std::move(process));
 	}
-
-	const char* temp;
-	ConfigHelper::ReadConfiguration("ProcessManager", "Mode", temp, "Inherit");
-	if (!strcmp(temp, "Manual")) { processManagerParams->workMode = WorkModeEnum::Manual; }
-	else if (!strcmp(temp, "Auto")) { processManagerParams->workMode = WorkModeEnum::Auto; }
 
 	return processManagerParams;
 }
@@ -238,16 +320,17 @@ bool process_manager::ProcessManager::SortByDependencies(std::vector<std::string
 	}
 
 	std::vector<Process> out;
+	out.reserve(pList.size());
 
 	std::vector<char> used(pList.size(), 0);
-	for (size_t i : order) { out.push_back(pList[i]); used[i] = 1; }
+	for (size_t i : order) { out.push_back(std::move(pList[i])); used[i] = 1; }
 	for (size_t i = 0; i < pList.size(); ++i)
 	{
-		if (!used[i]) out.push_back(pList[i]);
+		if (!used[i]) out.push_back(std::move(pList[i]));
 	}
 
 
-	pList = out;
+	pList = std::move(out);
 
 	return order.size() == pList.size(); // true => no cycles
 
@@ -262,26 +345,64 @@ bool process_manager::ProcessManager::CheckProcessConfig(std::vector<std::string
 	return false;
 }
 
+bool process_manager::ProcessManager::ApplyToAll(ProcessManagerCommandEnum command)
+{
+	if (command == ProcessManagerCommandEnum::StopService)
+	{
+		for (auto& process : processParams->processList)
+		{
+			process.SetWorkMode(WorkModeEnum::Manual);
+			process.SuspendHealthCheck();
+			process.Stop();
+		}
+		return true;
+	}
+	if (command == ProcessManagerCommandEnum::StartService || command == ProcessManagerCommandEnum::RestartService)
+	{
+		LOGF_DEBUG("--start all received, resetting config");
+		for (auto& process : processParams->processList)
+		{
+			RetireProcess(process); // the new instances start once these have exited
+		}
+		processParams = GenerateConfig(); //reset the runtime params
+
+		std::vector<std::string> errors;
+		SortByDependencies(errors, processParams->processList);
+		for (const auto& error : errors)
+		{
+			LOGF_ERROR("%s", error.c_str());
+		}
+		for (auto& process : processParams->processList)
+		{
+			process.SetWorkMode(WorkModeEnum::Auto);
+		}
+		return true;
+	}
+	return false;
+}
+
+void process_manager::ProcessManager::StartDependencies(const Process& process) const
+{
+	for (const auto& dependsOn : process.GetDependencyList())
+	{
+		auto dependency = GetProcess(dependsOn);
+		if (dependency == processParams->processList.end())
+		{
+			LOGF_ERROR("[%s] Cannot start missing dependency %s", process.GetProcessName().c_str(), dependsOn.c_str());
+			continue;
+		}
+		dependency->StartProcess(); // no-op while it runs
+	}
+}
+
 bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessManagerCommandStruct& message)
 {
 	LOGF_DEBUG("Command received");
 	const auto& command = message.command;
-	const auto& processName = message.ServiceName;
+	const std::string processName = FixedString(message.ServiceName, sizeof(message.ServiceName));
 	if (processName == "all")
 	{
-		if (command == ProcessManagerCommandEnum::StopService)
-		{
-			processParams->workMode = WorkModeEnum::Manual;
-			StopAll();
-		}
-		else if (command == ProcessManagerCommandEnum::StartService)
-		{
-			StopAll();
-			LOGF_DEBUG("--start all received, resetting config");
-			processParams = GenerateConfig(); //reset the runtime params 
-			processParams->workMode = WorkModeEnum::Auto;
-		}
-		return true;
+		return ApplyToAll(command);
 	}
 	auto it = GetProcess(processName);
 	if (it == processParams->processList.end())
@@ -291,17 +412,27 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
 	}
 	else if (command == ProcessManagerCommandEnum::StartService)
 	{
-		for (auto& depensOn : it->GetDependencyList())
-		{
-			GetProcess(depensOn)->StartProcess();
-		}
-		it->StartProcess();
+		StartDependencies(*it);
 		it->SetWorkMode(WorkModeEnum::Auto);
+		if (it->IsStopping())
+		{
+			it->Restart(); // starts again once the stop in progress finishes
+		}
+		else
+		{
+			it->StartProcess(); // no-op while it runs
+		}
 	}
 	else if (command == ProcessManagerCommandEnum::StartServiceWithArgs)
 	{
+		if (it->HasPid())
+		{
+			LOGF_ERROR("[%s] Already running, stop it before starting it with other arguments", processName.c_str());
+			return false;
+		}
 		std::vector<std::string> args;
-		ConfigHelper::SplitElementsToVector(message.Args, ' ', args);
+		const std::string argsText = FixedString(message.Args, sizeof(message.Args));
+		ConfigHelper::SplitElementsToVector(argsText.c_str(), ' ', args);
 		it->OverrideStartupArgs(args);
 
 		it->StartProcess();
@@ -310,11 +441,25 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
 	else if (command == ProcessManagerCommandEnum::StopService)
 	{
 		it->SetWorkMode(WorkModeEnum::Manual);
-		it->DisableHealthCheck();
-		it->RequestStopAndEscalate();
+		it->SuspendHealthCheck();
+		it->Stop();
+	}
+	else if (command == ProcessManagerCommandEnum::RestartService)
+	{
+		StartDependencies(*it);
+		it->SetWorkMode(WorkModeEnum::Auto);
+		if (it->HasPid())
+		{
+			it->Restart();
+		}
+		else
+		{
+			it->StartProcess();
+		}
 	}
 	else if (command == ProcessManagerCommandEnum::DisableService)
 	{
+		RetireProcess(*it);
 		processParams->processList.erase(it);
 	}
 	else
@@ -332,11 +477,12 @@ bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::mess
 	if (receivedFrom == comm::COMMAND_SERVER_ID ||
 		receivedFrom == comm::GUI_ID)
 	{
-		//meliksahs TODO cirkin oldu
-		auto command = reinterpret_cast<const ProcessManagerCommandEnum*>(messages[1].data())[0];
+		const auto& payload = messages[1];
+		if (payload.size() == 0) return false;
+		const auto command = static_cast<ProcessManagerCommandEnum>(*static_cast<const char*>(payload.data()));
 		if (command == ProcessManagerCommandEnum::GetVersionInfo)
 		{
-			VersionReportStruct version;
+			VersionReportStruct version{};
 			version.command = ProcessManagerCommandEnum::GetVersionInfo;
 #ifdef GITV_PROJECT_VERSION_MAJOR
 			version.reserved[0] = GITV_PROJECT_VERSION_GUI;
@@ -380,8 +526,9 @@ bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::mess
 		}
 		else
 		{
-			ProcessManagerCommandStruct message;
-			message = *reinterpret_cast<const ProcessManagerCommandStruct*>(messages[1].data());
+			// A short frame leaves the rest zero; a longer one is cut to the struct.
+			ProcessManagerCommandStruct message{};
+			std::memcpy(&message, payload.data(), std::min(payload.size(), sizeof(message)));
 			auto reply = ApplyCommandServerMessage(message);
 			auto resultString = std::to_string(reply);
 			if (messages[0].to_string_view() == comm::GUI_ID)
@@ -406,15 +553,34 @@ bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::mess
 
 bool process_manager::ProcessManager::StartSequentialAsync() const
 {
+	for (const auto& process : retiring)
+	{
+		if (process.IsStopping()) return false; // replaced instances exit before anything new starts
+	}
 	for (auto& process : processParams->processList)
 	{
-		if (process.IsWorkingManually()) continue;
-		if (process.IsGracePeriod()) break;
-		if (process.HasPid() && !process.NeedsRestart()) continue;
-		if (process.IsStarting() || process.NeedsRestart() || process.NeedsStart())
+		if (process.IsRestartRequested() && !process.HasPid() && !process.IsStopping())
 		{
-			process.RequestStopAndEscalate(std::chrono::milliseconds(0));
 			process.StartProcess();
+			return false;
+		}
+		if (process.IsWorkingManually()) continue;
+		if (process.IsStopping()) return false;
+		if (process.IsGracePeriod()) break;
+		if (process.HasPid())
+		{
+			if (!process.NeedsRestart()) continue;
+			process.StopUnresponsive(); // the restart policy starts it again once it has exited
+			return false;
+		}
+		if (process.NeedsStart())
+		{
+			process.StartProcess();
+			return false;
+		}
+		if (process.NeedsRestart())
+		{
+			process.AutoRestart();
 			return false;
 		}
 

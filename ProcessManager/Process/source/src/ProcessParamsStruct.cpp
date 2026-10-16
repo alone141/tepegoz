@@ -1,6 +1,18 @@
 #include <ProcessConfigParamsStruct.h>
 #include <ConfigHelper.h>
 using namespace process_manager;
+
+// "pm" is the manager's own cgroup (task_pm), BPM/PMC/GUI are broker identities, "all" is the
+// command target for every service, and a '/' would put task_<name> outside the cgroup directory.
+bool process_manager::ProcessConfigParams::IsReservedName(const std::string& name)
+{
+	for (const char* reserved : { "pm", "all", "BPM", "PMC", "GUI" })
+	{
+		if (name == reserved) return true;
+	}
+	return name.empty() || name.find('/') != std::string::npos;
+}
+
 int process_manager::ProcessConfigParams::UpdateArgs(const char* sectionOrder)
 {
 	const char* temp;
@@ -10,6 +22,7 @@ int process_manager::ProcessConfigParams::UpdateArgs(const char* sectionOrder)
 	if (retVal != legacy::enums::RetVal::Success) return -1;
 
 	this->ProcessName = std::string(temp);
+	if (IsReservedName(ProcessName)) return -2;
 
 	retVal = ConfigHelper::ReadConfiguration(sectionOrder, "ExecutablePath", temp, "invalid");
 	if (retVal != legacy::enums::RetVal::Success) return -1;
@@ -24,6 +37,10 @@ int process_manager::ProcessConfigParams::UpdateArgs(const char* sectionOrder)
 
 	ConfigHelper::ReadValue(sectionOrder, "InheritParentEnviroment", InheritParentEnviroment, true, 0, 1);
 	ConfigHelper::ReadValue(sectionOrder, "UseDisplay", UseDisplay, false, 0, 1);
+	ConfigHelper::ReadConfiguration(sectionOrder, "Display", temp, ":1");
+	this->Display = std::string(temp);
+	ConfigHelper::ReadConfiguration(sectionOrder, "XAuthority", temp, "/home/user/.Xauthority");
+	this->XAuthority = std::string(temp);
 
 	ConfigHelper::ReadValue(sectionOrder, "CreateProcessGroup", CreateProcessGroup, true, 0, 1);
 

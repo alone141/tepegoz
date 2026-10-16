@@ -1,16 +1,25 @@
-#pragma once 
+#pragma once
 #include <ProcessConfigParamsStruct.h>
 #include <legacy/common/type/IObject.h>
 
+#include <string_view>
+
 namespace process_manager
 {
+	// Owns its child process: a destroyed or overwritten Process stops the child it still holds,
+	// so copies are forbidden and a move hands the child over.
 	class Process : public legacy::type::IObject
 	{
 	public:
 		~Process();
 		Process() = default;
+		Process(const Process&) = delete;
+		Process& operator=(const Process&) = delete;
+		Process(Process&& other) noexcept;
+		Process& operator=(Process&& other) noexcept;
 
-		void StartProcess();
+		void StartProcess(); // a start the restart policy did not ask for: re-arms MaxRestarts
+		void AutoRestart();
 
 		int UpdateArgs(const char* sectionOrder);
 		pid_t ReapExit();
@@ -27,14 +36,21 @@ namespace process_manager
 		bool IsGracePeriod() const;
 		bool IsRunning() const;
 		bool IsStarting() const;
+		bool IsStopping() const;
+		bool IsRestartRequested() const;
 		bool NeedsRestart() const;
 		bool NeedsStart() const;
 		bool IsWorkingManually() const;
 
 		void CheckConfig(std::vector<std::string>& errorList) const noexcept;
 		void CheckHeartbeat();
-		void DisableHealthCheck();
+		void SuspendHealthCheck(); // until the next start
 		void HeartbeatReceived();
+		void Stop();
+		void Restart();
+		void StopUnresponsive();
+		void AdvanceStop();
+		void DrainStdioPipe();
 		void RequestStopAndEscalate(std::chrono::milliseconds poll = std::chrono::milliseconds(50));
 
 		void OverrideStartupArgs(std::vector<std::string> args);
@@ -52,6 +68,18 @@ namespace process_manager
 		}
 
 		RuntimeHealthStruct& GetRuntimeStatus();
+		bool ExitedWithFailure() const;
+		bool IsHealthCheckActive() const;
+		bool IsUnresponsive() const;
+		bool RestartLimitReached() const;
+		std::chrono::milliseconds RestartDelay() const;
+		bool IsGroupAlive() const;
+
+		void Launch();
+		void BeginStop();
+		void FinishStop();
+		void AppendStdioOutput(std::string_view output);
+		void FlushStdioLine();
 
 		bool SetupStdioPipe() const;
 		bool SetupStdioFile(const char* path) const;
@@ -69,7 +97,6 @@ namespace process_manager
 		void RequestStop(const ProcessHandleStruct& pHandle, int sig) const;
 		void ForceStop(const ProcessHandleStruct& pHandle) const;
 		std::vector<char*> SetupExecParams() const;
-		std::vector<char*> SetupEnviromentParams() const;
 
 
 		ProcessRuntimeParams runtime;
