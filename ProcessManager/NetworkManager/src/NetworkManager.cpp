@@ -31,8 +31,9 @@ namespace
 {
 
 using Clock = std::chrono::steady_clock;
+using WallClock = std::chrono::system_clock;
 
-// How long Run() waits for a message before it looks at RequestStop() and the status line again.
+// How long Run() waits for a message before it looks at RequestStop(), the status and the log again.
 constexpr std::chrono::milliseconds poll_period{200};
 constexpr int max_messages_per_round = 1000;
 constexpr int monitored_events = ZMQ_EVENT_ACCEPTED | ZMQ_EVENT_DISCONNECTED;
@@ -140,6 +141,62 @@ std::string FormatDuration(Clock::duration elapsed)
     return text;
 }
 
+std::string JsonString(std::string_view text)
+{
+    std::string json{"\""};
+    for (const char c : text)
+    {
+        const auto byte = static_cast<unsigned char>(c);
+        if (c == '"' || c == '\\')
+        {
+            json += '\\';
+            json += c;
+        }
+        else if (byte < 0x20)
+        {
+            char escaped[8] = {};
+            std::snprintf(escaped, sizeof(escaped), "\\u%04x", static_cast<unsigned int>(byte));
+            json += escaped;
+        }
+        else
+        {
+            json += c;
+        }
+    }
+    json += '"';
+    return json;
+}
+
+// Milliseconds since the Unix epoch, as JSON; 0 for a time never set.
+std::string JsonTime(WallClock::time_point when)
+{
+    if (when == WallClock::time_point{})
+    {
+        return "0";
+    }
+
+    return std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(when.time_since_epoch()).count());
+}
+
+const char* LevelName(logger::Level level)
+{
+    switch (level)
+    {
+    case logger::Level::Verbose:
+        return "verbose";
+    case logger::Level::Debug:
+        return "debug";
+    case logger::Level::Info:
+        return "info";
+    case logger::Level::Warning:
+        return "warning";
+    case logger::Level::Error:
+        return "error";
+    }
+
+    return "info";
+}
+
 } // namespace
 
 EnvelopeCode ParseEnvelope(const std::vector<std::string>& frames, Envelope& out)
@@ -221,6 +278,8 @@ struct NetworkManager::State
         // Empty until the connection sends its first message.
         std::string identity;
         Clock::time_point since;
+        WallClock::time_point connectedAt;
+        WallClock::time_point lastMessageAt;
         std::uint64_t messages = 0;
     };
 
@@ -232,9 +291,9 @@ struct NetworkManager::State
         std::uint64_t heldBack = 0;
     };
 
-    State(std::string endpoint, LogSettings logSettings)
+    State(std::string endpoint, MonitorSettings monitorSettings)
         : endpoint{std::move(endpoint)},
-          settings{logSettings}
+          settings{std::move(monitorSettings)}
     {
     }
 
@@ -252,17 +311,23 @@ struct NetworkManager::State
     void Accepted(int fd, Clock::time_point now);
     void Disconnected(int fd, Clock::time_point now);
     void Seen(const std::string& identity, int fd, Clock::time_point now);
-    void Left(const Connection& connection, Clock::time_point now) const;
-    void Warn(const std::string& key, const std::string& text, Clock::time_point now);
+    void Left(const Connection& connection, Clock::time_point now);
+    void Note(logger::Level level, char mark, const char* kind, const std::string& name, const std::string& text);
+    void Warn(const std::string& key, const char* kind, const std::string& name, const std::string& text,
+              Clock::time_point now);
     void WriteSummaryIfDue(Clock::time_point now);
+    void PublishStatusIfDue(Clock::time_point now);
+    void Publish(const char* topic, const std::string& json);
 
     std::string endpoint;
-    LogSettings settings;
+    MonitorSettings settings;
+    std::string statusEndpoint;
     std::atomic<bool> stopRequested{false};
     // Declared in this order so the sockets close before their context.
     std::unique_ptr<zmq::context_t> context;
     std::unique_ptr<zmq::socket_t> router;
     std::unique_ptr<zmq::socket_t> monitor;
+    std::unique_ptr<zmq::socket_t> status;
     std::unordered_map<int, Connection> connections;
     // Connections whose disconnect event was read: closed once the messages already received are forwarded,
     // since a dealer that sends and closes at once has its last message read after that event.
@@ -270,12 +335,47 @@ struct NetworkManager::State
     // Name -> descriptor of the connection that has it; -1 when libzmq cannot tell connections apart.
     std::unordered_map<std::string, int> owners;
     std::unordered_map<std::string, std::uint64_t> sentThisPeriod;
+    // Messages per name while libzmq cannot tell connections apart.
+    std::unordered_map<std::string, std::uint64_t> sentWithoutConnection;
     std::unordered_map<std::string, Repeat> repeats;
+    WallClock::time_point startedAt;
     Clock::time_point periodStart;
+    Clock::time_point lastStatus;
+    // Since the last status line in the log.
     std::uint64_t forwarded = 0;
     std::uint64_t notDelivered = 0;
     std::uint64_t rejected = 0;
+    // Since Bind(), for the status publisher.
+    std::uint64_t forwardedTotal = 0;
+    std::uint64_t notDeliveredTotal = 0;
+    std::uint64_t rejectedTotal = 0;
 };
+
+void NetworkManager::State::Note(logger::Level level, char mark, const char* kind, const std::string& name,
+                                 const std::string& text)
+{
+    logger::Logger::Instance().Write(level, std::string{"Broker: "} + mark + " " + Column(name) + " " + text);
+    if (status)
+    {
+        Publish("event", "{\"version\":" + std::to_string(status_version) + ",\"time\":" + JsonTime(WallClock::now()) +
+                             ",\"level\":" + JsonString(LevelName(level)) + ",\"kind\":" + JsonString(kind) +
+                             ",\"name\":" + JsonString(name) + ",\"text\":" + JsonString(text) + "}");
+    }
+}
+
+void NetworkManager::State::Publish(const char* topic, const std::string& json)
+{
+    try
+    {
+        // A PUB socket drops what a slow reader cannot take; it never waits.
+        (void)status->send(zmq::buffer(topic, std::strlen(topic)), zmq::send_flags::sndmore | zmq::send_flags::dontwait);
+        (void)status->send(zmq::buffer(json), zmq::send_flags::dontwait);
+    }
+    catch (const zmq::error_t& e)
+    {
+        logger::Error("Broker: publishing the status failed: %s", e.what());
+    }
+}
 
 void NetworkManager::State::ReadMonitorEvents()
 {
@@ -354,8 +454,8 @@ void NetworkManager::State::Accepted(int fd, Clock::time_point now)
         connections.erase(found);
     }
 
-    logger::Debug("Broker:   %-*s connected, no name yet", name_width, address.c_str());
-    connections.emplace(fd, Connection{std::move(address), {}, now, 0});
+    Note(logger::Level::Debug, ' ', "connected", address, "connected, no name yet");
+    connections.emplace(fd, Connection{std::move(address), {}, now, WallClock::now(), {}, 0});
 }
 
 void NetworkManager::State::Disconnected(int fd, Clock::time_point now)
@@ -363,7 +463,7 @@ void NetworkManager::State::Disconnected(int fd, Clock::time_point now)
     const auto found = connections.find(fd);
     if (found == connections.end())
     {
-        logger::Debug("Broker:   %-*s closed", name_width, unknown_address);
+        Note(logger::Level::Debug, ' ', "closed", unknown_address, "closed");
         return;
     }
 
@@ -371,15 +471,16 @@ void NetworkManager::State::Disconnected(int fd, Clock::time_point now)
     connections.erase(found);
     if (connection.identity.empty())
     {
-        logger::Debug("Broker:   %-*s closed before sending anything", name_width, connection.address.c_str());
+        Note(logger::Level::Debug, ' ', "closed", connection.address, "closed before sending anything");
         return;
     }
 
+    const std::string name = FormatIdentity(connection.identity);
     const auto owner = owners.find(connection.identity);
     if (owner == owners.end() || owner->second != fd)
     {
-        logger::Debug("Broker:   %-*s old connection %s closed; the name had moved",
-                      name_width, FormatIdentity(connection.identity).c_str(), connection.address.c_str());
+        Note(logger::Level::Debug, ' ', "closed", name,
+             "old connection " + connection.address + " closed; the name had moved");
         return;
     }
 
@@ -393,9 +494,10 @@ void NetworkManager::State::Seen(const std::string& identity, int fd, Clock::tim
     const std::string name = FormatIdentity(identity);
     if (fd < 0)
     {
+        ++sentWithoutConnection[identity];
         if (owners.emplace(identity, -1).second)
         {
-            logger::Info("Broker: + %-*s joined (libzmq does not tell its connection)", name_width, name.c_str());
+            Note(logger::Level::Info, '+', "joined", name, "joined (libzmq does not tell its connection)");
         }
         return;
     }
@@ -415,11 +517,12 @@ void NetworkManager::State::Seen(const std::string& identity, int fd, Clock::tim
     }
     if (found == connections.end())
     {
-        found = connections.emplace(fd, Connection{PeerAddress(fd), {}, now, 0}).first;
+        found = connections.emplace(fd, Connection{PeerAddress(fd), {}, now, WallClock::now(), {}, 0}).first;
     }
 
     Connection& connection = found->second;
     ++connection.messages;
+    connection.lastMessageAt = WallClock::now();
     if (!connection.identity.empty())
     {
         return;
@@ -431,25 +534,26 @@ void NetworkManager::State::Seen(const std::string& identity, int fd, Clock::tim
     {
         const auto previous = connections.find(owner->second);
         const std::string previousAddress = previous != connections.end() ? previous->second.address : unknown_address;
-        logger::Warning("Broker: ~ %-*s taken over by %s while %s is still connected "
-                        "(restarted, or two dealers use this name)",
-                        name_width, name.c_str(), connection.address.c_str(), previousAddress.c_str());
         owner->second = fd;
+        Note(logger::Level::Warning, '~', "takeover", name,
+             "taken over by " + connection.address + " while " + previousAddress +
+                 " is still connected (restarted, or two dealers use this name)");
         return;
     }
 
     owners[identity] = fd;
-    logger::Info("Broker: + %-*s joined from %s", name_width, name.c_str(), connection.address.c_str());
+    Note(logger::Level::Info, '+', "joined", name, "joined from " + connection.address);
 }
 
-void NetworkManager::State::Left(const Connection& connection, Clock::time_point now) const
+void NetworkManager::State::Left(const Connection& connection, Clock::time_point now)
 {
-    logger::Info("Broker: - %-*s left %s after %s, %s", name_width, FormatIdentity(connection.identity).c_str(),
-                 connection.address.c_str(), FormatDuration(now - connection.since).c_str(),
-                 Count(connection.messages, "message", "messages").c_str());
+    Note(logger::Level::Info, '-', "left", FormatIdentity(connection.identity),
+         "left " + connection.address + " after " + FormatDuration(now - connection.since) + ", " +
+             Count(connection.messages, "message", "messages"));
 }
 
-void NetworkManager::State::Warn(const std::string& key, const std::string& text, Clock::time_point now)
+void NetworkManager::State::Warn(const std::string& key, const char* kind, const std::string& name,
+                                 const std::string& text, Clock::time_point now)
 {
     Repeat& repeat = repeats[key];
     if (repeat.written && now - repeat.lastWritten < settings.repeatInterval)
@@ -458,15 +562,8 @@ void NetworkManager::State::Warn(const std::string& key, const std::string& text
         return;
     }
 
-    if (repeat.heldBack > 0)
-    {
-        logger::Warning("Broker: %s (%s like it not shown)", text.c_str(),
-                        Count(repeat.heldBack, "more", "more").c_str());
-    }
-    else
-    {
-        logger::Warning("Broker: %s", text.c_str());
-    }
+    const std::string held = repeat.heldBack > 0 ? " (" + Count(repeat.heldBack, "more", "more") + " like it not shown)" : "";
+    Note(logger::Level::Warning, '!', kind, name, text + held);
     repeat = Repeat{true, now, 0};
 }
 
@@ -521,6 +618,55 @@ void NetworkManager::State::WriteSummaryIfDue(Clock::time_point now)
     }
 }
 
+void NetworkManager::State::PublishStatusIfDue(Clock::time_point now)
+{
+    if (!status || now - lastStatus < settings.statusPeriod)
+    {
+        return;
+    }
+    lastStatus = now;
+
+    std::vector<std::string> names;
+    names.reserve(owners.size());
+    for (const auto& owner : owners)
+    {
+        names.push_back(owner.first);
+    }
+    std::sort(names.begin(), names.end());
+
+    std::string dealers;
+    for (const std::string& name : names)
+    {
+        const auto connection = connections.find(owners[name]);
+        const bool known = connection != connections.end();
+        const auto sent = sentWithoutConnection.find(name);
+        const std::uint64_t messages = known ? connection->second.messages
+                                             : (sent != sentWithoutConnection.end() ? sent->second : 0);
+        dealers += std::string{dealers.empty() ? "" : ","} + "{\"name\":" + JsonString(FormatIdentity(name)) +
+                   ",\"address\":" + JsonString(known ? connection->second.address : unknown_address) +
+                   ",\"since\":" + JsonTime(known ? connection->second.connectedAt : WallClock::time_point{}) +
+                   ",\"messages\":" + std::to_string(messages) +
+                   ",\"lastMessage\":" + JsonTime(known ? connection->second.lastMessageAt : WallClock::time_point{}) +
+                   "}";
+    }
+    std::string unnamed;
+    for (const auto& entry : connections)
+    {
+        if (entry.second.identity.empty())
+        {
+            unnamed += std::string{unnamed.empty() ? "" : ","} + "{\"address\":" + JsonString(entry.second.address) +
+                       ",\"since\":" + JsonTime(entry.second.connectedAt) + "}";
+        }
+    }
+
+    Publish("status", "{\"version\":" + std::to_string(status_version) + ",\"endpoint\":" + JsonString(endpoint) +
+                          ",\"started\":" + JsonTime(startedAt) + ",\"now\":" + JsonTime(WallClock::now()) +
+                          ",\"totals\":{\"forwarded\":" + std::to_string(forwardedTotal) +
+                          ",\"notDelivered\":" + std::to_string(notDeliveredTotal) +
+                          ",\"rejected\":" + std::to_string(rejectedTotal) + "},\"dealers\":[" + dealers +
+                          "],\"unnamed\":[" + unnamed + "]}");
+}
+
 bool NetworkManager::State::ForwardOne()
 {
     std::vector<zmq::message_t> received;
@@ -544,9 +690,10 @@ bool NetworkManager::State::ForwardOne()
     if (code != EnvelopeCode::Ok)
     {
         ++rejected;
+        ++rejectedTotal;
         const std::string source = FormatIdentity(frames.empty() ? std::string_view{} : std::string_view{frames[0]});
         const std::string reason = code == EnvelopeCode::EmptySource ? "no sender name" : "no destination frame";
-        Warn("rejected|" + reason + "|" + source, "! " + Column(source) + " rejected: " + reason, now);
+        Warn("rejected|" + reason + "|" + source, "rejected", source, "rejected: " + reason, now);
         return true;
     }
 
@@ -572,6 +719,7 @@ bool NetworkManager::State::ForwardOne()
         if (zmq::send_multipart(*router, delivery, zmq::send_flags::dontwait))
         {
             ++forwarded;
+            ++forwardedTotal;
             logger::Verbose("Broker:   %-*s %s, %s", name_width, route.c_str(),
                             Count(envelope.payload.size(), "frame", "frames").c_str(),
                             Count(bytes, "byte", "bytes").c_str());
@@ -579,8 +727,9 @@ bool NetworkManager::State::ForwardOne()
         }
 
         ++notDelivered;
-        Warn("full|" + envelope.source + "|" + envelope.destination,
-             "! " + Column(route) + " not delivered: the queue of " + destination + " is full", now);
+        ++notDeliveredTotal;
+        Warn("full|" + envelope.source + "|" + envelope.destination, "notDelivered", route,
+             "not delivered: the queue of " + destination + " is full", now);
     }
     catch (const zmq::error_t& e)
     {
@@ -590,14 +739,15 @@ bool NetworkManager::State::ForwardOne()
             return true;
         }
         ++notDelivered;
-        Warn("absent|" + envelope.source + "|" + envelope.destination,
-             "! " + Column(route) + " not delivered: " + destination + " is not connected", now);
+        ++notDeliveredTotal;
+        Warn("absent|" + envelope.source + "|" + envelope.destination, "notDelivered", route,
+             "not delivered: " + destination + " is not connected", now);
     }
     return true;
 }
 
-NetworkManager::NetworkManager(std::string endpoint, LogSettings logSettings)
-    : state{std::make_unique<State>(std::move(endpoint), logSettings)}
+NetworkManager::NetworkManager(std::string endpoint, MonitorSettings monitorSettings)
+    : state{std::make_unique<State>(std::move(endpoint), std::move(monitorSettings))}
 {
 }
 
@@ -643,17 +793,42 @@ BindCode NetworkManager::Bind(std::string& error)
 
         router->bind(state->endpoint);
         state->endpoint = router->get(zmq::sockopt::last_endpoint);
+
+        if (!state->settings.statusEndpoint.empty())
+        {
+            auto status = std::make_unique<zmq::socket_t>(*context, zmq::socket_type::pub);
+            status->set(zmq::sockopt::linger, 0);
+            try
+            {
+                status->bind(state->settings.statusEndpoint);
+                state->statusEndpoint = status->get(zmq::sockopt::last_endpoint);
+                state->status = std::move(status);
+            }
+            catch (const zmq::error_t& e)
+            {
+                logger::Error("Broker: no status published, binding %s failed: %s",
+                              state->settings.statusEndpoint.c_str(), e.what());
+            }
+        }
+
         state->context = std::move(context);
         state->router = std::move(router);
         state->monitor = std::move(monitor);
     }
     catch (const zmq::error_t& e)
     {
+        state->status.reset();
+        state->statusEndpoint.clear();
         error = e.what();
         return BindCode::Failed;
     }
 
+    state->startedAt = WallClock::now();
     logger::Info("Broker: listening on %s", state->endpoint.c_str());
+    if (state->status)
+    {
+        logger::Info("Broker: publishing its status on %s", state->statusEndpoint.c_str());
+    }
     return BindCode::Ok;
 }
 
@@ -667,6 +842,7 @@ RunCode NetworkManager::Run(std::string& error)
     }
 
     current->periodStart = Clock::now();
+    current->lastStatus = current->periodStart - current->settings.statusPeriod; // the first status goes out now
     while (!current->stopRequested.load())
     {
         zmq::pollitem_t items[] = {
@@ -703,7 +879,9 @@ RunCode NetworkManager::Run(std::string& error)
         {
             current->ApplyPendingCloses(Clock::now());
         }
-        current->WriteSummaryIfDue(Clock::now());
+        const Clock::time_point now = Clock::now();
+        current->WriteSummaryIfDue(now);
+        current->PublishStatusIfDue(now);
     }
 
     logger::Info("Broker: stopped");
@@ -721,6 +899,11 @@ void NetworkManager::RequestStop()
 std::string NetworkManager::Endpoint() const
 {
     return state ? state->endpoint : std::string{};
+}
+
+std::string NetworkManager::StatusEndpoint() const
+{
+    return state ? state->statusEndpoint : std::string{};
 }
 
 } // namespace network_manager

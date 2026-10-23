@@ -38,6 +38,8 @@ int main(int argc, char** argv)
 	pthread_sigmask(SIG_BLOCK, &shutdownSignals, nullptr);
 
 	const char* portName = "tcp://*:5557";
+	// The broker's status and events, for the monitor GUI's network page.
+	const char* statusPortName = "tcp://*:6669";
 	manager = new process_manager::ProcessManagerApp;
 	//networkMaster = new process_manager::NetworkManager(portName);
 
@@ -49,7 +51,9 @@ int main(int argc, char** argv)
 	}
 
 	// Bind the broker before the process thread starts any service, so a failed bind has nothing to clean up.
-	network_manager::NetworkManager networkManager{portName};
+	network_manager::MonitorSettings monitorSettings{};
+	monitorSettings.statusEndpoint = statusPortName;
+	network_manager::NetworkManager networkManager{portName, monitorSettings};
 	gNetworkManager = &networkManager;
 	std::string bindError;
 	if (networkManager.Bind(bindError) != network_manager::BindCode::Ok)

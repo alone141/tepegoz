@@ -96,8 +96,8 @@ private:
 class RunningManager
 {
 public:
-    explicit RunningManager(network_manager::LogSettings logSettings = network_manager::LogSettings{})
-        : manager{test_endpoint, logSettings}
+    explicit RunningManager(network_manager::MonitorSettings monitorSettings = network_manager::MonitorSettings{})
+        : manager{test_endpoint, monitorSettings}
     {
         std::string error;
         bound = manager.Bind(error) == network_manager::BindCode::Ok;
@@ -137,6 +137,11 @@ public:
     std::string Endpoint() const
     {
         return manager.Endpoint();
+    }
+
+    std::string StatusEndpoint() const
+    {
+        return manager.StatusEndpoint();
     }
 
 private:
@@ -204,6 +209,48 @@ bool WaitUntilRoutable(zmq::socket_t& dealer, const std::string& identity)
     }
 
     return false;
+}
+
+zmq::socket_t MakeSubscriber(zmq::context_t& context, const std::string& endpoint)
+{
+    zmq::socket_t subscriber{context, zmq::socket_type::sub};
+    subscriber.set(zmq::sockopt::linger, 0);
+    subscriber.set(zmq::sockopt::rcvtimeo, receive_timeout_ms);
+    subscriber.set(zmq::sockopt::subscribe, "");
+    subscriber.connect(endpoint);
+    return subscriber;
+}
+
+// Reads published messages until one on @p topic contains @p text; gives up after 30 messages or a timeout.
+bool WaitForPublished(zmq::socket_t& subscriber, const std::string& topic, const std::string& text,
+                      std::string* json = nullptr)
+{
+    for (int message = 0; message < 30; ++message)
+    {
+        const std::vector<std::string> frames = Receive(subscriber);
+        if (frames.empty())
+        {
+            return false;
+        }
+        if (frames.size() == 2 && frames[0] == topic && frames[1].find(text) != std::string::npos)
+        {
+            if (json != nullptr)
+            {
+                *json = frames[1];
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+network_manager::MonitorSettings Publishing()
+{
+    network_manager::MonitorSettings settings{};
+    settings.statusEndpoint = "tcp://127.0.0.1:*";
+    settings.statusPeriod = std::chrono::milliseconds{100};
+    return settings;
 }
 
 } // namespace
@@ -488,7 +535,7 @@ TEST(NetworkManagerTest, ConnectionThatNeverSendsStaysUnnamed)
 TEST(NetworkManagerTest, WritesRepeatedWarningOncePerInterval)
 {
     const CapturedLog log;
-    network_manager::LogSettings settings{};
+    network_manager::MonitorSettings settings{};
     settings.repeatInterval = std::chrono::milliseconds{60000};
     RunningManager broker{settings};
     ASSERT_TRUE(broker.Bound());
@@ -509,7 +556,7 @@ TEST(NetworkManagerTest, WritesRepeatedWarningOncePerInterval)
 TEST(NetworkManagerTest, CountsHeldBackWarningsWhenWritingAgain)
 {
     const CapturedLog log;
-    network_manager::LogSettings settings{};
+    network_manager::MonitorSettings settings{};
     settings.repeatInterval = std::chrono::milliseconds{300};
     RunningManager broker{settings};
     ASSERT_TRUE(broker.Bound());
@@ -530,7 +577,7 @@ TEST(NetworkManagerTest, CountsHeldBackWarningsWhenWritingAgain)
 TEST(NetworkManagerTest, WritesStatusLineWithNamesAndCounts)
 {
     const CapturedLog log;
-    network_manager::LogSettings settings{};
+    network_manager::MonitorSettings settings{};
     settings.summaryPeriod = std::chrono::milliseconds{300};
     RunningManager broker{settings};
     ASSERT_TRUE(broker.Bound());
@@ -578,4 +625,64 @@ TEST(NetworkManagerTest, LogsForwardedMessagesAtVerbose)
     EXPECT_EQ(Receive(b), (std::vector<std::string>{"A", "hello"}));
     EXPECT_TRUE(log.WaitFor("[V] Broker:   A -> B"));
     EXPECT_TRUE(log.WaitFor("1 frame, 5 bytes"));
+}
+
+TEST(NetworkManagerTest, PublishesNothingWithoutStatusEndpoint)
+{
+    RunningManager broker;
+    ASSERT_TRUE(broker.Bound());
+    EXPECT_TRUE(broker.StatusEndpoint().empty());
+}
+
+TEST(NetworkManagerTest, StatusBindFailureKeepsTheBroker)
+{
+    network_manager::MonitorSettings settings{};
+    settings.statusEndpoint = "bogus://nowhere";
+    RunningManager broker{settings};
+    ASSERT_TRUE(broker.Bound());
+    EXPECT_TRUE(broker.StatusEndpoint().empty());
+    zmq::context_t context{1};
+    zmq::socket_t a = MakeDealer(context, "A", broker.Endpoint());
+    EXPECT_TRUE(WaitUntilRoutable(a, "A"));
+}
+
+TEST(NetworkManagerTest, PublishesStatusWithEveryDealer)
+{
+    RunningManager broker{Publishing()};
+    ASSERT_TRUE(broker.Bound());
+    EXPECT_EQ(broker.StatusEndpoint().rfind("tcp://127.0.0.1:", 0), 0u);
+    zmq::context_t context{1};
+    zmq::socket_t subscriber = MakeSubscriber(context, broker.StatusEndpoint());
+    zmq::socket_t a = MakeDealer(context, "A", broker.Endpoint());
+    zmq::socket_t silent = MakeDealer(context, "silent", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(a, "A"));
+
+    std::string json;
+    ASSERT_TRUE(WaitForPublished(subscriber, "status", "\"name\":\"A\"", &json));
+    EXPECT_EQ(json.rfind("{\"version\":1,\"endpoint\":\"tcp://127.0.0.1:", 0), 0u);
+    EXPECT_NE(json.find("\"address\":\"127.0.0.1:"), std::string::npos);
+    EXPECT_NE(json.find("\"totals\":{\"forwarded\":"), std::string::npos);
+    EXPECT_TRUE(WaitForPublished(subscriber, "status", "\"unnamed\":[{\"address\":\"127.0.0.1:"));
+}
+
+TEST(NetworkManagerTest, PublishesEventsAsTheyHappen)
+{
+    RunningManager broker{Publishing()};
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t subscriber = MakeSubscriber(context, broker.StatusEndpoint());
+    ASSERT_TRUE(WaitForPublished(subscriber, "status", "\"version\":1")); // subscribed from here on
+
+    zmq::socket_t dealer = MakeDealer(context, "ev", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(dealer, "ev"));
+    std::string json;
+    ASSERT_TRUE(WaitForPublished(subscriber, "event", "\"kind\":\"joined\"", &json));
+    EXPECT_NE(json.find("\"level\":\"info\""), std::string::npos);
+    EXPECT_NE(json.find("\"name\":\"ev\""), std::string::npos);
+    EXPECT_NE(json.find("\"text\":\"joined from 127.0.0.1:"), std::string::npos);
+
+    Send(dealer, {"nobody", "x"});
+    EXPECT_TRUE(WaitForPublished(subscriber, "event", "\"kind\":\"notDelivered\""));
+    dealer.close();
+    EXPECT_TRUE(WaitForPublished(subscriber, "event", "\"kind\":\"left\""));
 }

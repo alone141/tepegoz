@@ -1,6 +1,7 @@
 """Master-detail views for the health monitor.
 
-The sidebar lists the manager unit and one row per reported process. The
+The sidebar lists the manager unit, its network manager (page in
+network_view), and one row per reported process. The
 process detail page shows the selection: a header with state and actions,
 metric tiles, a state band, and Graphs / cgroup PIDs / Journal tabs. The
 service page shows the manager unit (systemctl status + journal).
@@ -67,6 +68,8 @@ from usage_graphs import (
 )
 
 MANAGER_NAME = "processmanager"
+# The broker inside the manager: its own sidebar row and page (network_view).
+NETWORK_NAME = "network manager"
 
 # ── theme ─────────────────────────────────────────────────────────────────────
 
@@ -282,9 +285,11 @@ def service_active_text(status_text: str) -> str:
 
 # ── sidebar ──────────────────────────────────────────────────────────────────
 
-KIND_ROLE = Qt.ItemDataRole.UserRole  # "header" | "manager" | "svc"
+KIND_ROLE = Qt.ItemDataRole.UserRole  # "header" | "manager" | "network" | "svc"
 REPORT_ROLE = Qt.ItemDataRole.UserRole + 1  # svc rows: the health report dict
-HINT_ROLE = Qt.ItemDataRole.UserRole + 2  # manager row: right-hand text
+HINT_ROLE = Qt.ItemDataRole.UserRole + 2  # manager and network rows: right-hand text
+DOT_ROLE = Qt.ItemDataRole.UserRole + 3  # network row: colour of its dot
+HINT_KIND_ROLE = Qt.ItemDataRole.UserRole + 4  # network row: "muted" or "badge"
 
 
 class SidebarDelegate(QStyledItemDelegate):
@@ -328,9 +333,9 @@ class SidebarDelegate(QStyledItemDelegate):
         elif option.state & QStyle.StateFlag.State_MouseOver:
             painter.fillRect(rect, QColor(ROW_HOVER_BG))
 
-        if kind == "manager":
-            dot = QColor(ACCENT)
-            hint, hint_kind = (index.data(HINT_ROLE) or ""), "muted"
+        if kind in ("manager", "network"):
+            dot = QColor(index.data(DOT_ROLE) or ACCENT)
+            hint, hint_kind = (index.data(HINT_ROLE) or ""), (index.data(HINT_KIND_ROLE) or "muted")
             name_color = QColor(TEXT)
         else:
             report = index.data(REPORT_ROLE) or {}
@@ -394,9 +399,10 @@ class SidebarDelegate(QStyledItemDelegate):
 
 
 class ProcessSidebar(QListWidget):
-    """The manager unit, then one row per reported process, sorted by name."""
+    """The manager unit and its network manager, then one row per reported process, sorted by name."""
 
     manager_selected = pyqtSignal()
+    network_selected = pyqtSignal()
     process_selected = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -412,6 +418,9 @@ class ProcessSidebar(QListWidget):
         self._manager_item = QListWidgetItem(MANAGER_NAME)
         self._manager_item.setData(KIND_ROLE, "manager")
         self.addItem(self._manager_item)
+        self._network_item = QListWidgetItem(NETWORK_NAME)
+        self._network_item.setData(KIND_ROLE, "network")
+        self.addItem(self._network_item)
         self._process_header = self._add_header("Processes")
         self._items: Dict[str, QListWidgetItem] = {}
         self._filter = ""
@@ -474,10 +483,24 @@ class ProcessSidebar(QListWidget):
     def set_manager_hint(self, text: str) -> None:
         self._manager_item.setData(HINT_ROLE, text)
 
+    def set_network_hint(self, text: str, kind: str, dot_color: str) -> None:
+        """The network row's right-hand text ("muted" or a "badge") and dot colour."""
+        self._network_item.setData(HINT_ROLE, text)
+        self._network_item.setData(HINT_KIND_ROLE, kind)
+        self._network_item.setData(DOT_ROLE, dot_color)
+        self.viewport().update()
+
+    def network_hint(self) -> Tuple[str, str, str]:
+        item = self._network_item
+        return item.data(HINT_ROLE) or "", item.data(HINT_KIND_ROLE) or "", item.data(DOT_ROLE) or ""
+
     # ── selection ─────────────────────────────────────────────────────────
 
     def select_manager(self) -> None:
         self.setCurrentItem(self._manager_item)
+
+    def select_network(self) -> None:
+        self.setCurrentItem(self._network_item)
 
     def select_process(self, name: str) -> None:
         item = self._items.get(name)
@@ -496,6 +519,8 @@ class ProcessSidebar(QListWidget):
         kind = current.data(KIND_ROLE)
         if kind == "manager":
             self.manager_selected.emit()
+        elif kind == "network":
+            self.network_selected.emit()
         elif kind == "svc":
             self.process_selected.emit(current.text())
 

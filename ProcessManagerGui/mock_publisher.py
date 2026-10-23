@@ -9,19 +9,26 @@ ROUTER (bind) – accepts DEALER commands with:
       frame0   = b"BPM"
       frame1   = packed CommandMessage (65 B)
     and answers the GUI identity with [b"BPM"][b"1" | b"0"], as the manager does.
+PUB  (bind, --network) – the network manager's status and events (network_status):
+      BPM is connected; running processes connect and send heartbeats, unhealthy
+      ones go quiet, stopped ones leave; the GUI joins with its first command.
+      --missing NAME keeps a heartbeating process off the network manager.
 """
 
 from __future__ import annotations
 
 import argparse
 import ctypes
+import json
 import random
 import signal
 import sys
 import time
-from typing import List
+from typing import Dict, List
 
 import zmq
+
+from network_status import STATUS_VERSION, format_age_ms
 
 from health_structs import (
     COMMAND_SIZE,
@@ -96,10 +103,67 @@ def reports_to_bytes(reports: List[DetailedHealthReport]) -> bytes:
     return bytes(buf)
 
 
+class MockNetwork:
+    """The network manager's side: who is connected, and the status and events it publishes."""
+
+    def __init__(self, sock: zmq.Socket, endpoint: str) -> None:
+        self.sock = sock
+        self.endpoint = endpoint
+        self.started_ms = int(time.time() * 1000)
+        self.dealers: Dict[str, dict] = {}
+        self.next_port = 40000
+        self.forwarded = 0
+        self.not_delivered = 0
+        self.last_status_ms = 0
+        self.join("BPM")
+
+    def join(self, name: str) -> None:
+        now = int(time.time() * 1000)
+        address = f"127.0.0.1:{self.next_port}"
+        self.next_port += 1
+        self.dealers[name] = {"address": address, "since": now, "messages": 1, "lastMessage": now}
+        self.event("info", "joined", name, f"joined from {address}")
+
+    def leave(self, name: str) -> None:
+        dealer = self.dealers.pop(name)
+        age = format_age_ms(int(time.time() * 1000) - dealer["since"]).replace(" ", "")
+        self.event("info", "left", name,
+                   f"left {dealer['address']} after {age}, {dealer['messages']} messages")
+
+    def sent(self, name: str) -> None:
+        dealer = self.dealers[name]
+        dealer["messages"] += 1
+        dealer["lastMessage"] = int(time.time() * 1000)
+        self.forwarded += 1
+
+    def event(self, level: str, kind: str, name: str, text: str) -> None:
+        self.publish(b"event", {"version": STATUS_VERSION, "time": int(time.time() * 1000),
+                                "level": level, "kind": kind, "name": name, "text": text})
+
+    def publish_status_if_due(self) -> None:
+        now = int(time.time() * 1000)
+        if now - self.last_status_ms < 1000:
+            return
+        self.last_status_ms = now
+        self.publish(b"status", {
+            "version": STATUS_VERSION, "endpoint": self.endpoint, "started": self.started_ms, "now": now,
+            "totals": {"forwarded": self.forwarded, "notDelivered": self.not_delivered, "rejected": 0},
+            "dealers": [{"name": name, **d} for name, d in sorted(self.dealers.items())],
+            "unnamed": [],
+        })
+
+    def publish(self, topic: bytes, payload: dict) -> None:
+        self.sock.send_multipart([topic, json.dumps(payload).encode()])
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pub", default="tcp://*:6667")
     parser.add_argument("--router", default="tcp://*:5557")
+    parser.add_argument("--network", default="tcp://*:6669",
+                        help="PUB endpoint of the network manager's status ('' for none)")
+    parser.add_argument("--missing", action="append", default=[],
+                        help="a process that sends heartbeats but never connects (repeatable)")
     parser.add_argument("--interval", type=float, default=0.5)
     parser.add_argument(
         "--no-gpu", action="store_true",
@@ -112,6 +176,13 @@ def main():
     pub = ctx.socket(zmq.PUB)
     pub.bind(args.pub)
     print(f"[PUB]    bound to {args.pub}")
+
+    network = None
+    if args.network:
+        net = ctx.socket(zmq.PUB)
+        net.bind(args.network)
+        network = MockNetwork(net, args.router.replace("*", "0.0.0.0"))
+        print(f"[NET]    bound to {args.network}")
 
     router = ctx.socket(zmq.ROUTER)
     router.bind(args.router)
@@ -208,6 +279,11 @@ def main():
                     if identity == GUI_IDENTITY:
                         # Like the manager: [BPM][b"1" accepted | b"0" refused], GUI only.
                         router.send_multipart([identity, b"BPM", b"1" if accepted else b"0"])
+                    if network is not None:
+                        sender = identity.decode(errors="replace")
+                        if sender not in network.dealers:
+                            network.join(sender)
+                        network.sent(sender)
                 else:
                     print(f"   payload size mismatch "
                           f"(got {len(payload) if payload else 0}, expected {COMMAND_SIZE})")
@@ -280,11 +356,29 @@ def main():
         last_snap = now
         pub.send(reports_to_bytes(reports))
 
+        # ── network manager: heartbeats of the running, joins and leaves ─
+        if network is not None:
+            for name in PROCESSES:
+                connected = states[name] in (RuntimeState.RUNNING, RuntimeState.UNHEALTHY)
+                connected = connected and name not in args.missing
+                if connected and name not in network.dealers:
+                    network.join(name)
+                elif not connected and name in network.dealers:
+                    network.leave(name)
+                if name in network.dealers and states[name] == RuntimeState.RUNNING:
+                    network.sent(name)  # unhealthy ones send no heartbeat: they go quiet
+            if random.random() < 0.02:
+                network.not_delivered += 1
+                network.event("warning", "notDelivered", "GUI -> PMC", "not delivered: PMC is not connected")
+            network.publish_status_if_due()
+
         time.sleep(args.interval)
 
     print("\nShutting down…")
     pub.close(0)
     router.close(0)
+    if network is not None:
+        network.sock.close(0)
     ctx.term()
 
 

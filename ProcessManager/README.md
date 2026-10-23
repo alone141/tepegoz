@@ -33,6 +33,11 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   and how many messages each sent. Forwarded messages are logged at `LogLevel: Verbose`.
 - On a terminal, warnings are yellow, errors red and debug lines dim. journald and the log files get plain
   text, and `NO_COLOR` turns the colours off.
+- The broker publishes its status on `tcp://*:6669` (ZeroMQ PUB, versioned JSON): every second who is
+  connected, from where, since when and how many messages each sent, and every event of its log as it
+  happens. The monitor GUI shows it as the "network manager" page under the manager: a table of the
+  connected dealers, the events, and a toolbar pill that turns red when a service that sends heartbeats is
+  not connected or the status stops. `--network` points the GUI elsewhere.
 
 ### 0.1.0 
 - First release

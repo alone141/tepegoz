@@ -11,10 +11,12 @@ DEALER wire format (exactly as specified by you):
 SUB: receives array of DetailedHealthReport (raw or length-prefixed). The
 manager samples GPU use itself and sends it in each report.
 
-Layout: the sidebar lists the manager unit and every reported process; the
-pane on the right shows the selection — metric tiles, a state band and the
-Graphs / cgroup PIDs / Journal tabs for a process, or systemctl status and
-the unit journal for the manager. The widgets live in process_views.py;
+Layout: the sidebar lists the manager unit, its network manager and every
+reported process; the pane on the right shows the selection — metric tiles, a
+state band and the Graphs / cgroup PIDs / Journal tabs for a process,
+systemctl status and the unit journal for the manager, or who is connected to
+the network manager and what happened there (from its status publisher, see
+network_status). The widgets live in process_views.py and network_view.py;
 this module owns the workers and wires them to the views.
 """
 
@@ -59,6 +61,16 @@ from health_structs import (
     parse_health_reports,
     report_to_dict,
 )
+from network_status import (
+    NETWORK_ENDPOINT,
+    NetworkEvent,
+    NetworkStatus,
+    forwarded_rate,
+    message_rates,
+    missing_services,
+    parse_message,
+)
+from network_view import NetworkPage
 from journal_view import (  # noqa: F401  re-exported: former home of these names
     JournalView,
     NO_PID_COLOR,
@@ -354,6 +366,89 @@ class ZmqWorker(QObject):
         if self._dealer:
             self._dealer.close(linger=0)
             self._dealer = None
+
+
+class NetworkWorker(QObject):
+    """Subscribes to the network manager's status and events (see network_status)."""
+
+    status_received   = pyqtSignal(object)  # NetworkStatus, the newest of a round
+    events_received   = pyqtSignal(list)    # list[NetworkEvent], oldest first
+    connection_status = pyqtSignal(str)
+    log_message       = pyqtSignal(str)
+
+    def __init__(self, endpoint: str = NETWORK_ENDPOINT, parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self.endpoint = endpoint
+        self._running = False
+        self._sub: Optional[zmq.Socket] = None
+        self._last_error = ""
+
+    @pyqtSlot()
+    def start(self):
+        self._running = True
+        try:
+            self._sub = zmq.Context.instance().socket(zmq.SUB)
+            self._sub.setsockopt(zmq.RCVHWM, 1000)
+            self._sub.setsockopt(zmq.LINGER, 0)
+            self._sub.setsockopt(zmq.SUBSCRIBE, b"")
+            self._sub.connect(self.endpoint)
+        except zmq.ZMQError as e:
+            self._running = False
+            self._close()
+            self.connection_status.emit(f"error: {e}")
+            self.log_message.emit(f"Network manager status: connect to {self.endpoint} failed: {e}")
+            return
+        self.connection_status.emit("connected")
+
+        poller = zmq.Poller()
+        poller.register(self._sub, zmq.POLLIN)
+        while self._running:
+            try:
+                if not dict(poller.poll(100)):
+                    continue
+            except zmq.ZMQError:
+                break
+            status: Optional[NetworkStatus] = None
+            events: List[NetworkEvent] = []
+            while True:  # everything queued, so a burst of events is one update
+                try:
+                    frames = self._sub.recv_multipart(flags=zmq.NOBLOCK)
+                except zmq.Again:
+                    break
+                except zmq.ZMQError:
+                    self._running = False
+                    break
+                try:
+                    message = parse_message(frames)
+                except ValueError as e:
+                    self._report_error(str(e))
+                    continue
+                if isinstance(message, NetworkStatus):
+                    status = message
+                elif isinstance(message, NetworkEvent):
+                    events.append(message)
+            if events:
+                self.events_received.emit(events)
+            if status is not None:
+                self.status_received.emit(status)
+
+        self._running = False
+        self._close()
+        self.connection_status.emit("disconnected")
+
+    def stop(self):
+        self._running = False
+
+    def _report_error(self, error: str) -> None:
+        # Once per distinct error: a bad message every second must not flood the status bar.
+        if error != self._last_error:
+            self._last_error = error
+            self.log_message.emit(f"Network manager status: {error}")
+
+    def _close(self):
+        if self._sub:
+            self._sub.close(linger=0)
+            self._sub = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -763,11 +858,13 @@ class ProcessMonitorWindow(QMainWindow):
         self,
         sub_endpoint: str,
         dealer_endpoint: str,
+        network_endpoint: str = NETWORK_ENDPOINT,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
         self.sub_endpoint    = sub_endpoint
         self.dealer_endpoint = dealer_endpoint
+        self.network_endpoint = network_endpoint
 
         self.setWindowTitle("Process Manager – Health Monitor")
         fit_to_screen(self, QSize(1180, 760), minimum=QSize(900, 600))
@@ -783,6 +880,11 @@ class ProcessMonitorWindow(QMainWindow):
         self._usage = UsageHistory()  # recorded from the start, for the graphs
         self._usage_window: Optional[UsageGraphWindow] = None
         self._auto_select = True  # show the first process once reports arrive
+        self._network_feed = FeedMonitor()  # the network manager's status, like the reports
+        self._network_status: Optional[NetworkStatus] = None
+        self._network_rates: Dict[str, Optional[float]] = {}
+        self._network_forwarded_rate: Optional[float] = None
+        self._network_stale = False
 
         self._build_ui()
         self._feed_timer = QTimer(self)
@@ -790,6 +892,7 @@ class ProcessMonitorWindow(QMainWindow):
         self._feed_timer.timeout.connect(self._refresh_feed_status)
         self._feed_timer.start()
         self._start_zmq_worker()
+        self._start_network_worker()
         self._start_systemd_worker()
         self._start_cgroup_members_worker()
         self._start_detail_journal_worker()
@@ -819,6 +922,9 @@ class ProcessMonitorWindow(QMainWindow):
         )
         self.lbl_endpoints.setStyleSheet(mono_style(TEXT_MUTED))
         toolbar.addWidget(self.lbl_endpoints)
+
+        self.lbl_network = QLabel("Network …")
+        toolbar.addWidget(self.lbl_network)
 
         self.lbl_gpu = QLabel("GPU …")
         toolbar.addWidget(self.lbl_gpu)
@@ -854,6 +960,14 @@ class ProcessMonitorWindow(QMainWindow):
         self.edit_dealer.setClearButtonEnabled(True)
         self.edit_dealer.returnPressed.connect(self._reconnect)
         strip.addWidget(self.edit_dealer)
+        strip.addSpacing(8)
+        strip.addWidget(QLabel("NET"))
+        self.edit_network = QLineEdit(self.network_endpoint)
+        self.edit_network.setPlaceholderText("tcp://host:port")
+        self.edit_network.setToolTip("ZMQ SUB endpoint of the network manager's status and events")
+        self.edit_network.setClearButtonEnabled(True)
+        self.edit_network.returnPressed.connect(self._reconnect)
+        strip.addWidget(self.edit_network)
         self.btn_reconnect = QPushButton("Reconnect")
         self.btn_reconnect.setStyleSheet(RECONNECT_STYLE)
         self.btn_reconnect.setToolTip("Apply new endpoints and reconnect")
@@ -880,6 +994,7 @@ class ProcessMonitorWindow(QMainWindow):
         self.sidebar = ProcessSidebar()
         self.sidebar_filter.textChanged.connect(self.sidebar.set_filter)
         self.sidebar.manager_selected.connect(self._on_manager_selected)
+        self.sidebar.network_selected.connect(self._on_network_selected)
         self.sidebar.process_selected.connect(self._on_process_selected)
         side_layout.addWidget(self.sidebar, stretch=1)
 
@@ -889,8 +1004,10 @@ class ProcessMonitorWindow(QMainWindow):
         self.detail.pid_activated.connect(self._on_pid_activated)
         self.detail.pop_out_requested.connect(self._open_usage_graphs)
         self.service_page = ServiceDetailPage()
+        self.network_page = NetworkPage()
         self.stack = QStackedWidget()
         self.stack.addWidget(self.service_page)
+        self.stack.addWidget(self.network_page)
         self.stack.addWidget(self.detail)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -927,6 +1044,7 @@ class ProcessMonitorWindow(QMainWindow):
         bar.addPermanentWidget(self.lbl_last_update)
 
         self._show_endpoints()
+        self._show_network_state()
         # Start on the manager page; the first report selects a process.
         self.sidebar.blockSignals(True)
         self.sidebar.select_manager()
@@ -937,6 +1055,7 @@ class ProcessMonitorWindow(QMainWindow):
     def _show_endpoints(self) -> None:
         self.lbl_endpoints.setText(
             f"SUB {self.sub_endpoint}   ·   DEALER {self.dealer_endpoint}"
+            f"   ·   NET {self.network_endpoint}"
         )
 
     def _show_status(self, message: str) -> None:
@@ -962,6 +1081,13 @@ class ProcessMonitorWindow(QMainWindow):
         worker = getattr(self, "detail_journal_worker", None)
         if worker is not None:
             worker.set_process("")  # nothing to tail while the manager is shown
+
+    def _on_network_selected(self) -> None:
+        self._auto_select = False
+        self.stack.setCurrentWidget(self.network_page)
+        worker = getattr(self, "detail_journal_worker", None)
+        if worker is not None:
+            worker.set_process("")
 
     def _refresh_detail(self) -> None:
         name = self.detail.name
@@ -1065,6 +1191,40 @@ class ProcessMonitorWindow(QMainWindow):
         if self.stack.currentWidget() is self.detail and self.detail.name:
             self.detail_journal_worker.set_process(self.detail.name)
 
+    def _start_network_worker(self):
+        endpoint = self.edit_network.text().strip() or self.network_endpoint
+        self.network_endpoint = endpoint
+        self.edit_network.setText(endpoint)
+        self._show_endpoints()
+
+        self.network_thread = QThread()
+        self.network_worker = NetworkWorker(endpoint)
+        self.network_worker.moveToThread(self.network_thread)
+        self.network_thread.started.connect(self.network_worker.start)
+        self.network_worker.status_received.connect(self._on_network_status)
+        self.network_worker.events_received.connect(self._on_network_events)
+        self.network_worker.connection_status.connect(self._on_network_connection)
+        self.network_worker.log_message.connect(self._on_log)
+        self.network_thread.start()
+
+    def _detach_network_worker(self) -> Tuple[Optional[QObject], Optional[QThread]]:
+        worker = getattr(self, "network_worker", None)
+        thread = getattr(self, "network_thread", None)
+        if worker is not None:
+            for sig in (
+                worker.status_received,
+                worker.events_received,
+                worker.connection_status,
+                worker.log_message,
+            ):
+                try:
+                    sig.disconnect()
+                except TypeError:
+                    pass
+        self.network_worker = None
+        self.network_thread = None
+        return worker, thread
+
     # ── slots: data in ────────────────────────────────────────────────────
 
     @pyqtSlot(str, list, str)
@@ -1114,6 +1274,7 @@ class ProcessMonitorWindow(QMainWindow):
             f"Last update: {time.strftime('%H:%M:%S')}"
         )
         self.lbl_process_count.setText(f"Processes: {len(self._current)}")
+        self._refresh_network()  # which heartbeat senders are missing follows the reports
         self._refresh_feed_status()
 
     def _record_usage(self, now: float) -> None:
@@ -1147,8 +1308,77 @@ class ProcessMonitorWindow(QMainWindow):
         else:
             self._set_link_status("Disconnected", "#f44336")
 
+    @pyqtSlot(object)
+    def _on_network_status(self, status: NetworkStatus) -> None:
+        previous = self._network_status
+        self._network_rates = message_rates(previous, status)
+        self._network_forwarded_rate = forwarded_rate(previous, status)
+        self._network_status = status
+        self._network_feed.on_report(time.monotonic())
+        if self._network_stale:
+            self._network_stale = False
+            self.network_page.set_stale(False)
+        self._refresh_network()
+
+    @pyqtSlot(list)
+    def _on_network_events(self, events: List[NetworkEvent]) -> None:
+        self.network_page.add_events(events)
+
+    @pyqtSlot(str)
+    def _on_network_connection(self, status: str) -> None:
+        if status == "connected":
+            self._network_feed.on_connected(time.monotonic())
+        else:
+            self._network_feed.on_disconnected()
+        self._show_network_state()
+
+    def _refresh_network(self) -> None:
+        if self._network_status is not None:
+            self.network_page.set_status(
+                self._network_status, self._current, self._network_rates, self._network_forwarded_rate
+            )
+        self._show_network_state()
+
+    def _show_network_state(self) -> None:
+        """The toolbar pill and the sidebar row of the network manager."""
+        status = self._network_status
+        if status is None:
+            feed = self._network_feed.status(time.monotonic())
+            if feed is not None and feed[1] == "stale":
+                text, color, hint, kind = "Network · no data", "#f44336", "no data", "badge"
+                tip = (f"Connected to {self.network_endpoint}, but no status has come "
+                       "(is the process manager running, and publishing on this port?)")
+            else:
+                text, color, hint, kind = "Network …", "orange", "waiting", "muted"
+                tip = f"Waiting for the network manager's status from {self.network_endpoint}"
+        elif self._network_stale:
+            text, color, hint, kind = "Network stale", "#f44336", "stale", "badge"
+            tip = (f"No status from the network manager at {self.network_endpoint} for a while; "
+                   "its page shows the last one received (greyed out)")
+        else:
+            missing = missing_services(self._current, status)
+            if missing:
+                text, color = f"Network · {len(missing)} missing", "#f44336"
+                hint, kind = f"{len(missing)} missing", "badge"
+                tip = ("Not connected to the network manager, though they send heartbeats: "
+                       + ", ".join(missing))
+            else:
+                text, color = f"Network · {len(status.dealers)}", "#4caf50"
+                hint, kind = str(len(status.dealers)), "muted"  # short: the row's name stays whole
+                names = ", ".join(d.name for d in status.dealers) or "none"
+                tip = f"{len(status.dealers)} connected to the network manager: {names}"
+        self.lbl_network.setText(text)
+        self.lbl_network.setStyleSheet(pill_style(color))
+        self.lbl_network.setToolTip(tip)
+        self.sidebar.set_network_hint(hint, kind, color)
+
     def _refresh_feed_status(self) -> None:
         now = time.monotonic()
+        network_stale = self._network_feed.data_stale(now)
+        if network_stale != self._network_stale:
+            self._network_stale = network_stale
+            self.network_page.set_stale(network_stale)
+        self._show_network_state()
         stale = self._feed.data_stale(now)
         if stale != self._stale:
             self._stale = stale
@@ -1258,8 +1488,10 @@ class ProcessMonitorWindow(QMainWindow):
         self._feed.on_disconnected()
         self._set_link_status("Reconnecting…", "orange")
 
-        self._stop_zmq_worker(timeout_ms=4000)
+        self._network_feed.on_disconnected()
+        stop_workers([self._detach_zmq_worker(), self._detach_network_worker()], 4000)
         self._start_zmq_worker()
+        self._start_network_worker()
         self.btn_reconnect.setEnabled(True)
         self._show_status(
             f"Connecting to SUB={self.sub_endpoint}  "
@@ -1305,6 +1537,7 @@ class ProcessMonitorWindow(QMainWindow):
         ):
             pairs.append(self._detach_background_worker(worker_attr, thread_attr))
         pairs.append(self._detach_zmq_worker())
+        pairs.append(self._detach_network_worker())
         stop_workers(pairs)
 
         for w in list(self._log_windows.values()):
@@ -1339,12 +1572,17 @@ def main():
         default="tcp://127.0.0.1:5557",
         help="ZMQ DEALER endpoint (default: tcp://127.0.0.1:5557)",
     )
+    parser.add_argument(
+        "--network",
+        default=NETWORK_ENDPOINT,
+        help=f"ZMQ SUB endpoint of the network manager's status (default: {NETWORK_ENDPOINT})",
+    )
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
     apply_dark_theme(app)
 
-    win = ProcessMonitorWindow(args.sub, args.dealer)
+    win = ProcessMonitorWindow(args.sub, args.dealer, args.network)
     win.show()
     sys.exit(app.exec())
 

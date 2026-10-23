@@ -13,12 +13,29 @@ namespace network_manager
 constexpr const char* empty_identity_text = "<empty>";
 constexpr std::chrono::milliseconds default_summary_period{60000};
 constexpr std::chrono::milliseconds default_repeat_interval{10000};
+constexpr std::chrono::milliseconds default_status_period{1000};
+// Version of the JSON the status publisher sends; a reader skips messages of a version it does not know.
+constexpr int status_version = 1;
 
-// How the broker logs. Every line starts with "Broker: " and a mark: + joined, - left, ~ taken over,
-// ! not delivered or rejected, = status. A name column follows, so the lines read as a table.
-struct LogSettings
+// How the broker reports what it does.
+//
+// Log: every line starts with "Broker: " and a mark: + joined, - left, ~ taken over, ! not delivered or
+// rejected, = status. A name column follows, so the lines read as a table.
+//
+// Status publisher (statusEndpoint, a ZeroMQ PUB socket), for the monitor GUI. Two-frame messages:
+//   [status][JSON] every statusPeriod: {"version", "endpoint", "started", "now", "totals": {"forwarded",
+//       "notDelivered", "rejected"}, "dealers": [{"name", "address", "since", "messages", "lastMessage"}],
+//       "unnamed": [{"address", "since"}]}
+//   [event][JSON] whenever the log gets a line with a mark (+ - ~ ! or a blank one at Debug):
+//       {"version", "time", "level", "kind", "name", "text"}; kind is joined, left, takeover,
+//       notDelivered, rejected, connected or closed, and the log line is "Broker: <mark> <name> <text>".
+// Times are milliseconds since the Unix epoch; names are as FormatIdentity() writes them.
+struct MonitorSettings
 {
-    // Time between status lines: who is connected and how many messages each sent.
+    // Where to publish the status and events; empty publishes nothing.
+    std::string statusEndpoint;
+    std::chrono::milliseconds statusPeriod = default_status_period;
+    // Time between status lines in the log: who is connected and how many messages each sent.
     std::chrono::milliseconds summaryPeriod = default_summary_period;
     // The same warning (same sender, destination and reason) is written at most once per interval, with
     // the count of the ones held back.
@@ -82,17 +99,18 @@ std::string FormatIdentity(std::string_view identity);
 // The ZeroMQ broker of the process manager: a ROUTER socket that hands every message a dealer sends to
 // the dealer it names. Services send their heartbeats through it, and the CLI and the GUI their commands.
 // It logs each dealer by name: when it joins, from which address, when it leaves, and who takes a name
-// over; undeliverable messages; and a status line every LogSettings::summaryPeriod.
+// over; undeliverable messages; and a status line every MonitorSettings::summaryPeriod. The same events
+// and a status every second can be published for the monitor GUI (MonitorSettings::statusEndpoint).
 class NetworkManager
 {
 public:
     /**
-     * @brief Keep the endpoint to bind. Nothing is opened before Bind().
-     * @param endpoint ZeroMQ endpoint, such as tcp://0.0.0.0:5557 or tcp://127.0.0.1:5557. A tcp port
-     *                 of * takes a free port.
-     * @param logSettings Status line period and how often a repeated warning is written.
+     * @brief Keep the endpoints to bind. Nothing is opened before Bind().
+     * @param endpoint ZeroMQ endpoint of the broker, such as tcp://0.0.0.0:5557. A tcp port of * takes a
+     *                 free port.
+     * @param monitorSettings Where status and events are published, and how often the log repeats itself.
      */
-    explicit NetworkManager(std::string endpoint, LogSettings logSettings = LogSettings{});
+    explicit NetworkManager(std::string endpoint, MonitorSettings monitorSettings = MonitorSettings{});
 
     /**
      * @brief Close the socket. Call only once Run() has returned.
@@ -116,9 +134,10 @@ public:
     NetworkManager& operator=(NetworkManager&& other) noexcept;
 
     /**
-     * @brief Open the ROUTER socket and bind it to the endpoint.
-     * @param error Receives the reason when binding fails.
-     * @return BindCode::Ok on success, otherwise BindCode::Failed.
+     * @brief Open the ROUTER socket and bind it to the endpoint, then the status publisher when one is set.
+     *        A status publisher that cannot bind is logged and left out: the broker works without it.
+     * @param error Receives the reason when binding the ROUTER socket fails.
+     * @return BindCode::Ok when the ROUTER socket is bound, otherwise BindCode::Failed.
      */
     BindCode Bind(std::string& error);
 
@@ -141,6 +160,12 @@ public:
      * @return The endpoint; empty for a manager that was moved from.
      */
     std::string Endpoint() const;
+
+    /**
+     * @brief Return the endpoint the status publisher is bound to, with a * port resolved.
+     * @return The endpoint; empty when nothing is published.
+     */
+    std::string StatusEndpoint() const;
 
 private:
     struct State;
