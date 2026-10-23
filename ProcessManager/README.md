@@ -3,12 +3,39 @@
 ### Build Requirements
 
 #### Linux Dev Env.
-gcc11, cmake 3.30
+gcc11, cmake 3.30. At least CMake 3.20 and a C++20 compiler (GCC 10 or newer).
 
 #### Dependencies
-- libzmq with cppzmq (the `libzmq-static` target) and cxxopts: provided by the build that adds this directory.
-- fkYAML 0.4.4 (MIT, header-only): vendored in `third_party/`, so an airgapped machine needs nothing more.
-- GoogleTest: only for the module tests, built when `ENABLE_TEST` is on.
+Installed packages, found with `find_package`. Nothing is downloaded, so an airgapped machine installs them
+offline first; a missing one stops the configure step and names the package.
+- libzmq 4.3 with cppzmq 4.7 or newer: `libzmq3-dev` and `cppzmq-dev` (Debian, Ubuntu). libzmq is linked as a
+  shared library, so the machine that runs the manager needs `libzmq5`.
+- cxxopts 3: `libcxxopts-dev`.
+- GoogleTest 1.10 or newer: `libgtest-dev`, only for the tests. `-DENABLE_TEST=OFF` builds without them.
+
+Vendored in `third_party/` (see its README), so they need nothing installed:
+- fkYAML 0.4.4 (MIT, header-only).
+
+#### Build
+```text
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build
+cmake --install build
+```
+`cmake --install` puts the manager in `bin/` as `iltaren-ProcessManager`, and `keepalive` next to it when
+the tests are built. The paths below are built into the manager. They follow `CMAKE_INSTALL_PREFIX`, so with
+`-DCMAKE_INSTALL_PREFIX=/usr` the config is `/etc/processmanager/ProcessManagerConfig.yaml` and the logs go to
+`/var/log/processmanager/ProcessManagerLog/`. Each can also be set on its own; directories end with a slash.
+
+| Cache variable | Default | Used for |
+|---|---|---|
+| `PM_CONFIG_DIR` | `<prefix>/etc/processmanager/` | `ProcessManagerConfig.yaml` |
+| `PM_LOG_DIR` | `<prefix>/var/log/processmanager/` | the `ProcessManagerLog` directory |
+| `PM_SHARE_DIR` | `<prefix>/share/processmanager/` | the `ProcessManagerConfig.yaml` read when the first is missing |
+| `PM_BIN_INSTALL_DIR` | `bin` | where `cmake --install` puts the programs |
+
+The version the manager logs at start is the one in the root `project()` call.
 
 ### Configuration
 `ProcessManagerConfig.yaml`, written by `iltaren-ProcessManager generate` with every key documented.
@@ -38,6 +65,10 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   happens. The monitor GUI shows it as the "network manager" page under the manager: a table of the
   connected dealers, the events, and a toolbar pill that turns red when a service that sends heartbeats is
   not connected or the status stops. `--network` points the GUI elsewhere.
+- The tree is a project of its own instead of a directory that another build adds. Its root `CMakeLists.txt`
+  sets C++20, finds libzmq with cppzmq, cxxopts and GoogleTest as installed packages, and sets the config, log
+  and share paths, the install directory and the version, which that build used to provide. libzmq is now
+  linked as a shared library instead of the static `libzmq-static` target.
 
 ### 0.1.0 
 - First release
