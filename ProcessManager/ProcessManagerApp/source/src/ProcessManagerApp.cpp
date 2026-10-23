@@ -224,9 +224,11 @@ void ProcessManagerApp::PrintProcessStatus()
 			if (it != processHistory.end())
 			{
 				uint64_t deltaCpuUs = process.cpuUsageInUsec - it->second.cpuUsageInUsec;
-				uint64_t deltaTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(process.snapshotTime - it->second.snapshotTime).count();
+				const auto elapsed = process.snapshotTime - it->second.snapshotTime;
+				uint64_t deltaTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
 
-				if (deltaTimeUs > std::chrono::milliseconds(300).count())
+				// Durations, so the units cannot mix; an interval that went back (clock change) is skipped too.
+				if (elapsed > std::chrono::milliseconds(300))
 				{
 					if (isAlive)
 					{
