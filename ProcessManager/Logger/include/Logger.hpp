@@ -51,6 +51,14 @@ struct Settings
  */
 std::string FormatLine(Level level, std::chrono::system_clock::time_point when, std::string_view text, bool journal);
 
+/**
+ * @brief Colour a formatted line for a terminal: errors red, warnings yellow, debug and verbose dim.
+ * @param level Level of the line.
+ * @param line A line from FormatLine(), ending in a newline.
+ * @return The line inside ANSI colour codes, its newline last; an Info line comes back unchanged.
+ */
+std::string ColorLine(Level level, std::string_view line);
+
 // Writes log lines to stderr and, once opened, to rotating files. Every member is thread-safe.
 class Logger
 {
@@ -90,7 +98,8 @@ public:
     bool Enabled(Level level) const;
 
     /**
-     * @brief Send console lines to @p stream instead of stderr.
+     * @brief Send console lines to @p stream instead of stderr. Lines are coloured when the stream is a
+     *        terminal, unless it is a journald stream or NO_COLOR is set.
      * @param stream Stream to write to; it must outlive its use. nullptr returns to stderr.
      * @param journalStream Format console lines for journald; ignored for nullptr, where stderr is checked.
      */
@@ -122,6 +131,8 @@ private:
     Level minimum = Level::Debug;
     std::FILE* console = stderr;
     bool journal = false;
+    // Console lines get ANSI colours: the console is a terminal and NO_COLOR is not set.
+    bool color = false;
     Settings settings;
     std::string startTime;
     int fileIndex = 0;

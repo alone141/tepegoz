@@ -2,12 +2,14 @@
 
 #include "Logger.hpp"
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <memory>
@@ -16,7 +18,6 @@
 #include <string_view>
 #include <sys/socket.h>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <zmq.h>
@@ -29,53 +30,61 @@ namespace network_manager
 namespace
 {
 
-// How long Run() waits for a message before it looks at RequestStop() again.
+using Clock = std::chrono::steady_clock;
+
+// How long Run() waits for a message before it looks at RequestStop() and the status line again.
 constexpr std::chrono::milliseconds poll_period{200};
+constexpr int max_messages_per_round = 1000;
 constexpr int monitored_events = ZMQ_EVENT_ACCEPTED | ZMQ_EVENT_DISCONNECTED;
-constexpr const char* unknown_peer = "address=unknown port=0";
+constexpr const char* unknown_address = "unknown address";
+// Width of the name column, so that the events line up.
+constexpr int name_width = 20;
 
-std::string Describe(const Envelope& envelope)
-{
-    std::size_t bytes = 0;
-    for (const std::string& frame : envelope.payload)
-    {
-        bytes += frame.size();
-    }
-
-    return "source=" + FormatIdentity(envelope.source) + " destination=" + FormatIdentity(envelope.destination) +
-           " frames=" + std::to_string(envelope.payload.size()) + " bytes=" + std::to_string(bytes);
-}
-
-// "address=<ip> port=<port>" of the far end of a connected socket; empty when it cannot be read.
+// "<ip>:<port>" of the far end of a connected socket; unknown_address when it cannot be read.
 std::string PeerAddress(int fd)
 {
     sockaddr_storage storage{};
     socklen_t length = sizeof(storage);
     if (fd < 0 || ::getpeername(fd, reinterpret_cast<sockaddr*>(&storage), &length) != 0)
     {
-        return {};
+        return unknown_address;
     }
 
     char address[INET6_ADDRSTRLEN] = {};
-    std::uint16_t port = 0;
     if (storage.ss_family == AF_INET)
     {
         const auto* ipv4 = reinterpret_cast<const sockaddr_in*>(&storage);
         ::inet_ntop(AF_INET, &ipv4->sin_addr, address, sizeof(address));
-        port = ntohs(ipv4->sin_port);
+        return std::string{address} + ":" + std::to_string(ntohs(ipv4->sin_port));
     }
-    else if (storage.ss_family == AF_INET6)
+    if (storage.ss_family == AF_INET6)
     {
         const auto* ipv6 = reinterpret_cast<const sockaddr_in6*>(&storage);
         ::inet_ntop(AF_INET6, &ipv6->sin6_addr, address, sizeof(address));
-        port = ntohs(ipv6->sin6_port);
-    }
-    else
-    {
-        return {};
+        return "[" + std::string{address} + "]:" + std::to_string(ntohs(ipv6->sin6_port));
     }
 
-    return std::string{"address="} + address + " port=" + std::to_string(port);
+    return unknown_address;
+}
+
+// The descriptor of the connection a message came in on; -1 when libzmq cannot tell. Every frame is asked:
+// after a poll the router rebuilds the name frame without it, while the frames read from the
+// connection keep it.
+int SourceFd(const std::vector<zmq::message_t>& frames)
+{
+#ifdef ZMQ_SRCFD
+    for (const zmq::message_t& frame : frames)
+    {
+        const int fd = ::zmq_msg_get(frame.handle(), ZMQ_SRCFD);
+        if (fd >= 0)
+        {
+            return fd;
+        }
+    }
+#else
+    (void)frames;
+#endif
+    return -1;
 }
 
 std::vector<std::string> ToStrings(const std::vector<zmq::message_t>& messages)
@@ -90,19 +99,45 @@ std::vector<std::string> ToStrings(const std::vector<zmq::message_t>& messages)
     return frames;
 }
 
-const char* EnvelopeCodeText(EnvelopeCode code)
+std::string Count(std::uint64_t count, const char* one, const char* many)
 {
-    switch (code)
+    return std::to_string(count) + " " + (count == 1 ? one : many);
+}
+
+// The text of the name column, padded so that what follows lines up.
+std::string Column(std::string text)
+{
+    if (text.size() < static_cast<std::size_t>(name_width))
     {
-    case EnvelopeCode::Ok:
-        return "ok";
-    case EnvelopeCode::EmptySource:
-        return "empty_source";
-    case EnvelopeCode::NoDestination:
-        return "no_destination";
+        text.resize(static_cast<std::size_t>(name_width), ' ');
     }
 
-    return "unknown";
+    return text;
+}
+
+// 45s, 12m03s, 5h07m or 2d03h.
+std::string FormatDuration(Clock::duration elapsed)
+{
+    const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+    char text[32] = {};
+    if (seconds < 60)
+    {
+        std::snprintf(text, sizeof(text), "%llds", seconds);
+    }
+    else if (seconds < 3600)
+    {
+        std::snprintf(text, sizeof(text), "%lldm%02llds", seconds / 60, seconds % 60);
+    }
+    else if (seconds < 86400)
+    {
+        std::snprintf(text, sizeof(text), "%lldh%02lldm", seconds / 3600, seconds % 3600 / 60);
+    }
+    else
+    {
+        std::snprintf(text, sizeof(text), "%lldd%02lldh", seconds / 86400, seconds % 86400 / 3600);
+    }
+
+    return text;
 }
 
 } // namespace
@@ -179,8 +214,27 @@ std::string FormatIdentity(std::string_view identity)
 
 struct NetworkManager::State
 {
-    explicit State(std::string endpoint)
-        : endpoint{std::move(endpoint)}
+    // One TCP connection of a dealer, by its file descriptor.
+    struct Connection
+    {
+        std::string address;
+        // Empty until the connection sends its first message.
+        std::string identity;
+        Clock::time_point since;
+        std::uint64_t messages = 0;
+    };
+
+    // A warning that may repeat: when it was last written, and how many were held back since.
+    struct Repeat
+    {
+        bool written = false;
+        Clock::time_point lastWritten;
+        std::uint64_t heldBack = 0;
+    };
+
+    State(std::string endpoint, LogSettings logSettings)
+        : endpoint{std::move(endpoint)},
+          settings{logSettings}
     {
     }
 
@@ -193,18 +247,34 @@ struct NetworkManager::State
     }
 
     void ReadMonitorEvents();
-    void ForwardOne();
-    void Remember(const std::string& identity);
-    void Forget(const std::string& identity);
+    bool ForwardOne();
+    void ApplyPendingCloses(Clock::time_point now);
+    void Accepted(int fd, Clock::time_point now);
+    void Disconnected(int fd, Clock::time_point now);
+    void Seen(const std::string& identity, int fd, Clock::time_point now);
+    void Left(const Connection& connection, Clock::time_point now) const;
+    void Warn(const std::string& key, const std::string& text, Clock::time_point now);
+    void WriteSummaryIfDue(Clock::time_point now);
 
     std::string endpoint;
+    LogSettings settings;
     std::atomic<bool> stopRequested{false};
     // Declared in this order so the sockets close before their context.
     std::unique_ptr<zmq::context_t> context;
     std::unique_ptr<zmq::socket_t> router;
     std::unique_ptr<zmq::socket_t> monitor;
-    std::unordered_set<std::string> knownIdentities;
-    std::unordered_map<std::uint32_t, std::string> peers;
+    std::unordered_map<int, Connection> connections;
+    // Connections whose disconnect event was read: closed once the messages already received are forwarded,
+    // since a dealer that sends and closes at once has its last message read after that event.
+    std::vector<int> pendingCloses;
+    // Name -> descriptor of the connection that has it; -1 when libzmq cannot tell connections apart.
+    std::unordered_map<std::string, int> owners;
+    std::unordered_map<std::string, std::uint64_t> sentThisPeriod;
+    std::unordered_map<std::string, Repeat> repeats;
+    Clock::time_point periodStart;
+    std::uint64_t forwarded = 0;
+    std::uint64_t notDelivered = 0;
+    std::uint64_t rejected = 0;
 };
 
 void NetworkManager::State::ReadMonitorEvents()
@@ -232,109 +302,302 @@ void NetworkManager::State::ReadMonitorEvents()
             continue;
         }
         std::uint16_t event = 0;
-        std::uint32_t fd = 0;
+        std::uint32_t value = 0;
         std::memcpy(&event, frames[0].data(), sizeof(event));
-        std::memcpy(&fd, static_cast<const char*>(frames[0].data()) + sizeof(event), sizeof(fd));
+        std::memcpy(&value, static_cast<const char*>(frames[0].data()) + sizeof(event), sizeof(value));
 
+        const int fd = static_cast<int>(value);
         if (event == ZMQ_EVENT_ACCEPTED)
         {
-            std::string peer = PeerAddress(static_cast<int>(fd));
-            if (peer.empty())
+            // A descriptor is reused only once closed: that close comes first.
+            const auto pending = std::find(pendingCloses.begin(), pendingCloses.end(), fd);
+            if (pending != pendingCloses.end())
             {
-                peer = unknown_peer;
+                pendingCloses.erase(pending);
+                Disconnected(fd, Clock::now());
             }
-            logger::Info("Broker: dealer connected %s", peer.c_str());
-            peers[fd] = std::move(peer);
+            Accepted(fd, Clock::now());
         }
         else if (event == ZMQ_EVENT_DISCONNECTED)
         {
-            std::string peer = unknown_peer;
-            const auto found = peers.find(fd);
-            if (found != peers.end())
-            {
-                peer = std::move(found->second);
-                peers.erase(found);
-            }
-            logger::Info("Broker: dealer disconnected %s", peer.c_str());
+            pendingCloses.push_back(fd);
         }
     }
 }
 
-void NetworkManager::State::ForwardOne()
+void NetworkManager::State::ApplyPendingCloses(Clock::time_point now)
+{
+    for (const int fd : pendingCloses)
+    {
+        Disconnected(fd, now);
+    }
+    pendingCloses.clear();
+}
+
+void NetworkManager::State::Accepted(int fd, Clock::time_point now)
+{
+    std::string address = PeerAddress(fd);
+    const auto found = connections.find(fd);
+    if (found != connections.end())
+    {
+        if (found->second.address == address)
+        {
+            return; // its first message was read before this event
+        }
+        // The descriptor belonged to a connection whose disconnect event never came.
+        const auto owner = owners.find(found->second.identity);
+        if (owner != owners.end() && owner->second == fd)
+        {
+            owners.erase(owner);
+            Left(found->second, now);
+        }
+        connections.erase(found);
+    }
+
+    logger::Debug("Broker:   %-*s connected, no name yet", name_width, address.c_str());
+    connections.emplace(fd, Connection{std::move(address), {}, now, 0});
+}
+
+void NetworkManager::State::Disconnected(int fd, Clock::time_point now)
+{
+    const auto found = connections.find(fd);
+    if (found == connections.end())
+    {
+        logger::Debug("Broker:   %-*s closed", name_width, unknown_address);
+        return;
+    }
+
+    const Connection connection = std::move(found->second);
+    connections.erase(found);
+    if (connection.identity.empty())
+    {
+        logger::Debug("Broker:   %-*s closed before sending anything", name_width, connection.address.c_str());
+        return;
+    }
+
+    const auto owner = owners.find(connection.identity);
+    if (owner == owners.end() || owner->second != fd)
+    {
+        logger::Debug("Broker:   %-*s old connection %s closed; the name had moved",
+                      name_width, FormatIdentity(connection.identity).c_str(), connection.address.c_str());
+        return;
+    }
+
+    owners.erase(owner);
+    Left(connection, now);
+}
+
+void NetworkManager::State::Seen(const std::string& identity, int fd, Clock::time_point now)
+{
+    ++sentThisPeriod[identity];
+    const std::string name = FormatIdentity(identity);
+    if (fd < 0)
+    {
+        if (owners.emplace(identity, -1).second)
+        {
+            logger::Info("Broker: + %-*s joined (libzmq does not tell its connection)", name_width, name.c_str());
+        }
+        return;
+    }
+
+    auto found = connections.find(fd);
+    if (found != connections.end() && !found->second.identity.empty() && found->second.identity != identity)
+    {
+        // The descriptor was reused before the old connection's disconnect event was read.
+        const auto owner = owners.find(found->second.identity);
+        if (owner != owners.end() && owner->second == fd)
+        {
+            owners.erase(owner);
+            Left(found->second, now);
+        }
+        connections.erase(found);
+        found = connections.end();
+    }
+    if (found == connections.end())
+    {
+        found = connections.emplace(fd, Connection{PeerAddress(fd), {}, now, 0}).first;
+    }
+
+    Connection& connection = found->second;
+    ++connection.messages;
+    if (!connection.identity.empty())
+    {
+        return;
+    }
+
+    connection.identity = identity;
+    const auto owner = owners.find(identity);
+    if (owner != owners.end() && owner->second != fd)
+    {
+        const auto previous = connections.find(owner->second);
+        const std::string previousAddress = previous != connections.end() ? previous->second.address : unknown_address;
+        logger::Warning("Broker: ~ %-*s taken over by %s while %s is still connected "
+                        "(restarted, or two dealers use this name)",
+                        name_width, name.c_str(), connection.address.c_str(), previousAddress.c_str());
+        owner->second = fd;
+        return;
+    }
+
+    owners[identity] = fd;
+    logger::Info("Broker: + %-*s joined from %s", name_width, name.c_str(), connection.address.c_str());
+}
+
+void NetworkManager::State::Left(const Connection& connection, Clock::time_point now) const
+{
+    logger::Info("Broker: - %-*s left %s after %s, %s", name_width, FormatIdentity(connection.identity).c_str(),
+                 connection.address.c_str(), FormatDuration(now - connection.since).c_str(),
+                 Count(connection.messages, "message", "messages").c_str());
+}
+
+void NetworkManager::State::Warn(const std::string& key, const std::string& text, Clock::time_point now)
+{
+    Repeat& repeat = repeats[key];
+    if (repeat.written && now - repeat.lastWritten < settings.repeatInterval)
+    {
+        ++repeat.heldBack;
+        return;
+    }
+
+    if (repeat.heldBack > 0)
+    {
+        logger::Warning("Broker: %s (%s like it not shown)", text.c_str(),
+                        Count(repeat.heldBack, "more", "more").c_str());
+    }
+    else
+    {
+        logger::Warning("Broker: %s", text.c_str());
+    }
+    repeat = Repeat{true, now, 0};
+}
+
+void NetworkManager::State::WriteSummaryIfDue(Clock::time_point now)
+{
+    if (now - periodStart < settings.summaryPeriod)
+    {
+        return;
+    }
+
+    std::vector<std::string> names;
+    names.reserve(owners.size());
+    for (const auto& owner : owners)
+    {
+        names.push_back(owner.first);
+    }
+    std::sort(names.begin(), names.end());
+
+    std::string sent;
+    for (const std::string& name : names)
+    {
+        const auto count = sentThisPeriod.find(name);
+        sent += (sent.empty() ? "" : ", ") + FormatIdentity(name) + " " +
+                std::to_string(count != sentThisPeriod.end() ? count->second : 0);
+    }
+    // A dealer is named by its first message; one that only receives stays unnamed.
+    std::string waiting;
+    for (const auto& entry : connections)
+    {
+        if (entry.second.identity.empty())
+        {
+            waiting += (waiting.empty() ? " (without a name: " : ", ") + entry.second.address;
+        }
+    }
+    waiting += waiting.empty() ? "" : ")";
+    const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(now - periodStart).count();
+
+    logger::Info("Broker: = %zu connected%s | last %llds: %s, %llu not delivered, %llu rejected | sent: %s",
+                 names.size(), waiting.c_str(), seconds, Count(forwarded, "forwarded", "forwarded").c_str(),
+                 static_cast<unsigned long long>(notDelivered), static_cast<unsigned long long>(rejected),
+                 sent.empty() ? "-" : sent.c_str());
+
+    periodStart = now;
+    forwarded = 0;
+    notDelivered = 0;
+    rejected = 0;
+    sentThisPeriod.clear();
+    for (auto entry = repeats.begin(); entry != repeats.end();)
+    {
+        const bool quiet = entry->second.heldBack == 0 && now - entry->second.lastWritten >= settings.repeatInterval;
+        entry = quiet ? repeats.erase(entry) : std::next(entry);
+    }
+}
+
+bool NetworkManager::State::ForwardOne()
 {
     std::vector<zmq::message_t> received;
     try
     {
         if (!zmq::recv_multipart(*router, std::back_inserter(received), zmq::recv_flags::dontwait))
         {
-            return;
+            return false;
         }
     }
     catch (const zmq::error_t& e)
     {
         logger::Error("Broker: receiving failed: %s", e.what());
-        return;
+        return false;
     }
 
+    const Clock::time_point now = Clock::now();
     const std::vector<std::string> frames = ToStrings(received);
     Envelope envelope{};
     const EnvelopeCode code = ParseEnvelope(frames, envelope);
     if (code != EnvelopeCode::Ok)
     {
+        ++rejected;
         const std::string source = FormatIdentity(frames.empty() ? std::string_view{} : std::string_view{frames[0]});
-        logger::Warning("Broker: message rejected reason=%s source=%s", EnvelopeCodeText(code), source.c_str());
-        return;
+        const std::string reason = code == EnvelopeCode::EmptySource ? "no sender name" : "no destination frame";
+        Warn("rejected|" + reason + "|" + source, "! " + Column(source) + " rejected: " + reason, now);
+        return true;
     }
-    Remember(envelope.source);
+
+    // A connect event still on its way would otherwise be read after this message.
+    ReadMonitorEvents();
+    Seen(envelope.source, SourceFd(received), now);
 
     std::vector<zmq::message_t> delivery;
+    std::size_t bytes = 0;
     for (const std::string& frame : BuildDelivery(envelope))
     {
         delivery.emplace_back(frame.data(), frame.size());
     }
-    const std::string summary = Describe(envelope);
+    for (const std::string& frame : envelope.payload)
+    {
+        bytes += frame.size();
+    }
+    const std::string destination = FormatIdentity(envelope.destination);
+    const std::string route = FormatIdentity(envelope.source) + " -> " + destination;
     try
     {
         // Never wait: a destination that stopped reading must not hold up everyone else's messages.
         if (zmq::send_multipart(*router, delivery, zmq::send_flags::dontwait))
         {
-            logger::Verbose("Broker: message forwarded %s", summary.c_str());
+            ++forwarded;
+            logger::Verbose("Broker:   %-*s %s, %s", name_width, route.c_str(),
+                            Count(envelope.payload.size(), "frame", "frames").c_str(),
+                            Count(bytes, "byte", "bytes").c_str());
+            return true;
         }
-        else
-        {
-            logger::Warning("Broker: message undeliverable %s reason=send_queue_full", summary.c_str());
-        }
+
+        ++notDelivered;
+        Warn("full|" + envelope.source + "|" + envelope.destination,
+             "! " + Column(route) + " not delivered: the queue of " + destination + " is full", now);
     }
     catch (const zmq::error_t& e)
     {
-        if (e.num() == EHOSTUNREACH)
+        if (e.num() != EHOSTUNREACH)
         {
-            logger::Warning("Broker: message undeliverable %s reason=destination_unavailable", summary.c_str());
-            Forget(envelope.destination);
-            return;
+            logger::Error("Broker: sending failed: %s", e.what());
+            return true;
         }
-        logger::Error("Broker: sending failed: %s", e.what());
+        ++notDelivered;
+        Warn("absent|" + envelope.source + "|" + envelope.destination,
+             "! " + Column(route) + " not delivered: " + destination + " is not connected", now);
     }
+    return true;
 }
 
-void NetworkManager::State::Remember(const std::string& identity)
-{
-    if (knownIdentities.insert(identity).second)
-    {
-        logger::Info("Broker: dealer registered identity=%s", FormatIdentity(identity).c_str());
-    }
-}
-
-void NetworkManager::State::Forget(const std::string& identity)
-{
-    if (knownIdentities.erase(identity) > 0)
-    {
-        logger::Info("Broker: dealer unregistered identity=%s", FormatIdentity(identity).c_str());
-    }
-}
-
-NetworkManager::NetworkManager(std::string endpoint)
-    : state{std::make_unique<State>(std::move(endpoint))}
+NetworkManager::NetworkManager(std::string endpoint, LogSettings logSettings)
+    : state{std::make_unique<State>(std::move(endpoint), logSettings)}
 {
 }
 
@@ -390,7 +653,7 @@ BindCode NetworkManager::Bind(std::string& error)
         return BindCode::Failed;
     }
 
-    logger::Info("Broker: listening address=%s", state->endpoint.c_str());
+    logger::Info("Broker: listening on %s", state->endpoint.c_str());
     return BindCode::Ok;
 }
 
@@ -403,6 +666,7 @@ RunCode NetworkManager::Run(std::string& error)
         return RunCode::NotBound;
     }
 
+    current->periodStart = Clock::now();
     while (!current->stopRequested.load())
     {
         zmq::pollitem_t items[] = {
@@ -428,10 +692,18 @@ RunCode NetworkManager::Run(std::string& error)
         {
             current->ReadMonitorEvents();
         }
-        if ((items[0].revents & ZMQ_POLLIN) != 0)
+        // Every message received so far, then the closes read before them; a bound keeps a flood of
+        // messages from holding up RequestStop() and the status.
+        int forwardedNow = 0;
+        while (forwardedNow < max_messages_per_round && current->ForwardOne())
         {
-            current->ForwardOne();
+            ++forwardedNow;
         }
+        if (forwardedNow < max_messages_per_round)
+        {
+            current->ApplyPendingCloses(Clock::now());
+        }
+        current->WriteSummaryIfDue(Clock::now());
     }
 
     logger::Info("Broker: stopped");

@@ -25,7 +25,14 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   reports, which grow from 128 to 144 bytes. The monitor GUI reads it from there instead of running nvidia-smi.
 - The ZeroMQ broker that services, the CLI and the GUI talk through is part of this tree (`NetworkManager/`)
   instead of coming from the build that adds it. It still listens on `tcp://*:5557` and hands each message
-  to the identity it names; connections and undeliverable messages go to the manager's log.
+  to the identity it names.
+- The broker's log lines start with `Broker:`, a mark and a name column:
+  `+` a service joined (from which address), `-` it left (after how long, with how many messages),
+  `~` another connection took its name, `!` a message was not delivered or was rejected (a repeat is
+  written once per 10 s, with the count held back), and `=` a status line every minute: who is connected
+  and how many messages each sent. Forwarded messages are logged at `LogLevel: Verbose`.
+- On a terminal, warnings are yellow, errors red and debug lines dim. journald and the log files get plain
+  text, and `NO_COLOR` turns the colours off.
 
 ### 0.1.0 
 - First release

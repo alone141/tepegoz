@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <syslog.h>
 #include <system_error>
+#include <unistd.h>
 
 namespace logger
 {
@@ -81,6 +82,14 @@ bool IsJournal(std::FILE* stream)
 
     return static_cast<unsigned long long>(status.st_dev) == device &&
            static_cast<unsigned long long>(status.st_ino) == inode;
+}
+
+// Colour only a terminal a person reads; https://no-color.org asks for none when NO_COLOR is set.
+bool UseColor(std::FILE* stream, bool journal)
+{
+    const char* term = std::getenv("TERM");
+    return !journal && std::getenv("NO_COLOR") == nullptr && ::isatty(::fileno(stream)) == 1 &&
+           (term == nullptr || std::string_view{term} != "dumb");
 }
 
 std::tm LocalTime(std::chrono::system_clock::time_point when)
@@ -158,6 +167,41 @@ std::string FormatLine(Level level, std::chrono::system_clock::time_point when, 
     return line;
 }
 
+std::string ColorLine(Level level, std::string_view line)
+{
+    const char* start = nullptr;
+    switch (level)
+    {
+    case Level::Error:
+        start = "\033[1;31m"; // bold red
+        break;
+    case Level::Warning:
+        start = "\033[33m"; // yellow
+        break;
+    case Level::Verbose:
+    case Level::Debug:
+        start = "\033[2m"; // dim
+        break;
+    case Level::Info:
+        break;
+    }
+    if (start == nullptr)
+    {
+        return std::string{line};
+    }
+
+    const bool newline = !line.empty() && line.back() == '\n';
+    std::string colored{start};
+    colored.append(line.data(), newline ? line.size() - 1 : line.size());
+    colored += "\033[0m";
+    if (newline)
+    {
+        colored += '\n';
+    }
+
+    return colored;
+}
+
 void Logger::FileCloser::operator()(std::FILE* stream) const
 {
     std::fclose(stream);
@@ -170,7 +214,8 @@ Logger& Logger::Instance()
 }
 
 Logger::Logger()
-    : journal{IsJournal(stderr)}
+    : journal{IsJournal(stderr)},
+      color{UseColor(stderr, journal)}
 {
 }
 
@@ -222,6 +267,7 @@ void Logger::SetConsole(std::FILE* stream, bool journalStream)
     const std::lock_guard<std::mutex> lock{mutex};
     console = stream != nullptr ? stream : stderr;
     journal = stream != nullptr ? journalStream : IsJournal(stderr);
+    color = UseColor(console, journal);
 }
 
 void Logger::Write(Level level, std::string_view text)
@@ -234,7 +280,8 @@ void Logger::Write(Level level, std::string_view text)
     }
 
     const std::string consoleLine = FormatLine(level, now, text, journal);
-    std::fwrite(consoleLine.data(), 1, consoleLine.size(), console);
+    const std::string shown = color ? ColorLine(level, consoleLine) : consoleLine;
+    std::fwrite(shown.data(), 1, shown.size(), console);
     std::fflush(console);
     if (!file)
     {

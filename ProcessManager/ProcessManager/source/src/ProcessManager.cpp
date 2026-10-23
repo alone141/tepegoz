@@ -210,6 +210,10 @@ void process_manager::ProcessManager::Run()
 	logger::Info("Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_DETAILED);
 	logger::Info("Simplified Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_SIMPLE);
 	logger::Info("Heartbeats will be listened from %s as %s", comm::COMMAND_SERVER_PORT, comm::PROCESS_MANAGER_ID.c_str());
+	// The broker learns a dealer's name from what it sends, and this socket otherwise only receives:
+	// a message to itself names it in the broker's log. It comes back here and is ignored.
+	listener.send(zmq::buffer(comm::PROCESS_MANAGER_ID), zmq::send_flags::sndmore | zmq::send_flags::dontwait);
+	listener.send(zmq::str_buffer("hello"), zmq::send_flags::dontwait);
 	zmq::pollitem_t items[] = { { listener.handle(), 0, ZMQ_POLLIN, 0} };
 
 	// Sampled on a thread of its own: a driver call that hangs must not hold up the supervision.

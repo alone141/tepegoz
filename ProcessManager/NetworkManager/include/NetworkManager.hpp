@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -10,6 +11,19 @@ namespace network_manager
 
 // FormatIdentity's text for an identity with no bytes.
 constexpr const char* empty_identity_text = "<empty>";
+constexpr std::chrono::milliseconds default_summary_period{60000};
+constexpr std::chrono::milliseconds default_repeat_interval{10000};
+
+// How the broker logs. Every line starts with "Broker: " and a mark: + joined, - left, ~ taken over,
+// ! not delivered or rejected, = status. A name column follows, so the lines read as a table.
+struct LogSettings
+{
+    // Time between status lines: who is connected and how many messages each sent.
+    std::chrono::milliseconds summaryPeriod = default_summary_period;
+    // The same warning (same sender, destination and reason) is written at most once per interval, with
+    // the count of the ones held back.
+    std::chrono::milliseconds repeatInterval = default_repeat_interval;
+};
 
 // A message as the router receives it. A dealer that sends [destination][payload...] arrives as
 // [source][destination][payload...]: the router puts the dealer's identity in front.
@@ -67,6 +81,8 @@ std::string FormatIdentity(std::string_view identity);
 
 // The ZeroMQ broker of the process manager: a ROUTER socket that hands every message a dealer sends to
 // the dealer it names. Services send their heartbeats through it, and the CLI and the GUI their commands.
+// It logs each dealer by name: when it joins, from which address, when it leaves, and who takes a name
+// over; undeliverable messages; and a status line every LogSettings::summaryPeriod.
 class NetworkManager
 {
 public:
@@ -74,8 +90,9 @@ public:
      * @brief Keep the endpoint to bind. Nothing is opened before Bind().
      * @param endpoint ZeroMQ endpoint, such as tcp://0.0.0.0:5557 or tcp://127.0.0.1:5557. A tcp port
      *                 of * takes a free port.
+     * @param logSettings Status line period and how often a repeated warning is written.
      */
-    explicit NetworkManager(std::string endpoint);
+    explicit NetworkManager(std::string endpoint, LogSettings logSettings = LogSettings{});
 
     /**
      * @brief Close the socket. Call only once Run() has returned.

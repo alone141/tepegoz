@@ -2,10 +2,19 @@
 
 #include "NetworkManager.hpp"
 
+#include "Logger.hpp"
+
 #include <chrono>
+#include <cstddef>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 #include <zmq.hpp>
@@ -17,12 +26,78 @@ namespace
 constexpr const char* test_endpoint = "tcp://127.0.0.1:*";
 constexpr int receive_timeout_ms = 2000;
 
+// Points the log at a file for one test. It is read through a stream of its own, so reading does not
+// race with the broker thread that writes.
+class CapturedLog
+{
+public:
+    explicit CapturedLog(logger::Level minimum = logger::Level::Debug)
+        : path{std::filesystem::temp_directory_path() /
+               ("network_manager_test_" + std::to_string(::getpid()) + ".log")},
+          stream{std::fopen(path.c_str(), "w")}
+    {
+        logger::Logger::Instance().SetMinimum(minimum);
+        logger::Logger::Instance().SetConsole(stream, false);
+    }
+
+    ~CapturedLog()
+    {
+        logger::Logger::Instance().SetConsole(nullptr, false);
+        logger::Logger::Instance().SetMinimum(logger::Level::Debug);
+        std::fclose(stream);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+
+    CapturedLog(const CapturedLog&) = delete;
+    CapturedLog& operator=(const CapturedLog&) = delete;
+
+    std::string Text() const
+    {
+        std::ifstream file{path};
+        std::ostringstream text;
+        text << file.rdbuf();
+        return text.str();
+    }
+
+    // Waits up to two seconds for @p text to be logged.
+    bool WaitFor(const std::string& text) const
+    {
+        for (int attempt = 0; attempt < 40; ++attempt)
+        {
+            if (Text().find(text) != std::string::npos)
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{50});
+        }
+
+        return false;
+    }
+
+    std::size_t Count(const std::string& text) const
+    {
+        const std::string all = Text();
+        std::size_t count = 0;
+        for (std::size_t at = all.find(text); at != std::string::npos; at = all.find(text, at + text.size()))
+        {
+            ++count;
+        }
+
+        return count;
+    }
+
+private:
+    std::filesystem::path path;
+    std::FILE* stream;
+};
+
 // A bound manager that forwards on a thread of its own until it is stopped or the test ends.
 class RunningManager
 {
 public:
-    RunningManager()
-        : manager{test_endpoint}
+    explicit RunningManager(network_manager::LogSettings logSettings = network_manager::LogSettings{})
+        : manager{test_endpoint, logSettings}
     {
         std::string error;
         bound = manager.Bind(error) == network_manager::BindCode::Ok;
@@ -338,4 +413,169 @@ TEST(NetworkManagerTest, MovedFromManagerIsLeftWithoutSocket)
     EXPECT_TRUE(first.Endpoint().empty());
     EXPECT_EQ(first.Bind(error), network_manager::BindCode::Failed);
     EXPECT_EQ(first.Run(error), network_manager::RunCode::NotBound);
+}
+
+TEST(NetworkManagerTest, LogsJoinAndLeaveByName)
+{
+    const CapturedLog log;
+    RunningManager broker;
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t dealer = MakeDealer(context, "svc", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(dealer, "svc"));
+    EXPECT_TRUE(log.WaitFor("Broker: + svc"));
+    EXPECT_TRUE(log.WaitFor(" joined from 127.0.0.1:"));
+
+    dealer.close();
+    EXPECT_TRUE(log.WaitFor("Broker: - svc"));
+    EXPECT_TRUE(log.WaitFor(" left 127.0.0.1:"));
+    EXPECT_TRUE(log.WaitFor(" message")); // 1 message or more: the pings it took to be routable
+}
+
+TEST(NetworkManagerTest, DealerThatSendsAndClosesAtOnceKeepsItsAddress)
+{
+    const CapturedLog log;
+    RunningManager broker;
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t b = MakeDealer(context, "B", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(b, "B"));
+
+    // Like the CLI: one command, then gone. Its disconnect event can be read before its message.
+    zmq::socket_t quick{context, zmq::socket_type::dealer};
+    quick.set(zmq::sockopt::linger, 1000);
+    quick.set(zmq::sockopt::routing_id, "quick");
+    quick.connect(broker.Endpoint());
+    Send(quick, {"B", "once"});
+    quick.close();
+
+    EXPECT_EQ(Receive(b), (std::vector<std::string>{"quick", "once"}));
+    EXPECT_TRUE(log.WaitFor("Broker: - quick"));
+    EXPECT_TRUE(log.WaitFor(", 1 message\n"));
+    EXPECT_EQ(log.Text().find("unknown address"), std::string::npos);
+    EXPECT_EQ(log.Text().find("closed before sending anything"), std::string::npos);
+}
+
+TEST(NetworkManagerTest, LogsTakeoverWhileOldConnectionIsOpen)
+{
+    const CapturedLog log;
+    RunningManager broker;
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t first = MakeDealer(context, "dup", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(first, "dup"));
+    zmq::socket_t second = MakeDealer(context, "dup", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(second, "dup"));
+
+    EXPECT_TRUE(log.WaitFor("Broker: ~ dup"));
+    EXPECT_TRUE(log.WaitFor("is still connected (restarted, or two dealers use this name)"));
+}
+
+TEST(NetworkManagerTest, ConnectionThatNeverSendsStaysUnnamed)
+{
+    const CapturedLog log;
+    RunningManager broker;
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t silent = MakeDealer(context, "silent", broker.Endpoint());
+    EXPECT_TRUE(log.WaitFor("connected, no name yet"));
+
+    silent.close();
+    EXPECT_TRUE(log.WaitFor("closed before sending anything"));
+    EXPECT_EQ(log.Text().find("Broker: + "), std::string::npos);
+}
+
+TEST(NetworkManagerTest, WritesRepeatedWarningOncePerInterval)
+{
+    const CapturedLog log;
+    network_manager::LogSettings settings{};
+    settings.repeatInterval = std::chrono::milliseconds{60000};
+    RunningManager broker{settings};
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t a = MakeDealer(context, "A", broker.Endpoint());
+    zmq::socket_t b = MakeDealer(context, "B", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(b, "B"));
+
+    for (int i = 0; i < 5; ++i)
+    {
+        Send(a, {"missing", "x"});
+    }
+    Send(a, {"B", "after"});
+    EXPECT_EQ(Receive(b), (std::vector<std::string>{"A", "after"}));
+    EXPECT_EQ(log.Count("not delivered: missing is not connected"), 1u);
+}
+
+TEST(NetworkManagerTest, CountsHeldBackWarningsWhenWritingAgain)
+{
+    const CapturedLog log;
+    network_manager::LogSettings settings{};
+    settings.repeatInterval = std::chrono::milliseconds{300};
+    RunningManager broker{settings};
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t a = MakeDealer(context, "A", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(a, "A"));
+
+    for (int i = 0; i < 3; ++i)
+    {
+        Send(a, {"missing", "x"});
+    }
+    ASSERT_TRUE(log.WaitFor("! A -> missing"));
+    std::this_thread::sleep_for(std::chrono::milliseconds{400});
+    Send(a, {"missing", "x"});
+    EXPECT_TRUE(log.WaitFor("not delivered: missing is not connected (2 more like it not shown)"));
+}
+
+TEST(NetworkManagerTest, WritesStatusLineWithNamesAndCounts)
+{
+    const CapturedLog log;
+    network_manager::LogSettings settings{};
+    settings.summaryPeriod = std::chrono::milliseconds{300};
+    RunningManager broker{settings};
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t a = MakeDealer(context, "A", broker.Endpoint());
+    zmq::socket_t b = MakeDealer(context, "B", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(a, "A"));
+    ASSERT_TRUE(WaitUntilRoutable(b, "B"));
+    for (int i = 0; i < 3; ++i)
+    {
+        Send(a, {"B", "x"});
+        Receive(b);
+    }
+
+    EXPECT_TRUE(log.WaitFor("Broker: = 2 connected | last "));
+    EXPECT_TRUE(log.WaitFor(" | sent: A "));
+    EXPECT_TRUE(log.WaitFor(", B "));
+}
+
+TEST(NetworkManagerTest, LogsRejectedMessage)
+{
+    const CapturedLog log;
+    RunningManager broker;
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t a = MakeDealer(context, "A", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(a, "A"));
+
+    Send(a, {""});
+    EXPECT_TRUE(log.WaitFor("! A"));
+    EXPECT_TRUE(log.WaitFor("rejected: no destination frame"));
+}
+
+TEST(NetworkManagerTest, LogsForwardedMessagesAtVerbose)
+{
+    const CapturedLog log{logger::Level::Verbose};
+    RunningManager broker;
+    ASSERT_TRUE(broker.Bound());
+    zmq::context_t context{1};
+    zmq::socket_t a = MakeDealer(context, "A", broker.Endpoint());
+    zmq::socket_t b = MakeDealer(context, "B", broker.Endpoint());
+    ASSERT_TRUE(WaitUntilRoutable(b, "B"));
+
+    Send(a, {"B", "hello"});
+    EXPECT_EQ(Receive(b), (std::vector<std::string>{"A", "hello"}));
+    EXPECT_TRUE(log.WaitFor("[V] Broker:   A -> B"));
+    EXPECT_TRUE(log.WaitFor("1 frame, 5 bytes"));
 }

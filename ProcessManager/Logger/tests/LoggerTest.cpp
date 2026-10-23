@@ -101,6 +101,32 @@ TEST(LoggerTest, FormatsJournalPriorityInsteadOfTime)
     EXPECT_EQ(logger::FormatLine(logger::Level::Debug, now, "x", true), "<7>[D] x\n");
 }
 
+TEST(LoggerTest, ColorLineLeavesInfoUnchanged)
+{
+    EXPECT_EQ(logger::ColorLine(logger::Level::Info, "[I] x\n"), "[I] x\n");
+}
+
+TEST(LoggerTest, ColorLineWrapsWarningAndKeepsNewlineLast)
+{
+    EXPECT_EQ(logger::ColorLine(logger::Level::Warning, "[W] x\n"), "\033[33m[W] x\033[0m\n");
+}
+
+TEST(LoggerTest, ColorLineMarksErrorsAndDimsDebug)
+{
+    EXPECT_EQ(logger::ColorLine(logger::Level::Error, "[E] x\n"), "\033[1;31m[E] x\033[0m\n");
+    EXPECT_EQ(logger::ColorLine(logger::Level::Debug, "[D] x\n"), "\033[2m[D] x\033[0m\n");
+    EXPECT_EQ(logger::ColorLine(logger::Level::Verbose, "[V] x"), "\033[2m[V] x\033[0m");
+}
+
+TEST(LoggerTest, ConsoleThatIsNotATerminalGetsNoColor)
+{
+    const CapturedConsole console{false};
+    logger::Warning("plain");
+    const std::string text = console.Text();
+    EXPECT_NE(text.find("[W] plain\n"), std::string::npos);
+    EXPECT_EQ(text.find('\033'), std::string::npos);
+}
+
 TEST(LoggerTest, FormatsPrintfArguments)
 {
     const CapturedConsole console{true};
