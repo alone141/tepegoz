@@ -16,7 +16,7 @@ target_sources(ProcessManagerApp
 )
 
 target_include_directories(ProcessManagerApp PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
-target_link_libraries(ProcessManagerApp PUBLIC ProcessManager NetworkManager cxxopts config_section logger)
+target_link_libraries(ProcessManagerApp PUBLIC ProcessManager network_manager cxxopts config_section logger)
 
 install(
 	TARGETS ProcessManagerApp 

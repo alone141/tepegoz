@@ -1,8 +1,9 @@
 
 #project("ProcessManager" DESCRIPTION "ProcessManager" LANGUAGES C CXX)
 
-# Dependencies: NetworkManager, libzmq with cppzmq, and cxxopts, from the build that adds this directory,
-# and fkYAML 0.4.4, vendored in third_party (see third_party/README.md).
+# Dependencies: libzmq with cppzmq (the libzmq-static target) and cxxopts, from the build that adds this
+# directory, and fkYAML 0.4.4, vendored in third_party (see third_party/README.md). The ZeroMQ broker the
+# services, the CLI and the GUI talk through is the NetworkManager module below.
 set(FK_YAML_USE_SINGLE_HEADER ON)
 add_subdirectory(third_party/fkYAML)
 # fkYAML's headers count as system headers, so its warnings stay out of ours. Set as a property because
@@ -12,6 +13,7 @@ set_target_properties(fkYAML PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${
 
 add_subdirectory(ConfigSection)
 add_subdirectory(Logger)
+add_subdirectory(NetworkManager)
 add_subdirectory(GpuMonitor)
 add_subdirectory(ProcessManager)
 add_subdirectory(Process)

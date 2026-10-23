@@ -8,13 +8,13 @@
 #include <string>
 #include <HelperFunctions.h>
 
-#include <NetworkLogger.h>
-#include <NetworkManager.h>
+#include "Logger.hpp"
+#include "NetworkManager.hpp"
 
 //meliksahs TODO
 process_manager::ProcessManagerApp* manager;
 //process_manager::NetworkManager* networkMaster;
-nwm::NetworkManager* gNetworkManager = nullptr;
+network_manager::NetworkManager* gNetworkManager = nullptr;
 
 int main(int argc, char** argv)
 {
@@ -49,14 +49,13 @@ int main(int argc, char** argv)
 	}
 
 	// Bind the broker before the process thread starts any service, so a failed bind has nothing to clean up.
-	nwm::NetworkManager networkManager;
+	network_manager::NetworkManager networkManager{portName};
 	gNetworkManager = &networkManager;
-	const nwm::Status bindStatus = networkManager.Bind();
-	if (!bindStatus.IsOk())
+	std::string bindError;
+	if (networkManager.Bind(bindError) != network_manager::BindCode::Ok)
 	{
 		gNetworkManager = nullptr;
-		nwm::LogError(std::string("Bind failed: ") +
-			bindStatus.ToString());
+		logger::Error("Broker bind to %s failed: %s", portName, bindError.c_str());
 		manager->TearDown();
 		return 1;
 	}
@@ -72,8 +71,9 @@ int main(int argc, char** argv)
 	std::thread networkManThread([&networkManager]
 		{
 			// Without the broker no heartbeat or command arrives, so stop rather than supervise blind.
-			const nwm::Status runStatus = networkManager.Run();
-			nwm::LogError(std::string("Broker stopped: ") + runStatus.ToString());
+			std::string runError;
+			networkManager.Run(runError); // nothing asks it to stop, so it returns only on a failure
+			logger::Error("Broker stopped: %s", runError.c_str());
 			manager->ShutdownSignalReceived(0);
 		});
 	std::thread processManThread(&process_manager::ProcessManagerApp::Run, manager);

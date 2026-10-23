@@ -6,7 +6,7 @@
 gcc11, cmake 3.30
 
 #### Dependencies
-- NetworkManager, libzmq with cppzmq, and cxxopts: provided by the build that adds this directory.
+- libzmq with cppzmq (the `libzmq-static` target) and cxxopts: provided by the build that adds this directory.
 - fkYAML 0.4.4 (MIT, header-only): vendored in `third_party/`, so an airgapped machine needs nothing more.
 - GoogleTest: only for the module tests, built when `ENABLE_TEST` is on.
 
@@ -23,6 +23,9 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   priorities, files rotated at 100 MB) and its own configuration reader. `[ProcessManager] LogLevel` sets the level.
 - The manager samples each service's GPU use through NVML, loaded at run time, and sends it in the health
   reports, which grow from 128 to 144 bytes. The monitor GUI reads it from there instead of running nvidia-smi.
+- The ZeroMQ broker that services, the CLI and the GUI talk through is part of this tree (`NetworkManager/`)
+  instead of coming from the build that adds it. It still listens on `tcp://*:5557` and hands each message
+  to the identity it names; connections and undeliverable messages go to the manager's log.
 
 ### 0.1.0 
 - First release
