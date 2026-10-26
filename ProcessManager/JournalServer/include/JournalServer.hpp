@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -14,6 +16,8 @@ namespace journal_server
 constexpr std::string_view default_endpoint = "tcp://*:6670";
 constexpr std::string_view default_journalctl = "journalctl";
 constexpr std::string_view default_systemctl = "systemctl";
+constexpr std::string_view default_cgroup_root = "/sys/fs/cgroup";
+constexpr std::string_view default_proc_root = "/proc";
 constexpr int default_lines = 50;
 constexpr int max_lines = 1000;
 constexpr std::size_t max_name_length = 63;
@@ -22,8 +26,10 @@ constexpr std::size_t max_cursor_length = 512;
 constexpr std::size_t max_output_bytes = 4 * 1024 * 1024;
 constexpr std::chrono::milliseconds command_timeout{5000};
 constexpr std::chrono::milliseconds poll_period{200};
-// The version a "version" request answers with; it grows when the protocol does.
-constexpr int protocol_version = 1;
+// A command line longer than this is cut in a "members" reply.
+constexpr std::size_t max_cmdline_bytes = 4096;
+// The version a "version" request answers with; it grows when the protocol does. Version 2 added "members".
+constexpr int protocol_version = 2;
 
 enum class TargetKind
 {
@@ -55,6 +61,33 @@ struct ManagerIdentity
     std::string serviceCgroupParent = "/";
 };
 
+// Where the server reads cgroups and processes. Tests point these at a folder of their own.
+struct SystemPaths
+{
+    std::filesystem::path cgroupRoot{default_cgroup_root};
+    std::filesystem::path procRoot{default_proc_root};
+};
+
+// One process in a service's cgroup.
+struct CgroupMember
+{
+    int pid = 0;
+    // From /proc/<pid>/comm; empty when the process has gone.
+    std::string comm;
+    // VmRSS from /proc/<pid>/status; 0 when it has none, as a kernel thread or a process that has gone.
+    std::uint64_t rssBytes = 0;
+    // The arguments separated by spaces, cut after max_cmdline_bytes.
+    std::string cmdline;
+};
+
+// A task_<name> cgroup and the processes in it.
+struct ServiceCgroup
+{
+    // The service's ProcessName: the folder's name without task_.
+    std::string name;
+    std::vector<CgroupMember> members;
+};
+
 enum class RequestCode
 {
     Ok,
@@ -71,6 +104,12 @@ enum class StartCode
 {
     Ok,
     BindFailed,
+};
+
+enum class MembersCode
+{
+    Ok,
+    NoCgroupFolder,
 };
 
 /**
@@ -113,6 +152,25 @@ RequestCode BuildUnitStatusArgs(const ManagerIdentity& manager, std::vector<std:
  */
 std::string Describe(RequestCode code);
 
+/**
+ * @brief Read every task_<name> cgroup the manager made for its services, and the processes in each.
+ * @param parent The folder that holds task_pm and every task_<name>.
+ * @param procRoot Where /proc is mounted.
+ * @param out Receives one entry per task_<name> folder, ordered by name, each with its processes ordered by pid.
+ *            task_pm, the manager's own, is left out.
+ * @return MembersCode::Ok, or NoCgroupFolder when @p parent cannot be listed.
+ */
+MembersCode ReadServiceCgroups(const std::filesystem::path& parent, const std::filesystem::path& procRoot,
+                               std::vector<ServiceCgroup>& out);
+
+/**
+ * @brief Write @p cgroups as the payload of a "members" reply.
+ * @param cgroups The cgroups, as ReadServiceCgroups() fills them.
+ * @return For each cgroup a line "cgroup<TAB>name", then a line "pid<TAB>name<TAB>pid<TAB>rss bytes<TAB>comm<TAB>cmdline"
+ *         per process. Control characters in comm and cmdline become spaces.
+ */
+std::string FormatServiceCgroups(const std::vector<ServiceCgroup>& cgroups);
+
 class JournalServer
 {
 public:
@@ -122,8 +180,10 @@ public:
      * @param manager Where the manager's and its services' journal entries are.
      * @param journalctl journalctl to run: a path, or a name looked up on PATH.
      * @param systemctl systemctl to run: a path, or a name looked up on PATH.
+     * @param paths Where the cgroups and /proc are, for "members".
      */
-    JournalServer(std::string endpoint, ManagerIdentity manager, std::string journalctl, std::string systemctl);
+    JournalServer(std::string endpoint, ManagerIdentity manager, std::string journalctl, std::string systemctl,
+                  SystemPaths paths = {});
 
     /**
      * @brief Stop answering. A journalctl still running is killed.

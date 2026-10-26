@@ -17,7 +17,7 @@ How the process manager and its monitor GUI are built, and how they talk to each
  │    │            PUB *:6667 ─────────────── health reports ───────────┼──►│                  │
  │    │            PUB *:6668 ─────────────── short status (4 bytes)    │   │                  │
  │    │                                                                 │   │                  │
- │  journal server ─ ROUTER *:6670 ◄────────── journal reads ───────────┼───┤                  │
+ │  journal server ─ ROUTER *:6670 ◄─── journal reads, cgroup PIDs ─────┼───┤                  │
  │  GPU monitor (NVML)                                                  │   └──────────────────┘
  │  signal thread (SIGTERM, SIGINT)                                     │
  └───────┬──────────────────────────────────────────────────▲───────────┘   ┌──────────────────┐
@@ -32,7 +32,8 @@ The manager is a single process that runs the services as its children. All comm
 - **The broker (port 5557):** relays commands from the command line and the GUI to the supervision loop, and
   heartbeats from the services.
 - **Health reports (port 6667):** the supervision loop publishes the state of every service.
-- **Journal server (port 6670):** reads the systemd journal for the GUI, which may be on another machine.
+- **Journal server (port 6670):** reads the systemd journal, and lists the processes in each service's cgroup,
+  for the GUI, which may be on another machine.
 
 ## Repository layout
 
@@ -71,7 +72,7 @@ There are two code styles:
 | broker | `NetworkManager::Run`: relays messages between connected sockets | ROUTER `*:5557`, PUB `*:6669` |
 | supervision | `ProcessManager::Run`: the loop below | DEALER `BPM` → 5557, PUB `*:6667`, PUB `*:6668` |
 | GPU monitor | Samples NVML every second; a call stuck for 2 s is left behind | — |
-| journal server | Answers journal reads, running `journalctl` or `systemctl` for each | ROUTER `*:6670` |
+| journal server | Answers journal reads, running `journalctl` or `systemctl` for each, and lists the services' cgroups | ROUTER `*:6670` |
 
 libzmq adds its own I/O threads. SIGINT and SIGTERM are blocked in every thread, so only the signal thread
 receives them; services start with no signal blocked.
@@ -213,17 +214,32 @@ The short status on 6668 is 4 bytes, one state each, kept for an older consumer:
 - byte 2: YAM;
 - byte 3: TIM.
 
-### Journal reads (port 6670)
+### Journal reads and cgroup PIDs (port 6670)
 
 A REQ or DEALER client sends one of the requests below, and gets `["ok", output]` or `["error", text]` back:
 
 | Request | Runs on the manager's machine |
 |---|---|
-| `["version"]` | Nothing; answers `1` |
+| `["version"]` | Nothing; answers `2` (version 1 had no `members`) |
 | `["journal", "manager", "", lines, cursor]` | `journalctl -u <the manager's unit>`, or `_PID=<the manager's pid>` outside a unit |
 | `["journal", "service", NAME, lines, cursor]` | `journalctl _SYSTEMD_CGROUP=<the manager's cgroup>/task_NAME` |
 | `["journal", "pid", PID, lines, cursor]` | `journalctl _PID=PID` |
 | `["unit-status"]` | `systemctl status <the manager's unit> --no-pager -l -n 0` |
+| `["members"]` | Nothing; reads `cgroup.procs` of every `task_<name>` next to `task_pm`, then `/proc/<pid>` |
+
+The `members` answer has one line per cgroup and one per process in it, with tab-separated fields:
+```
+cgroup	GGM
+pid	GGM	1234	52428800	python3	python3 /home/user/main.py
+```
+- **Process fields:** the service name, the pid, the resident memory in bytes (`VmRSS`), `comm`, and the command
+  line with its arguments separated by spaces, cut after 4096 bytes. Control characters in `comm` and the command
+  line become spaces.
+- **Which cgroups:** `task_pm`, the manager's own, is left out. A service without a cgroup has no line; the
+  manager removes a service's cgroup when the service stops.
+- **A process that has gone** between the two reads keeps its pid, with empty fields and 0 memory.
+- **Errors:** the answer is an error only when the manager's cgroup folder cannot be listed. A manager without
+  cgroups (see [cgroups](#cgroups)) answers with no lines.
 
 How a journal read runs:
 - **Arguments:** every journal read adds `-n <lines> --no-pager --all --quiet -o json`, and
@@ -348,7 +364,7 @@ A forked child never logs, because it may hold no lock between `fork` and `exec`
 | `network_view.py`, `network_status.py` | The broker page, and parsing of the broker's JSON. |
 | `usage_graphs.py` | Usage history (15 minutes) and the graphs. |
 | `journal_view.py` | Log text view: one colour per pid, new lines appended in place. |
-| `remote_journal.py` | Client of the journal server: follows a journal with cursors, and falls back to local `journalctl` for an older local manager. |
+| `remote_journal.py` | Client of the journal server: follows a journal with cursors and lists the cgroups' processes. For an older manager on the GUI's machine it falls back to local `journalctl` and `/sys/fs/cgroup`. |
 | `systemd_logs.py` | Local `journalctl`, `systemctl` and cgroup reading, and the journal JSON parser. |
 | `health_structs.py` | The binary layouts of reports and commands. |
 | `ui_scale.py` | Font and window sizes that follow the screen. |
@@ -364,7 +380,7 @@ views:
 | `SystemdLogWorker` | The manager's unit status and journal, through 6670 | 2 s |
 | `DetailJournalWorker` | The selected service's journal, through 6670 | 2 s, and at once on a new selection |
 | `CgroupLogWorker` | One process's journal, for a log window | 2 s |
-| `CgroupMembersWorker` | The processes in each service's cgroup, from `/sys/fs/cgroup` and `/proc` on the GUI's machine | 2 s |
+| `CgroupMembersWorker` | The processes in each service's cgroup, through 6670 | 2 s |
 
 The window computes CPU percent from the difference between two reports. It marks the feed stale when reports
 stop, and keeps a 15-minute history for the state band and the graphs.
@@ -391,7 +407,7 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 | `logger_tests` | 13 | Levels, files, rotation, journald prefixes |
 | `network_manager_tests` | 35 | Routing, identities, status and events |
 | `gpu_monitor_tests` | 27 | NVML stand-in: sampling, process lists, stuck calls |
-| `journal_server_tests` | 33 | Argument building, the request protocol, stand-in `journalctl` scripts |
+| `journal_server_tests` | 42 | Argument building, the request protocol, stand-in `journalctl` scripts, cgroup listing |
 | `test_service_tests` | 10 | The TestServices helpers |
 
 `ctest` runs all of them. Two more checks run outside ctest:
@@ -415,4 +431,3 @@ stop, and keeps a 15-minute history for the state band and the graphs.
   wait.
 - **The GUI's Network pill expects every running service on the broker:** services that send no heartbeats count
   as missing.
-- **The cgroup PIDs tab is local:** it reads the GUI's own machine.

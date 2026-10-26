@@ -6,8 +6,11 @@
 #include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <memory>
 #include <poll.h>
@@ -334,6 +337,91 @@ std::string RunFailure(const std::string& program, RunCode code, const CommandRe
     return errors.empty() ? program + " failed (exit " + std::to_string(result.exitCode) + ")" : errors;
 }
 
+// At most limit bytes from the start of a file; empty when it cannot be read.
+std::string ReadFileStart(const std::filesystem::path& path, std::size_t limit)
+{
+    std::ifstream file{path, std::ios::binary};
+    std::string text(limit, '\0');
+    file.read(text.data(), static_cast<std::streamsize>(limit));
+    text.resize(static_cast<std::size_t>(file.gcount()));
+    return text;
+}
+
+std::vector<int> ReadPids(const std::filesystem::path& procsFile)
+{
+    std::vector<int> pids{};
+    std::ifstream file{procsFile};
+    for (std::string line{}; std::getline(file, line);)
+    {
+        int pid = 0;
+        if (IsDigits(line, max_pid_digits) &&
+            std::from_chars(line.data(), line.data() + line.size(), pid).ec == std::errc{} && pid > 0)
+        {
+            pids.push_back(pid);
+        }
+    }
+
+    std::sort(pids.begin(), pids.end());
+    return pids;
+}
+
+std::uint64_t ReadRssBytes(const std::filesystem::path& statusFile)
+{
+    std::ifstream file{statusFile};
+    constexpr std::string_view label = "VmRSS:";
+    for (std::string line{}; std::getline(file, line);)
+    {
+        if (line.compare(0, label.size(), label) != 0)
+        {
+            continue;
+        }
+
+        const std::size_t start = line.find_first_not_of(" \t", label.size());
+        const std::size_t end = line.find_first_not_of("0123456789", start);
+        std::uint64_t kilobytes = 0;
+        if (start == std::string::npos ||
+            std::from_chars(line.data() + start, line.data() + (end == std::string::npos ? line.size() : end), kilobytes)
+                    .ec != std::errc{})
+        {
+            return 0;
+        }
+
+        return kilobytes * 1024;
+    }
+
+    return 0;
+}
+
+CgroupMember ReadMember(const std::filesystem::path& procRoot, int pid)
+{
+    const std::filesystem::path folder = procRoot / std::to_string(pid);
+    CgroupMember member{};
+    member.pid = pid;
+    member.comm = Trimmed(ReadFileStart(folder / "comm", 64));
+    member.rssBytes = ReadRssBytes(folder / "status");
+    // The arguments are separated, and ended, by NUL bytes.
+    std::string cmdline = ReadFileStart(folder / "cmdline", max_cmdline_bytes);
+    std::replace(cmdline.begin(), cmdline.end(), '\0', ' ');
+    member.cmdline = Trimmed(std::move(cmdline));
+    return member;
+}
+
+// Tabs and line breaks would split the reply's fields and lines.
+std::string Printable(std::string_view text)
+{
+    std::string printable{text};
+    for (char& c : printable)
+    {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte < 0x20 || byte == 0x7f)
+        {
+            c = ' ';
+        }
+    }
+
+    return printable;
+}
+
 } // namespace
 
 ManagerIdentity IdentityFromCgroup(std::string_view serviceCgroupParent, int pid)
@@ -472,7 +560,7 @@ std::string Describe(RequestCode code)
     case RequestCode::Ok:
         return "ok";
     case RequestCode::UnknownRequest:
-        return "unknown request; the journal server answers version, journal and unit-status";
+        return "unknown request; the journal server answers version, journal, unit-status and members";
     case RequestCode::UnknownKind:
         return "unknown journal target; use manager, service or pid";
     case RequestCode::BadService:
@@ -490,6 +578,65 @@ std::string Describe(RequestCode code)
     return "unknown error";
 }
 
+MembersCode ReadServiceCgroups(const std::filesystem::path& parent, const std::filesystem::path& procRoot,
+                               std::vector<ServiceCgroup>& out)
+{
+    std::error_code error{};
+    std::filesystem::directory_iterator entry{parent, error};
+    if (error)
+    {
+        return MembersCode::NoCgroupFolder;
+    }
+
+    constexpr std::string_view prefix = "task_";
+    std::vector<ServiceCgroup> cgroups{};
+    // increment() with an error code: a read error ends the listing instead of throwing.
+    for (; !error && entry != std::filesystem::directory_iterator{}; entry.increment(error))
+    {
+        const std::string folder = entry->path().filename().string();
+        std::error_code notFolder{};
+        if (folder.compare(0, prefix.size(), prefix) != 0 || !entry->is_directory(notFolder))
+        {
+            continue;
+        }
+
+        ServiceCgroup cgroup{};
+        cgroup.name = folder.substr(prefix.size());
+        if (cgroup.name == "pm" || !IsServiceName(cgroup.name))
+        {
+            continue;
+        }
+
+        for (const int pid : ReadPids(entry->path() / "cgroup.procs"))
+        {
+            cgroup.members.push_back(ReadMember(procRoot, pid));
+        }
+
+        cgroups.push_back(std::move(cgroup));
+    }
+
+    std::sort(cgroups.begin(), cgroups.end(),
+              [](const ServiceCgroup& a, const ServiceCgroup& b) { return a.name < b.name; });
+    out = std::move(cgroups);
+    return MembersCode::Ok;
+}
+
+std::string FormatServiceCgroups(const std::vector<ServiceCgroup>& cgroups)
+{
+    std::string text{};
+    for (const ServiceCgroup& cgroup : cgroups)
+    {
+        text += "cgroup\t" + cgroup.name + "\n";
+        for (const CgroupMember& member : cgroup.members)
+        {
+            text += "pid\t" + cgroup.name + "\t" + std::to_string(member.pid) + "\t" + std::to_string(member.rssBytes) +
+                    "\t" + Printable(member.comm) + "\t" + Printable(member.cmdline) + "\n";
+        }
+    }
+
+    return text;
+}
+
 namespace
 {
 
@@ -499,7 +646,24 @@ struct ServerSettings
     ManagerIdentity manager;
     std::string journalctl;
     std::string systemctl;
+    SystemPaths paths;
 };
+
+// The "members" reply: every service's cgroup and the processes in it.
+void ListMembers(const ServerSettings& settings, std::string& status, std::string& payload)
+{
+    const std::filesystem::path parent =
+        settings.paths.cgroupRoot / std::filesystem::path{settings.manager.serviceCgroupParent}.relative_path();
+    std::vector<ServiceCgroup> cgroups{};
+    if (ReadServiceCgroups(parent, settings.paths.procRoot, cgroups) != MembersCode::Ok)
+    {
+        payload = "cannot read the manager's cgroup folder " + parent.string();
+        return;
+    }
+
+    status = "ok";
+    payload = FormatServiceCgroups(cgroups);
+}
 
 // Answers one request: the reply's status ("ok" or "error") and its payload.
 void Handle(const ServerSettings& settings, const std::atomic<bool>& stop, const std::vector<std::string>& request,
@@ -511,6 +675,12 @@ void Handle(const ServerSettings& settings, const std::atomic<bool>& stop, const
     {
         status = "ok";
         payload = std::to_string(protocol_version);
+        return;
+    }
+
+    if (name == "members")
+    {
+        ListMembers(settings, status, payload);
         return;
     }
 
@@ -575,13 +745,15 @@ struct JournalServer::Shared
     std::string bound;
 };
 
-JournalServer::JournalServer(std::string endpoint, ManagerIdentity manager, std::string journalctl, std::string systemctl)
+JournalServer::JournalServer(std::string endpoint, ManagerIdentity manager, std::string journalctl, std::string systemctl,
+                             SystemPaths paths)
     : shared{std::make_shared<Shared>()}
 {
     shared->settings.endpoint = std::move(endpoint);
     shared->settings.manager = std::move(manager);
     shared->settings.journalctl = std::move(journalctl);
     shared->settings.systemctl = std::move(systemctl);
+    shared->settings.paths = std::move(paths);
 }
 
 JournalServer::~JournalServer()

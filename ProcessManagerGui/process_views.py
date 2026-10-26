@@ -881,6 +881,33 @@ class GraphsPanel(QWidget):
         self.refresh_now()
 
 
+RUNNING_STATES = (RuntimeState.STARTING, RuntimeState.RUNNING, RuntimeState.UNHEALTHY)
+
+
+def members_note(
+    name: str, count: int, has_cgroup: Optional[bool], error: str, state: Optional[RuntimeState]
+) -> Tuple[str, bool]:
+    """The line above the cgroup PIDs table: (text, whether it reports a problem)."""
+    cgroup = task_cgroup_name(name)
+    if error:
+        return error, True
+    if has_cgroup is None:
+        return f"{cgroup} · reading…", False
+    if has_cgroup:
+        if count == 0:
+            return f"{cgroup} on the manager's machine is empty", False
+        plural = "process" if count == 1 else "processes"
+        return f"{cgroup} on the manager's machine · {count} {plural}", False
+    if state in RUNNING_STATES:
+        return (
+            f"{cgroup} does not exist, though the service runs. Either it has CreateProcessGroup: false, "
+            "or the manager could not create the cgroup: it must run as root under its systemd unit, "
+            "and its log says why.",
+            True,
+        )
+    return f"No {cgroup}: the manager creates it when the service starts and removes it when it stops.", False
+
+
 class CgroupPidsTable(QTableWidget):
     """PIDs in the process's task_<name> cgroup, with comm, RSS and cmdline."""
 
@@ -1043,9 +1070,18 @@ class ProcessDetailPage(QWidget):
         self.tabs.setStyleSheet(TAB_STYLE)
         self.graphs = GraphsPanel(history)
         self.tabs.addTab(self.graphs, "Graphs")
+        self.pids_page = QWidget()
+        pids_layout = QVBoxLayout(self.pids_page)
+        pids_layout.setContentsMargins(8, 8, 8, 8)
+        pids_layout.setSpacing(6)
+        self.lbl_pids_meta = QLabel("Select a process")
+        self.lbl_pids_meta.setStyleSheet(mono_style(TEXT_DIM))
+        self.lbl_pids_meta.setWordWrap(True)
+        pids_layout.addWidget(self.lbl_pids_meta)
         self.pids = CgroupPidsTable()
         self.pids.pid_activated.connect(self.pid_activated)
-        self.tabs.addTab(self.pids, "cgroup PIDs")
+        pids_layout.addWidget(self.pids, stretch=1)
+        self.tabs.addTab(self.pids_page, "cgroup PIDs")
         journal_page = QWidget()
         journal_layout = QVBoxLayout(journal_page)
         journal_layout.setContentsMargins(8, 8, 8, 8)
@@ -1073,17 +1109,18 @@ class ProcessDetailPage(QWidget):
     # ── data in ───────────────────────────────────────────────────────────
 
     def set_process(
-        self, name: str, report: Optional[dict], members: Optional[Sequence]
+        self, name: str, report: Optional[dict], members: Optional[Sequence],
+        has_cgroup: Optional[bool] = None, members_error: str = "",
     ) -> None:
         self.name = name
         self.lbl_name.setText(name)
         self.graphs.set_process(name)
-        self.set_members(members or [])
         self.clear_journal()
         if report is None:
             self._show_no_report()
         else:
             self.update_report(report)
+        self.set_members(members or [], has_cgroup, members_error)
         self.tick(time.monotonic(), time.time())
 
     def update_report(self, report: dict) -> None:
@@ -1117,9 +1154,14 @@ class ProcessDetailPage(QWidget):
     def tile_values(self) -> Dict[str, str]:
         return {key: tile.val.text() for key, tile in self.tiles.items()}
 
-    def set_members(self, members: Sequence) -> None:
+    def set_members(self, members: Sequence, has_cgroup: Optional[bool] = None, error: str = "") -> None:
+        """The processes in the service's cgroup; has_cgroup is None while unknown, error why they are."""
         self.pids.set_members(members)
-        self.tabs.setTabText(self.tabs.indexOf(self.pids), f"cgroup PIDs · {len(members)}")
+        self.tabs.setTabText(self.tabs.indexOf(self.pids_page), f"cgroup PIDs · {len(members)}")
+        state = self.report["state"] if self.report else None
+        text, problem = members_note(self.name, len(members), has_cgroup, error, state)
+        self.lbl_pids_meta.setText(text)
+        self.lbl_pids_meta.setStyleSheet(mono_style(DANGER if problem else TEXT_DIM))
 
     def set_journal(self, pairs: list, cgroup_path: str, error: str) -> None:
         cgroup = task_cgroup_name(self.name)

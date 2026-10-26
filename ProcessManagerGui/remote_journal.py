@@ -1,26 +1,31 @@
 """Journal reads through the manager's journal server, so a GUI on another machine shows the logs too. No Qt.
 
-The manager answers on port 6670 with what journalctl and systemctl print on its own machine:
-  ["version"]                                     -> ["ok", "1"]
+The manager answers on port 6670 with what journalctl and systemctl print, and its cgroups hold, on its own machine:
+  ["version"]                                     -> ["ok", "2"]
   ["journal", kind, value, lines, after_cursor]   -> ["ok", <journalctl -o json lines>] or ["error", text]
         kind: manager | service (value: its ProcessName) | pid (value: the pid)
   ["unit-status"]                                 -> ["ok", <systemctl status text>] or ["error", text]
+  ["members"] (version 2)                         -> ["ok", <the processes in each task_<name> cgroup>] or ["error", text]
+        one line "cgroup\\t<name>" per cgroup, then "pid\\t<name>\\t<pid>\\t<rss bytes>\\t<comm>\\t<cmdline>" per process
 A manager from before the journal server does not answer. When it runs on this machine, journalctl and systemctl
-are run here instead, as the GUI always did.
+are run here instead, and the cgroups read here, as the GUI always did.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import time
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import zmq
 
 from systemd_logs import (
+    CGROUP_ROOT,
     JOURNAL_LINES,
     SERVICE_UNIT,
+    CgroupProc,
     JournalLine,
     fetch_journal,
     fetch_journal_cgroup,
@@ -28,11 +33,14 @@ from systemd_logs import (
     fetch_systemctl_status,
     find_task_cgroup,
     parse_journal_json,
+    snapshot_task_cgroups,
     task_cgroup_name,
 )
 
 JOURNAL_PORT = 6670
 JOURNAL_ENDPOINT = f"tcp://127.0.0.1:{JOURNAL_PORT}"
+# The first protocol version whose server answers "members".
+MEMBERS_VERSION = 2
 REQUEST_TIMEOUT_MS = 7000  # the server gives journalctl 5 s
 PROBE_TIMEOUT_MS = 1500
 # After the server did not answer, ask it again only this much later; meanwhile reads fail at once (or run here).
@@ -64,6 +72,28 @@ def is_local(endpoint: str) -> bool:
 
 def local_journal_available() -> bool:
     return sys.platform != "win32" and shutil.which("journalctl") is not None
+
+
+def local_cgroups_available() -> bool:
+    return sys.platform != "win32" and os.path.isdir(CGROUP_ROOT)
+
+
+def parse_members(payload: str) -> Dict[str, List[CgroupProc]]:
+    """A "members" reply: ProcessName -> the processes in its cgroup. A service without a cgroup has no key."""
+    members: Dict[str, List[CgroupProc]] = {}
+    for line in (payload or "").splitlines():
+        fields = line.split("\t")
+        if fields[0] == "cgroup" and len(fields) >= 2:
+            members.setdefault(fields[1], [])
+        elif fields[0] == "pid" and len(fields) >= 6:
+            try:
+                pid, rss = int(fields[2]), int(fields[3])
+            except ValueError:
+                continue
+            members.setdefault(fields[1], []).append(
+                CgroupProc(pid=pid, comm=fields[4], rss_bytes=rss, cmdline=fields[5])
+            )
+    return members
 
 
 class JournalClient:
@@ -108,26 +138,64 @@ class JournalClient:
             self._socket = None
 
 
-class JournalReader:
+class ServerReader:
+    """What the readers share: a client of the journal server, and whether, and in which version, it answers.
+
+    Use it from one thread: its socket belongs to the thread that first asks.
+    """
+
+    def __init__(self, endpoint: str, client: Optional[JournalClient] = None,
+                 cancelled: Optional[Callable[[], bool]] = None):
+        self.endpoint = endpoint
+        self.version = 0  # the server's protocol version, once it has answered
+        self._client = client or JournalClient(endpoint)
+        self._cancelled = cancelled  # a worker's "stop asked": ends a wait for the server early
+        self._server_up = False
+        self._retry_at = 0.0
+
+    def where(self) -> str:
+        return f"journal server {self.endpoint}"
+
+    def close(self) -> None:
+        self._client.close()
+
+    def _server_answers(self) -> bool:
+        if self._server_up:
+            return True
+        if time.monotonic() < self._retry_at:
+            return False
+        payload, _error, answered = self._client.request(["version"], PROBE_TIMEOUT_MS, self._cancelled)
+        if answered:
+            self._server_up = True
+            self.version = int(payload) if (payload or "").isdigit() else 1
+            return True
+        self._server_lost()
+        return False
+
+    def _server_lost(self) -> None:
+        self._server_up = False
+        self._retry_at = time.monotonic() + RETRY_AFTER_SEC
+
+    def _no_answer(self) -> str:
+        return (f"no answer from the journal server at {self.endpoint} "
+                f"(a manager from before the journal server has none); asking again every {RETRY_AFTER_SEC:.0f} s")
+
+
+class JournalReader(ServerReader):
     """Follows one journal: the manager's, a service's (by ProcessName) or one process's (by pid).
 
     The first read gets the newest lines. Later reads ask only for the lines after the last one seen, so lines
     written between two reads are not lost, however many there are. The last KEEP_LINES are kept.
-    Use it from one thread: its socket belongs to the thread that first reads.
     """
 
     def __init__(self, endpoint: str, kind: str, value: str = "", lines: int = JOURNAL_LINES,
                  client: Optional[JournalClient] = None, cancelled: Optional[Callable[[], bool]] = None):
-        self.endpoint = endpoint
+        super().__init__(endpoint, client, cancelled)
         self.kind = kind
         self.value = value
         self.lines = lines
-        self._client = client or JournalClient(endpoint)
-        self._cancelled = cancelled  # a worker's "stop asked": ends a wait for the server early
         self._kept: List[JournalLine] = []
         self._cursor = ""
-        self._server_up = False
-        self._retry_at = 0.0
 
     def read(self) -> Tuple[List[JournalLine], str, Optional[str]]:
         """Returns (the kept lines, where they come from, error). "Where" is empty when nothing could be read."""
@@ -156,32 +224,6 @@ class JournalReader:
             return fetch_systemctl_status(SERVICE_UNIT)
         return "", self._no_answer()
 
-    def where(self) -> str:
-        return f"journal server {self.endpoint}"
-
-    def close(self) -> None:
-        self._client.close()
-
-    def _server_answers(self) -> bool:
-        if self._server_up:
-            return True
-        if time.monotonic() < self._retry_at:
-            return False
-        _payload, _error, answered = self._client.request(["version"], PROBE_TIMEOUT_MS, self._cancelled)
-        if answered:
-            self._server_up = True
-            return True
-        self._server_lost()
-        return False
-
-    def _server_lost(self) -> None:
-        self._server_up = False
-        self._retry_at = time.monotonic() + RETRY_AFTER_SEC
-
-    def _no_answer(self) -> str:
-        return (f"no answer from the journal server at {self.endpoint} "
-                f"(a manager from before the journal server has none); asking again every {RETRY_AFTER_SEC:.0f} s")
-
     def _add(self, new: List[JournalLine]) -> None:
         if new and new[-1].cursor:
             self._cursor = new[-1].cursor
@@ -200,3 +242,25 @@ class JournalReader:
             return [], "", f"cgroup {task_cgroup_name(self.value)} not found under /sys/fs/cgroup"
         lines, error = fetch_journal_cgroup(cgroup, self.lines)
         return lines, f"{cgroup} (here)", error
+
+
+class MembersReader(ServerReader):
+    """The processes in every service's cgroup (task_<name>) on the manager's machine."""
+
+    def read(self) -> Tuple[Optional[Dict[str, List[CgroupProc]]], Optional[str]]:
+        """Returns (ProcessName -> its processes, error). A service without a cgroup has no key.
+
+        The mapping is None when nothing could be read; the error then says why.
+        """
+        if self._server_answers():
+            if self.version >= MEMBERS_VERSION:
+                payload, error, answered = self._client.request(["members"], cancelled=self._cancelled)
+                if answered:
+                    return (parse_members(payload or ""), None) if error is None else (None, error)
+                self._server_lost()
+            elif not (is_local(self.endpoint) and local_cgroups_available()):
+                return None, (f"the manager at {self.endpoint} cannot list its cgroups: its journal server is "
+                              f"version {self.version}, and {MEMBERS_VERSION} is needed; update the manager")
+        if is_local(self.endpoint) and local_cgroups_available():
+            return snapshot_task_cgroups(), None
+        return None, self._no_answer()

@@ -15,7 +15,8 @@ PUB  (bind, --network) – the network manager's status and events (network_stat
       --missing NAME keeps a heartbeating process off the network manager.
 ROUTER (bind, --journal) – the manager's journal server (remote_journal): the
       manager and every running process write journal lines now and then, and
-      the GUI reads them as from a manager on another machine.
+      the GUI reads them as from a manager on another machine. Each running
+      process has a cgroup holding its pid, and a worker child for the GPU users.
 """
 
 from __future__ import annotations
@@ -160,7 +161,7 @@ class MockNetwork:
 
 
 class MockJournal:
-    """The manager's journal server: answers version, journal and unit-status like JournalServer."""
+    """The manager's journal server: answers version, journal, unit-status and members like JournalServer."""
 
     MANAGER_IDENT = "iltaren-ProcessManager"
     KEEP = 5000
@@ -170,6 +171,8 @@ class MockJournal:
         self.manager_pid = manager_pid
         self.seq = 0
         self.entries: List[dict] = []  # {"seq", "ident", "pid", "record"}, oldest first
+        # name -> [(pid, rss bytes, comm, cmdline)]: the cgroups of the running processes, set by the main loop
+        self.cgroups: Dict[str, List[tuple]] = {}
 
     def write(self, ident: str, pid: int, message: str) -> None:
         self.seq += 1
@@ -195,7 +198,14 @@ class MockJournal:
     def _handle(self, request: List[str]):
         name = request[0] if request else ""
         if name == "version":
-            return b"ok", "1"
+            return b"ok", "2"
+        if name == "members":
+            lines = []
+            for cgroup in sorted(self.cgroups):
+                lines.append(f"cgroup\t{cgroup}")
+                lines += [f"pid\t{cgroup}\t{pid}\t{rss}\t{comm}\t{cmdline}"
+                          for pid, rss, comm, cmdline in self.cgroups[cgroup]]
+            return b"ok", "".join(line + "\n" for line in lines)
         if name == "unit-status":
             return b"ok", (
                 "● processmanager.service - Process manager (mock)\n"
@@ -204,7 +214,7 @@ class MockJournal:
                 f"   Main PID: {self.manager_pid} (iltaren-ProcessManager)\n"
             )
         if name != "journal" or len(request) < 2:
-            return b"error", "unknown request; the journal server answers version, journal and unit-status"
+            return b"error", "unknown request; the journal server answers version, journal, unit-status and members"
         kind = request[1]
         value = request[2] if len(request) > 2 else ""
         lines = int(request[3]) if len(request) > 3 and request[3].isdigit() else 50
@@ -454,6 +464,15 @@ def main():
 
         # ── journal: running processes write now and then, the manager logs state changes
         if journal is not None:
+            # A cgroup per running process; the GPU users have a worker child next to the main process.
+            journal.cgroups = {}
+            for name in PROCESSES:
+                if pids[name]:
+                    cmdline = f"/opt/app/bin/{name} --config /etc/app/{name}.yaml"
+                    procs = [(pids[name], mem_base[name], name[:15], cmdline)]
+                    if name in GPU_USERS:
+                        procs.append((pids[name] + 1, mem_base[name] // 4, f"{name[:11]}-wkr", f"{name}-worker --gpu 0"))
+                    journal.cgroups[name] = procs
             for name in PROCESSES:
                 if states[name] == RuntimeState.RUNNING and random.random() < 0.15:
                     journal.write(name, pids[name], f"{name}: cycle {random.randint(1, 99999)} done")

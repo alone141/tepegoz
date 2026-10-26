@@ -97,10 +97,9 @@ from process_views import (  # noqa: F401  re-exported
     service_active_text,
     uptime_text,
 )
-from remote_journal import JOURNAL_ENDPOINT, JOURNAL_PORT, JournalReader, endpoint_on
+from remote_journal import JOURNAL_ENDPOINT, JOURNAL_PORT, JournalReader, MembersReader, endpoint_on
 from systemd_logs import (
     REFRESH_MS,
-    snapshot_cgroup_members,
     task_cgroup_name,
 )
 from ui_scale import (  # noqa: F401  re-exported
@@ -607,37 +606,33 @@ class DetailJournalWorker(JournalWorkerBase):
         self.finished.emit()
 
 
-class CgroupMembersWorker(QObject):
-    """Read task_<name>/cgroup.procs + /proc off the UI thread."""
+class CgroupMembersWorker(JournalWorkerBase):
+    """Poll the processes in every service's cgroup through the journal server, off the UI thread."""
 
-    members_ready = pyqtSignal(object)  # dict[str, list]
-    finished = pyqtSignal()
+    members_ready = pyqtSignal(object, str)  # {name: [CgroupProc]} or None, error
 
-    def __init__(self, parent: Optional[QObject] = None):
-        super().__init__(parent)
-        self._running = False
-        self._names: List[str] = []
-
-    def set_names(self, names: List[str]) -> None:
-        self._names = list(names)
+    def __init__(self, endpoint: str = JOURNAL_ENDPOINT, parent: Optional[QObject] = None):
+        super().__init__(endpoint, parent)
 
     @pyqtSlot()
     def start(self):
         self._running = True
+        reader: Optional[MembersReader] = None
         while self._running:
+            self._changed = False
+            if reader is None or reader.endpoint != self._endpoint:
+                if reader is not None:
+                    reader.close()
+                reader = MembersReader(self._endpoint, cancelled=lambda: not self._running)
             try:
-                names = list(self._names)
-                self.members_ready.emit(snapshot_cgroup_members(names))
-            except Exception:
-                self.members_ready.emit({})
-            slept = 0
-            while self._running and slept < REFRESH_MS:
-                QThread.msleep(100)
-                slept += 100
+                members, error = reader.read()
+                self.members_ready.emit(members, error or "")
+            except Exception as e:
+                self.members_ready.emit(None, str(e))
+            self._sleep()
+        if reader is not None:
+            reader.close()
         self.finished.emit()
-
-    def stop(self):
-        self._running = False
 
 
 class ProcessLogWindow(QMainWindow):
@@ -881,7 +876,9 @@ class ProcessMonitorWindow(QMainWindow):
         self._prev: Dict[str, Tuple[int, int]] = {}   # name → (cpu_usec, snap_ns)
         self._current: Dict[str, dict] = {}
         self._log_windows: Dict[str, ProcessLogWindow] = {}
-        self._cgroup_members: dict = {}
+        # ProcessName -> its processes, from the manager's machine; None until read, or when it cannot be.
+        self._cgroup_members: Optional[dict] = None
+        self._cgroup_error = ""
         self._feed = FeedMonitor()
         self._stale = False  # the pages show data that stopped updating
         self._link_status: Optional[Tuple[str, str, str]] = None
@@ -1088,7 +1085,7 @@ class ProcessMonitorWindow(QMainWindow):
         self._auto_select = False
         self.stack.setCurrentWidget(self.detail)
         report = self._current.get(name)
-        self.detail.set_process(name, report, self._cgroup_members.get(name) or [])
+        self.detail.set_process(name, report, *self._members_of(name))
         self.detail.set_stale(self._stale)
         worker = getattr(self, "detail_journal_worker", None)
         if worker is not None:
@@ -1186,7 +1183,7 @@ class ProcessMonitorWindow(QMainWindow):
 
     def _start_cgroup_members_worker(self):
         self.cgroup_members_thread = QThread()
-        self.cgroup_members_worker = CgroupMembersWorker()
+        self.cgroup_members_worker = CgroupMembersWorker(self.journal_endpoint)
         self.cgroup_members_worker.moveToThread(self.cgroup_members_thread)
         self.cgroup_members_thread.started.connect(self.cgroup_members_worker.start)
         self.cgroup_members_worker.members_ready.connect(self._on_cgroup_members)
@@ -1272,8 +1269,6 @@ class ProcessMonitorWindow(QMainWindow):
         self._current = new_current
         if reports:  # one GPU sample for all of them; an empty array says nothing
             self._on_gpu_state(reports[0]["gpuState"])
-        if getattr(self, "cgroup_members_worker", None):
-            self.cgroup_members_worker.set_names(sorted(self._current.keys()))
 
         now = time.monotonic()
         self._feed.on_report(now)
@@ -1456,12 +1451,21 @@ class ProcessMonitorWindow(QMainWindow):
         if state not in (GpuState.SAMPLED, GpuState.NOT_SAMPLED):
             self._show_status(f"No GPU data: {GPU_STATE_TEXT.get(state, state.name)}")
 
-    @pyqtSlot(object)
-    def _on_cgroup_members(self, mapping) -> None:
-        self._cgroup_members = mapping if isinstance(mapping, dict) else {}
+    @pyqtSlot(object, str)
+    def _on_cgroup_members(self, mapping, error: str) -> None:
+        self._cgroup_members = mapping if isinstance(mapping, dict) else None
+        self._cgroup_error = error
         name = self.detail.name
         if name:
-            self.detail.set_members(self._cgroup_members.get(name) or [])
+            self.detail.set_members(*self._members_of(name))
+
+    def _members_of(self, name: str) -> Tuple[list, Optional[bool], str]:
+        """(its processes, whether it has a cgroup or None when unknown, why they could not be read)."""
+        if self._cgroup_members is None:
+            return [], None, self._cgroup_error
+        if name not in self._cgroup_members:
+            return [], False, ""
+        return self._cgroup_members[name], True, ""
 
     # ── slots: user actions ───────────────────────────────────────────────
 
@@ -1517,7 +1521,11 @@ class ProcessMonitorWindow(QMainWindow):
         self.journal_endpoint = self.edit_journal.text().strip() or self.journal_endpoint
         self.edit_journal.setText(self.journal_endpoint)
         self._show_endpoints()
-        for worker in (getattr(self, "systemd_worker", None), getattr(self, "detail_journal_worker", None)):
+        for worker in (
+            getattr(self, "systemd_worker", None),
+            getattr(self, "detail_journal_worker", None),
+            getattr(self, "cgroup_members_worker", None),
+        ):
             if worker is not None:
                 worker.set_endpoint(self.journal_endpoint)
         for window in list(self._log_windows.values()):

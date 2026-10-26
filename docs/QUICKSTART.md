@@ -134,7 +134,7 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 | See a service's state and use | Click it in the sidebar. The dot colour is its state. |
 | Start, stop or restart it | Click **Start**, **Stop** or **Restart** on its page, then confirm. |
 | Read its log | Open the **Journal** tab. New lines are added as they arrive. |
-| See its processes | Open **cgroup PIDs**. Double-click a PID for that process's own log. This tab only works with the GUI on the manager's machine. |
+| See its processes | Open **cgroup PIDs**. Double-click a PID for that process's own log. |
 | Compare services over time | Open the **Graphs** tab, or **Pop out** for a larger window. |
 | See the manager's own log | Click **processmanager** at the top of the sidebar. |
 | Change the machine it watches | Click **Connection**, edit the endpoints, then **Reconnect**. |
@@ -144,7 +144,8 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 | You see | Look at |
 |---|---|
 | The toolbar shows "Waiting for data…" or "No data for …" instead of "Live" | Whether the manager runs (`systemctl status processmanager`), and, for a remote GUI, whether a firewall blocks the ports. |
-| "no answer from the journal server" in a log view | Port 6670 is blocked, or the manager is older than its journal server. |
+| "no answer from the journal server" in a log view or the cgroup PIDs tab | Port 6670 is blocked, or the manager is older than its journal server. |
+| The cgroup PIDs tab says the service runs without a cgroup | The manager could not create cgroups: run it through its systemd unit, as root. |
 | A service keeps restarting, then stays stopped | Its Journal tab, and lines such as `[name] pid 1234 exited with code 1` in the manager's log. After `MaxRestarts` restarts in a row, the manager leaves it stopped. |
 | A service turns **Unhealthy** | It has `CheckHealth: true` but sends no heartbeats. See *Health checks* in [USAGE.md](USAGE.md). |
 | CPU and memory read 0 | The manager has no cgroups: it is not running under the installed systemd unit, or not as root. |

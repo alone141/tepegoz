@@ -100,7 +100,11 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   the first read, the GUI asks only for the lines after the last one it has, so no line is lost between
   refreshes. `--host H` points every GUI endpoint at the manager's machine, and `--journal` points the
   journal elsewhere. A manager from before this has no journal server; on the GUI's own machine, the GUI
-  then runs journalctl itself, as before. The cgroup PIDs tab still reads the GUI's own machine.
+  then runs journalctl itself, as before.
+- The journal server also lists the processes in each service's cgroup (`["members"]`, protocol version 2),
+  so the GUI's cgroup PIDs tab shows them when the GUI runs on another machine; it used to read the GUI's
+  own machine and stayed empty there. A line above the table says why it is empty: the service is not
+  running, it runs without a cgroup, or the journal server does not answer.
 - `TestServices/` holds test programs with planned behaviours (clean and failing exits, crashes, ignored
   SIGTERM, heartbeats, children, output, environment, CPU and memory use), scenario configs that run them,
   and `run_scenarios.py`, which runs the manager with each config and checks what it does.

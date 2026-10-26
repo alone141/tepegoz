@@ -20,8 +20,12 @@ namespace
 {
 
 constexpr std::chrono::milliseconds reply_wait{10000};
-const journal_server::ManagerIdentity unit_identity =
-    journal_server::IdentityFromCgroup("/system.slice/processmanager.service", 4242);
+const std::string unit_parent = "/system.slice/processmanager.service";
+const journal_server::ManagerIdentity unit_identity = journal_server::IdentityFromCgroup(unit_parent, 4242);
+const std::string fake_members = "cgroup\tGGM\n"
+                                 "pid\tGGM\t10\t2097152\tpython3\tpython3 /opt/main.py\n"
+                                 "pid\tGGM\t20\t0\t\t\n"
+                                 "cgroup\tYAM\n";
 
 std::vector<std::string> Tail(std::vector<std::string> args)
 {
@@ -63,6 +67,13 @@ public:
         std::ofstream{script} << "#!/bin/sh\n" << body;
         std::filesystem::permissions(script, std::filesystem::perms::owner_all);
         return script.string();
+    }
+
+    void Write(const std::string& name, const std::string& content) const
+    {
+        const std::filesystem::path file = path / name;
+        std::filesystem::create_directories(file.parent_path());
+        std::ofstream{file, std::ios::binary} << content;
     }
 
     std::string Read(const std::string& name) const
@@ -119,12 +130,32 @@ public:
 };
 
 journal_server::JournalServer Started(const std::string& journalctl, const std::string& systemctl,
-                                      journal_server::ManagerIdentity identity = unit_identity)
+                                      journal_server::ManagerIdentity identity = unit_identity,
+                                      journal_server::SystemPaths paths = {})
 {
-    journal_server::JournalServer server{"tcp://127.0.0.1:*", std::move(identity), journalctl, systemctl};
+    journal_server::JournalServer server{"tcp://127.0.0.1:*", std::move(identity), journalctl, systemctl,
+                                         std::move(paths)};
     std::string error{};
     EXPECT_EQ(server.Start(error), journal_server::StartCode::Ok) << error;
     return server;
+}
+
+// The cgroups and /proc of a manager in processmanager.service, inside the test's folder: GGM runs pid 10 and
+// pid 20, which has gone; YAM's cgroup is empty.
+journal_server::SystemPaths FakeSystem(const ScriptFolder& folder, const std::string& parent = unit_parent)
+{
+    folder.Write("cgroup" + parent + "/task_pm/cgroup.procs", "4242\n");
+    folder.Write("cgroup" + parent + "/task_GGM/cgroup.procs", "20\n10\n");
+    folder.Write("cgroup" + parent + "/task_YAM/cgroup.procs", "");
+    folder.Write("cgroup" + parent + "/other/cgroup.procs", "30\n");
+    folder.Write("cgroup" + parent + "/task_file", "");
+    folder.Write("proc/10/comm", "python3\n");
+    folder.Write("proc/10/status", "Name:\tpython3\nVmRSS:\t    2048 kB\nVmSwap:\t       0 kB\n");
+    folder.Write("proc/10/cmdline", std::string{"python3"} + '\0' + "/opt/main.py" + '\0');
+    journal_server::SystemPaths paths{};
+    paths.cgroupRoot = folder.path / "cgroup";
+    paths.procRoot = folder.path / "proc";
+    return paths;
 }
 
 std::vector<std::string> Lines(const std::string& text)
@@ -329,6 +360,92 @@ TEST(JournalServerTest, EveryCodeIsDescribed)
     }
 }
 
+TEST(JournalServerTest, ReadsServiceCgroupsAndTheirProcesses)
+{
+    const ScriptFolder folder{};
+    const journal_server::SystemPaths paths = FakeSystem(folder);
+    std::vector<journal_server::ServiceCgroup> cgroups{};
+    ASSERT_EQ(journal_server::ReadServiceCgroups(paths.cgroupRoot / unit_parent.substr(1), paths.procRoot, cgroups),
+              journal_server::MembersCode::Ok);
+    ASSERT_EQ(cgroups.size(), 2U);
+    EXPECT_EQ(cgroups[0].name, "GGM");
+    ASSERT_EQ(cgroups[0].members.size(), 2U);
+    EXPECT_EQ(cgroups[0].members[0].pid, 10);
+    EXPECT_EQ(cgroups[0].members[0].comm, "python3");
+    EXPECT_EQ(cgroups[0].members[0].rssBytes, 2048U * 1024U);
+    EXPECT_EQ(cgroups[0].members[0].cmdline, "python3 /opt/main.py");
+    EXPECT_EQ(cgroups[1].name, "YAM");
+    EXPECT_TRUE(cgroups[1].members.empty());
+}
+
+TEST(JournalServerTest, ProcessThatHasGoneKeepsOnlyItsPid)
+{
+    const ScriptFolder folder{};
+    const journal_server::SystemPaths paths = FakeSystem(folder);
+    std::vector<journal_server::ServiceCgroup> cgroups{};
+    ASSERT_EQ(journal_server::ReadServiceCgroups(paths.cgroupRoot / unit_parent.substr(1), paths.procRoot, cgroups),
+              journal_server::MembersCode::Ok);
+    ASSERT_FALSE(cgroups.empty());
+    ASSERT_EQ(cgroups[0].members.size(), 2U);
+    EXPECT_EQ(cgroups[0].members[1].pid, 20);
+    EXPECT_EQ(cgroups[0].members[1].comm, "");
+    EXPECT_EQ(cgroups[0].members[1].rssBytes, 0U);
+    EXPECT_EQ(cgroups[0].members[1].cmdline, "");
+}
+
+TEST(JournalServerTest, ReadsThisProcessFromProc)
+{
+    const ScriptFolder folder{};
+    folder.Write("cgroup/task_self/cgroup.procs", std::to_string(::getpid()) + "\n");
+    std::vector<journal_server::ServiceCgroup> cgroups{};
+    ASSERT_EQ(journal_server::ReadServiceCgroups(folder.path / "cgroup", "/proc", cgroups),
+              journal_server::MembersCode::Ok);
+    ASSERT_EQ(cgroups.size(), 1U);
+    ASSERT_EQ(cgroups[0].members.size(), 1U);
+    const journal_server::CgroupMember& self = cgroups[0].members[0];
+    // The kernel keeps the first 15 bytes of the program's file name as comm.
+    const std::string program = std::filesystem::read_symlink("/proc/self/exe").filename().string();
+    EXPECT_EQ(self.comm, program.substr(0, 15));
+    EXPECT_GT(self.rssBytes, 0U);
+    EXPECT_NE(self.cmdline.find(program), std::string::npos) << self.cmdline;
+}
+
+TEST(JournalServerTest, LongCommandLineIsCut)
+{
+    const ScriptFolder folder{};
+    folder.Write("cgroup/task_A/cgroup.procs", "5\n");
+    folder.Write("proc/5/cmdline", std::string(journal_server::max_cmdline_bytes + 100, 'a'));
+    std::vector<journal_server::ServiceCgroup> cgroups{};
+    ASSERT_EQ(journal_server::ReadServiceCgroups(folder.path / "cgroup", folder.path / "proc", cgroups),
+              journal_server::MembersCode::Ok);
+    ASSERT_EQ(cgroups.size(), 1U);
+    ASSERT_EQ(cgroups[0].members.size(), 1U);
+    EXPECT_EQ(cgroups[0].members[0].cmdline.size(), journal_server::max_cmdline_bytes);
+}
+
+TEST(JournalServerTest, MissingCgroupFolderIsReported)
+{
+    std::vector<journal_server::ServiceCgroup> cgroups{};
+    EXPECT_EQ(journal_server::ReadServiceCgroups("/nonexistent/cgroup", "/proc", cgroups),
+              journal_server::MembersCode::NoCgroupFolder);
+}
+
+TEST(JournalServerTest, FormatWritesOneLinePerCgroupAndProcess)
+{
+    journal_server::CgroupMember member{};
+    member.pid = 10;
+    member.comm = "a\tb";
+    member.rssBytes = 4096;
+    member.cmdline = "x\ny";
+    journal_server::ServiceCgroup running{};
+    running.name = "GGM";
+    running.members.push_back(member);
+    journal_server::ServiceCgroup empty{};
+    empty.name = "YAM";
+    EXPECT_EQ(journal_server::FormatServiceCgroups({running, empty}),
+              "cgroup\tGGM\npid\tGGM\t10\t4096\ta b\tx y\ncgroup\tYAM\n");
+}
+
 TEST(JournalServerTest, ServerAnswersVersion)
 {
     journal_server::JournalServer server = Started("journalctl", "systemctl");
@@ -415,6 +532,36 @@ TEST(JournalServerTest, ServerRefusesUnitStatusOutsideUnit)
     Client client{server.BoundEndpoint()};
     EXPECT_EQ(client.Ask({"unit-status"}),
               (std::vector<std::string>{"error", journal_server::Describe(journal_server::RequestCode::NoUnit)}));
+}
+
+TEST(JournalServerTest, ServerAnswersMembers)
+{
+    const ScriptFolder folder{};
+    journal_server::JournalServer server = Started("journalctl", "systemctl", unit_identity, FakeSystem(folder));
+    Client client{server.BoundEndpoint()};
+    EXPECT_EQ(client.Ask({"members"}), (std::vector<std::string>{"ok", fake_members}));
+}
+
+TEST(JournalServerTest, ServerListsMembersOutsideUnit)
+{
+    const ScriptFolder folder{};
+    journal_server::JournalServer server =
+        Started("journalctl", "systemctl", journal_server::IdentityFromCgroup("/", 1), FakeSystem(folder, ""));
+    Client client{server.BoundEndpoint()};
+    EXPECT_EQ(client.Ask({"members"}), (std::vector<std::string>{"ok", fake_members}));
+}
+
+TEST(JournalServerTest, ServerReportsMissingCgroupFolder)
+{
+    const ScriptFolder folder{};
+    journal_server::SystemPaths paths{};
+    paths.cgroupRoot = folder.path / "none";
+    journal_server::JournalServer server = Started("journalctl", "systemctl", unit_identity, paths);
+    Client client{server.BoundEndpoint()};
+    const std::vector<std::string> reply = client.Ask({"members"});
+    ASSERT_EQ(reply.size(), 2U);
+    EXPECT_EQ(reply[0], "error");
+    EXPECT_EQ(reply[1].rfind("cannot read the manager's cgroup folder", 0), 0U) << reply[1];
 }
 
 TEST(JournalServerTest, ServerCutsOversizedOutputAtLastLine)

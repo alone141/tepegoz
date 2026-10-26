@@ -333,16 +333,12 @@ def list_cgroup_procs(sysfs_path: str) -> List[CgroupProc]:
     return out
 
 
-def snapshot_cgroup_members(
-    process_names: Sequence[str], root: str = CGROUP_ROOT
-) -> dict:
-    """processName -> list[CgroupProc] from task_<name> cgroups."""
+def snapshot_task_cgroups(root: str = CGROUP_ROOT) -> dict:
+    """processName -> list[CgroupProc] for every task_<name> cgroup on this machine, as the journal server's
+    "members" lists them: task_pm, the manager's own, is left out, and a service without a cgroup has no key."""
     index = index_task_cgroups(root)
-    result = {}
-    for name in process_names:
-        sysfs = index.get(name)
-        result[name] = list_cgroup_procs(sysfs) if sysfs else []
-    return result
+    index.pop(MANAGER_CGROUP[len("task_"):], None)
+    return {name: list_cgroup_procs(sysfs) for name, sysfs in index.items()}
 
 
 def fetch_journal_pid(

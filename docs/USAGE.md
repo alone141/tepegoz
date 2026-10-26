@@ -363,8 +363,10 @@ switch machines without restarting the GUI.
   - three tabs:
     - **Graphs**: CPU, memory, GPU and VRAM over time. **Pop out** opens them in a larger window comparing
       services.
-    - **cgroup PIDs**: the processes in its cgroup. Double-click one to open that process's log in a window of
-      its own.
+    - **cgroup PIDs**: the processes in its cgroup on the manager's machine, with their memory and command
+      line. Double-click one to open that process's log in a window of its own. The line above the table
+      says why it is empty: the service is not running, it runs without a cgroup, or the journal server does
+      not answer.
     - **Journal**: the service's log.
 - **The manager's page:** `systemctl status` of its unit, and its own log.
 - **The network manager's page:**
@@ -387,7 +389,9 @@ The GUI reads every log through the manager's journal server on port 6670. The m
   the lines added since, so none are skipped.
 - **An older manager:** a manager from before the journal server does not answer. If it runs on the GUI's own
   machine, the GUI reads the journal there itself, as it did before.
-- **cgroup PIDs:** this tab reads the GUI's own machine, so it stays empty for a manager elsewhere.
+- **cgroup PIDs:** the same server lists the processes in each service's cgroup, read from `/sys/fs/cgroup`
+  and `/proc` on the manager's machine. A manager from before this gives no list; on the GUI's own machine the
+  GUI then reads the cgroups itself.
 
 ### Trying the GUI without a manager
 
