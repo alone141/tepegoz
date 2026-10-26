@@ -14,26 +14,48 @@ package installed for them and nothing is downloaded:
 - fkYAML 0.4.4 (MIT, header-only).
 - GoogleTest 1.18.0 (BSD-3-Clause), only for the tests. `-DENABLE_TEST=OFF` builds without them.
 
-#### Build
+#### Build and install
 ```text
-cmake -S . -B build
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build
 ctest --test-dir build
-cmake --install build
+sudo cmake --install build
+sudo systemctl start processmanager
 ```
-`cmake --install` puts the manager in `bin/` as `iltaren-ProcessManager`. When the tests are built, it also
-installs `keepalive` and the `pmt_*` test programs next to it, and their scenario configs and driver in
-`share/processmanager/test-setup/` (see `TestServices/README.md`). The paths below are built into the manager. They
-follow `CMAKE_INSTALL_PREFIX`, so with `-DCMAKE_INSTALL_PREFIX=/usr` the config is
-`/etc/processmanager/ProcessManagerConfig.yaml` and the logs go to `/var/log/processmanager/ProcessManagerLog/`. Each can also be
-set on its own; directories end with a slash.
+`cmake --install` sets up everything the manager needs on the machine:
+- **The manager:** installed in `bin/` as `iltaren-ProcessManager`.
+- **The configuration:** `ProcessManagerConfig.yaml` goes in the config directory unless one is already there.
+  An existing file, which may have been edited, is kept, and the new one is put next to it as
+  `ProcessManagerConfig.yaml.new`. The share directory gets the same file, which the manager reads when the
+  config directory has none. By default this is a starter configuration with no services;
+  `-DPM_CONFIG_SOURCE=FILE` installs your own file instead.
+- **The log directory:** `ProcessManagerLog`, for the log files.
+- **The systemd unit:** `processmanager.service` runs the manager with `Delegate=yes`, which its cgroups
+  need. Installing as root on a running systemd also enables the unit, so the manager starts at boot. It is not
+  started at install time. A staged install (`DESTDIR`) only installs the file.
+- **The monitor GUI:** installed in `share/processmanager/gui/`, with its launcher `process-monitor` in `bin/`. It
+  needs Python 3 with PyQt6 and pyzmq, which the install does not provide.
+- **The test setup (when the tests are built):** `keepalive` and the `pmt_*` test programs next to the manager,
+  and their scenario configs and driver in `share/processmanager/test-setup/` (see `TestServices/README.md`).
+
+The paths are fixed when the build is configured and follow `CMAKE_INSTALL_PREFIX`. With `/usr`:
+- the config is `/etc/processmanager/ProcessManagerConfig.yaml`;
+- the logs go to `/var/log/processmanager/ProcessManagerLog/`;
+- the unit goes in `/usr/lib/systemd/system/`.
+
+Set the prefix when you configure, not with `cmake --install --prefix`, since the paths are already built into
+the manager and the unit. Each path can also be set on its own; directories end with a slash.
 
 | Cache variable | Default | Used for |
 |---|---|---|
 | `PM_CONFIG_DIR` | `<prefix>/etc/processmanager/` | `ProcessManagerConfig.yaml` |
 | `PM_LOG_DIR` | `<prefix>/var/log/processmanager/` | the `ProcessManagerLog` directory |
-| `PM_SHARE_DIR` | `<prefix>/share/processmanager/` | the `ProcessManagerConfig.yaml` read when the first is missing |
+| `PM_SHARE_DIR` | `<prefix>/share/processmanager/` | the `ProcessManagerConfig.yaml` read when the first is missing, and the GUI |
 | `PM_BIN_INSTALL_DIR` | `bin` | where `cmake --install` puts the programs |
+| `PM_CONFIG_SOURCE` | empty: a starter with no services | the `ProcessManagerConfig.yaml` that is installed |
+| `PM_SYSTEMD_UNIT_DIR` | `<prefix>/lib/systemd/system` | `processmanager.service` |
+| `PM_INSTALL_GUI` | `ON` | installing the GUI and `process-monitor` |
+| `PM_ENABLE_SERVICE` | `ON` | enabling the unit when installing as root on a running systemd |
 
 The version the manager logs at start is the one in the root `project()` call.
 
@@ -79,6 +101,11 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
 - `TestServices/` holds test programs with planned behaviours (clean and failing exits, crashes, ignored
   SIGTERM, heartbeats, children, output, environment, CPU and memory use), scenario configs that run them,
   and `run_scenarios.py`, which runs the manager with each config and checks what it does.
+- `cmake --install` sets up the whole machine (`packaging/`). Besides the programs, it installs:
+  - the configuration, keeping an existing one;
+  - the log directory;
+  - the systemd unit `processmanager.service`, enabled when installing as root;
+  - the monitor GUI with its `process-monitor` launcher.
 
 ### 0.1.0 
 - First release

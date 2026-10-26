@@ -79,3 +79,6 @@ add_subdirectory(ProcessManagerApp)
 if(ENABLE_TEST)
     add_subdirectory(TestServices)
 endif()
+
+# Last, since its install step enables the service once everything else is installed.
+add_subdirectory(packaging)

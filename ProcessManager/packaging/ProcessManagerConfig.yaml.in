@@ -1,0 +1,12 @@
+# Process manager configuration, installed by cmake --install. It starts no service yet.
+# List your services under Services, then check the file and restart the manager:
+#   @INSTALLED_MANAGER@ validate --config @PM_CONFIG_DIR@ProcessManagerConfig.yaml
+#   systemctl restart @UNIT_NAME@
+# '@INSTALLED_MANAGER@ generate' writes a template that documents every key.
+# To install your own file instead, configure the build with -DPM_CONFIG_SOURCE=/path/to/ProcessManagerConfig.yaml.
+
+ProcessManager:
+  Mode: Auto
+  LogLevel: Info
+
+Services: []

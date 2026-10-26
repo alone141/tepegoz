@@ -1,0 +1,43 @@
+# Run last by cmake --install: enables @UNIT_NAME@, so the manager starts at boot. It does not start it now.
+# Skipped for a staged install (DESTDIR), without root, and where systemd is not running.
+set(unit "@PM_SYSTEMD_UNIT_DIR@/@UNIT_NAME@")
+set(name "@UNIT_NAME@")
+set(how "as root: systemctl daemon-reload && systemctl enable ${unit}")
+set(enable_as "${unit}")
+
+if(NOT "$ENV{DESTDIR}" STREQUAL "")
+    message(STATUS "Staged install: ${name} is not enabled")
+    return()
+endif()
+
+# The check sd_booted() makes.
+if(NOT IS_DIRECTORY "/run/systemd/system")
+    message(STATUS "systemd is not running here: ${name} is not enabled")
+    return()
+endif()
+
+execute_process(COMMAND id -u OUTPUT_VARIABLE uid OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT uid STREQUAL "0")
+    message(STATUS "Not installing as root: ${name} is not enabled. Enable it ${how}")
+    return()
+endif()
+
+# A unit in one of systemd's own directories is enabled by name; one elsewhere (a prefix such as
+# /opt/processmanager) by its full path, which links it into /etc/systemd/system.
+set(enable_as "${unit}")
+if("@PM_SYSTEMD_UNIT_DIR@" MATCHES "^(/etc|/usr/lib|/lib|/usr/local/lib)/systemd/system/?$")
+    set(enable_as "${name}")
+endif()
+execute_process(COMMAND systemctl daemon-reload RESULT_VARIABLE reloaded)
+execute_process(COMMAND systemctl enable "${enable_as}" RESULT_VARIABLE enabled ERROR_VARIABLE enable_error)
+if(NOT reloaded EQUAL 0 OR NOT enabled EQUAL 0)
+    message(WARNING "Could not enable ${name}: ${enable_error}Enable it ${how}")
+    return()
+endif()
+
+execute_process(COMMAND systemctl is-active --quiet ${name} RESULT_VARIABLE inactive)
+if(inactive EQUAL 0)
+    message(STATUS "Enabled ${name}. It is running the build from before: systemctl restart ${name}")
+else()
+    message(STATUS "Enabled ${name}: it starts at boot. Start it now with: systemctl start ${name}")
+endif()

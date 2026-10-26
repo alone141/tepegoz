@@ -1,0 +1,8 @@
+#!/bin/sh
+# Starts the process manager's monitor GUI, installed by cmake --install in @GUI_INSTALL_DIR@.
+# Its options follow; --host <machine> watches a manager on another machine, --help lists the rest.
+if ! python3 -c 'import PyQt6.QtWidgets, zmq' 2>/dev/null; then
+    echo "process-monitor needs Python 3 with PyQt6 and pyzmq (python3 -m pip install PyQt6 pyzmq)." >&2
+    exit 1
+fi
+exec python3 -B "@GUI_INSTALL_DIR@/process_monitor_gui.py" "$@"

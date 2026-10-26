@@ -1,0 +1,19 @@
+[Unit]
+Description=Process manager: starts and supervises the services of ProcessManagerConfig.yaml
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@INSTALLED_MANAGER@
+# The manager moves itself into a task_pm cgroup and gives each service a task_<name> cgroup next to it.
+Delegate=yes
+# SIGTERM goes to the manager alone, which stops its services itself: each within twice its ForceKillTimeoutMs.
+# Whatever is still running after TimeoutStopSec is killed.
+KillMode=mixed
+TimeoutStopSec=180
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
