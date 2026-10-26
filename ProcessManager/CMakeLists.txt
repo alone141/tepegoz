@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(ENABLE_TEST "Build the GoogleTest suites and the keepalive test service" ON)
+option(ENABLE_TEST "Build the GoogleTest suites, the keepalive test service and the TestServices programs" ON)
 
 # Built into the manager. Directories end with a slash. With -DCMAKE_INSTALL_PREFIX=/usr the config is read
 # from /etc/processmanager/ and the logs go under /var/log/processmanager/.
@@ -74,3 +74,7 @@ add_subdirectory(GpuMonitor)
 add_subdirectory(ProcessManager)
 add_subdirectory(Process)
 add_subdirectory(ProcessManagerApp)
+
+if(ENABLE_TEST)
+    add_subdirectory(TestServices)
+endif()

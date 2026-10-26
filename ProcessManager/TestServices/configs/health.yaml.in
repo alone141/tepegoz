@@ -1,0 +1,52 @@
+# health: heartbeats every 500 ms, Unhealthy after 4 missed, checked once the 2 s grace period is over.
+
+ProcessManager:
+  Mode: Auto
+  LogLevel: Info
+
+Services:
+  - ProcessName: hb_ok
+    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    Args: [--name, hb_ok, --period-ms, 500]
+    StdioMode: Pipe
+    CheckHealth: true
+    GracePeriodMs: 2000
+    HeartbeatPeriodMs: 500
+    MissedHeartbeatThreshold: 4
+
+  # Stops beating after 3 s but keeps running: Unhealthy, then restarted.
+  - ProcessName: hb_silent
+    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    Args: [--name, hb_silent, --period-ms, 500, --beats, 6]
+    StdioMode: Pipe
+    CheckHealth: true
+    GracePeriodMs: 2000
+    HeartbeatPeriodMs: 500
+    MissedHeartbeatThreshold: 4
+    RestartMode: OnFailure
+    MaxRestarts: 1
+    RestartDelayMs: 200
+
+  # The same with RestartMode Never: stays Unhealthy and running.
+  - ProcessName: hb_silent_never
+    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    Args: [--name, hb_silent_never, --period-ms, 500, --beats, 6]
+    StdioMode: Pipe
+    CheckHealth: true
+    GracePeriodMs: 2000
+    HeartbeatPeriodMs: 500
+    MissedHeartbeatThreshold: 4
+    RestartMode: Never
+
+  # First heartbeat 4 s after the start, 2 s after the grace period ends.
+  - ProcessName: hb_late
+    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    Args: [--name, hb_late, --period-ms, 500, --first-beat-ms, 4000]
+    StdioMode: Pipe
+    CheckHealth: true
+    GracePeriodMs: 2000
+    HeartbeatPeriodMs: 500
+    MissedHeartbeatThreshold: 4
+    RestartMode: OnFailure
+    MaxRestarts: 5
+    RestartDelayMs: 200

@@ -1,0 +1,95 @@
+# everything: one service of each kind, for watching the manager in the monitor GUI.
+# Run:   iltaren-ProcessManager --config everything.yaml  (the GUI shows each service's journal under systemd)
+
+ProcessManager:
+  Mode: Auto
+  LogLevel: Info
+
+Services:
+  - ProcessName: steady
+    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    Args: [--period-ms, 2000]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+
+  - ProcessName: heartbeat
+    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    Args: [--name, heartbeat, --period-ms, 1000]
+    StdioMode: Pipe
+    CheckHealth: true
+    GracePeriodMs: 3000
+    HeartbeatPeriodMs: 1000
+    MissedHeartbeatThreshold: 5
+
+  # Beats for 20 s, stays silent for 20 s, and so on: Unhealthy now and then, restarted each time.
+  - ProcessName: flapping
+    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    Args: [--name, flapping, --period-ms, 1000, --flap-ms, 20000]
+    StdioMode: Pipe
+    CheckHealth: true
+    GracePeriodMs: 3000
+    HeartbeatPeriodMs: 1000
+    MissedHeartbeatThreshold: 5
+    RestartMode: OnFailure
+    MaxRestarts: 100
+
+  # Exits 3 every 5 s: restarted with a growing delay, then left stopped.
+  - ProcessName: flaky
+    ExecutablePath: @PMT_BIN_DIR@/pmt_exit
+    Args: [--code, 3, --after-ms, 5000]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+    RestartMode: OnFailure
+    MaxRestarts: 3
+
+  - ProcessName: crasher
+    ExecutablePath: @PMT_BIN_DIR@/pmt_crash
+    Args: [--signal, SEGV, --after-ms, 10000]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+    RestartMode: Never
+
+  - ProcessName: stubborn
+    ExecutablePath: @PMT_BIN_DIR@/pmt_stubborn
+    Args: [--child]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+    ForceKillTimeoutMs: 3000
+
+  - ProcessName: forker
+    ExecutablePath: @PMT_BIN_DIR@/pmt_forker
+    Args: [--children, 2]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+
+  - ProcessName: chatty
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 2, --stderr-every, 5]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+
+  # Under systemd its output goes to a journal stream of its own.
+  - ProcessName: journal_writer
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 1]
+    StdioMode: Inherit
+    GracePeriodMs: 300
+
+  - ProcessName: env
+    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    Args: [--show, PMT_COLOR]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+    EnviromentVariables:
+      PMT_COLOR: blue
+
+  - ProcessName: hog
+    ExecutablePath: @PMT_BIN_DIR@/pmt_hog
+    Args: [--cpu-percent, 20, --memory-mb, 32]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+
+  - ProcessName: manual
+    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    StdioMode: Pipe
+    WorkMode: Manual

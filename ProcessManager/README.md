@@ -21,10 +21,12 @@ cmake --build build
 ctest --test-dir build
 cmake --install build
 ```
-`cmake --install` puts the manager in `bin/` as `iltaren-ProcessManager`, and `keepalive` next to it when
-the tests are built. The paths below are built into the manager. They follow `CMAKE_INSTALL_PREFIX`, so with
-`-DCMAKE_INSTALL_PREFIX=/usr` the config is `/etc/processmanager/ProcessManagerConfig.yaml` and the logs go to
-`/var/log/processmanager/ProcessManagerLog/`. Each can also be set on its own; directories end with a slash.
+`cmake --install` puts the manager in `bin/` as `iltaren-ProcessManager`. When the tests are built, it also
+installs `keepalive` and the `pmt_*` test programs next to it, and their scenario configs and driver in
+`share/processmanager/test-setup/` (see `TestServices/README.md`). The paths below are built into the manager. They
+follow `CMAKE_INSTALL_PREFIX`, so with `-DCMAKE_INSTALL_PREFIX=/usr` the config is
+`/etc/processmanager/ProcessManagerConfig.yaml` and the logs go to `/var/log/processmanager/ProcessManagerLog/`. Each can also be
+set on its own; directories end with a slash.
 
 | Cache variable | Default | Used for |
 |---|---|---|
@@ -67,6 +69,9 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   sets C++20, builds libzmq 4.3.5, cppzmq 4.10.0, cxxopts 3.3.1 and GoogleTest 1.18.0 from `third_party/`
   (libzmq statically, as before), and sets the config, log and share paths, the install directory and the
   version, which that build used to provide.
+- `TestServices/` holds test programs with planned behaviours (clean and failing exits, crashes, ignored
+  SIGTERM, heartbeats, children, output, environment, CPU and memory use), scenario configs that run them,
+  and `run_scenarios.py`, which runs the manager with each config and checks what it does.
 
 ### 0.1.0 
 - First release

@@ -1,0 +1,65 @@
+# restarts: what counts as a failure, the restart limit, the backoff, and the reset after a long run.
+
+ProcessManager:
+  Mode: Auto
+  LogLevel: Info
+
+Services:
+  # Exits 1 after 200 ms: restarted 3 times after 500, 1000 and 2000 ms, then left stopped.
+  - ProcessName: fail_backoff
+    ExecutablePath: @PMT_BIN_DIR@/pmt_exit
+    Args: [--code, 1, --after-ms, 200]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: OnFailure
+    MaxRestarts: 3
+    RestartDelayMs: 500
+    BackoffMultiplier: 2.0
+
+  # Exit code 0 is not a failure: never restarted.
+  - ProcessName: clean_exit
+    ExecutablePath: @PMT_BIN_DIR@/pmt_exit
+    Args: [--code, 0, --after-ms, 200]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: OnFailure
+
+  # Always restarts after exit code 0 too, up to MaxRestarts.
+  - ProcessName: always
+    ExecutablePath: @PMT_BIN_DIR@/pmt_exit
+    Args: [--code, 0, --after-ms, 300]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: Always
+    MaxRestarts: 2
+    RestartDelayMs: 200
+    BackoffMultiplier: 1.0
+
+  # SIGSEGV is a failure: restarted once.
+  - ProcessName: segv
+    ExecutablePath: @PMT_BIN_DIR@/pmt_crash
+    Args: [--signal, SEGV, --after-ms, 300]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: OnFailure
+    MaxRestarts: 1
+    RestartDelayMs: 200
+
+  # SIGTERM is not a failure: never restarted.
+  - ProcessName: term
+    ExecutablePath: @PMT_BIN_DIR@/pmt_crash
+    Args: [--signal, TERM, --after-ms, 300]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: OnFailure
+
+  # Each run outlasts RestartResetMs, so the count starts again and MaxRestarts 1 never stops it.
+  - ProcessName: long_runs
+    ExecutablePath: @PMT_BIN_DIR@/pmt_exit
+    Args: [--code, 1, --after-ms, 1500]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: OnFailure
+    MaxRestarts: 1
+    RestartDelayMs: 200
+    RestartResetMs: 1000

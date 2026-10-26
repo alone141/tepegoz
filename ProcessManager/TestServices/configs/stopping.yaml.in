@@ -1,0 +1,23 @@
+# stopping: a service that takes 2 s to stop within its 5 s limit, and one that ignores SIGTERM and gets SIGKILL.
+# Then:  iltaren-ProcessManager --kill slow | --kill stubborn
+
+ProcessManager:
+  Mode: Auto
+  # Debug shows each stop's steps, such as "Graceful shutdown failed" before the SIGKILL.
+  LogLevel: Debug
+
+Services:
+  - ProcessName: slow
+    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    Args: [--period-ms, 1000, --stop-delay-ms, 2000]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+    ForceKillTimeoutMs: 5000
+
+  # It and its child ignore SIGTERM; SIGKILL follows after 1.5 s.
+  - ProcessName: stubborn
+    ExecutablePath: @PMT_BIN_DIR@/pmt_stubborn
+    Args: [--child, --period-ms, 1000]
+    StdioMode: Pipe
+    GracePeriodMs: 300
+    ForceKillTimeoutMs: 1500

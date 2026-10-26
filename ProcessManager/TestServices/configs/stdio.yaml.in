@@ -1,0 +1,58 @@
+# stdio: where a service's output goes in each StdioMode.
+
+ProcessManager:
+  Mode: Auto
+  LogLevel: Info
+
+Services:
+  # Logged by the manager as "[piped] ...", stderr lines too.
+  - ProcessName: piped
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 10, --stderr-every, 4]
+    StdioMode: Pipe
+    GracePeriodMs: 200
+
+  # 2500-byte lines: a complete line is logged whole.
+  - ProcessName: long_lines
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 2, --line-bytes, 2500]
+    StdioMode: Pipe
+    GracePeriodMs: 200
+
+  # Output without newlines: logged in pieces once 1024 bytes of it gather.
+  - ProcessName: partial
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 5, --no-newline]
+    StdioMode: Pipe
+    GracePeriodMs: 200
+
+  # Started again from empty on every start.
+  - ProcessName: to_file
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 10]
+    StdioMode: File
+    StdioFilePath: /tmp/pmt_to_file.txt
+    StdioAppend: false
+    GracePeriodMs: 200
+
+  # Grows across starts.
+  - ProcessName: to_file_append
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 10]
+    StdioMode: File
+    StdioFilePath: /tmp/pmt_to_file_append.txt
+    StdioAppend: true
+    GracePeriodMs: 200
+
+  - ProcessName: discarded
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 10]
+    StdioMode: NullDevice
+    GracePeriodMs: 200
+
+  # Writes straight to the manager's own stdout and stderr; under systemd, to a journal stream of its own.
+  - ProcessName: inherited
+    ExecutablePath: @PMT_BIN_DIR@/pmt_chatty
+    Args: [--rate, 2]
+    StdioMode: Inherit
+    GracePeriodMs: 200

@@ -1,0 +1,35 @@
+# basic: start order through DependsOn, a Manual service, and the --start, --kill and --restart commands.
+# Run:   iltaren-ProcessManager --config basic.yaml
+# Then:  iltaren-ProcessManager --start manual | --kill second | --restart first
+
+ProcessManager:
+  Mode: Auto
+  LogLevel: Info
+
+Services:
+  - ProcessName: first
+    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    Args: [--period-ms, 2000]
+    StdioMode: Pipe
+    GracePeriodMs: 500
+
+  - ProcessName: second
+    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    Args: [--period-ms, 2000]
+    StdioMode: Pipe
+    GracePeriodMs: 500
+    DependsOn: [first]
+
+  - ProcessName: third
+    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    Args: [--period-ms, 2000]
+    StdioMode: Pipe
+    GracePeriodMs: 500
+    DependsOn: [second]
+
+  # Waits for --start manual.
+  - ProcessName: manual
+    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    Args: [--period-ms, 2000]
+    StdioMode: Pipe
+    WorkMode: Manual

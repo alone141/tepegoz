@@ -1,0 +1,68 @@
+# environment: arguments, environment variables, the display and the working directory a service starts with.
+# Each service prints them once (see the manager's log) and waits.
+# 'validate' reports one error here on purpose: cwd_missing's Cwd does not exist.
+
+ProcessManager:
+  Mode: Auto
+  LogLevel: Info
+
+Services:
+  # A list keeps "two words" as one argument.
+  - ProcessName: args_list
+    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    Args: [--show, HOME, two words, plain]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: Never
+
+  # A text is split at spaces.
+  - ProcessName: args_text
+    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    Args: --show HOME two words
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: Never
+
+  - ProcessName: env_vars
+    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    Args: [--show, PMT_COLOR, --show, PMT_EMPTY]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: Never
+    EnviromentVariables:
+      PMT_COLOR: blue
+      PMT_EMPTY: ""
+
+  # Starts from an empty environment: only PMT_ONLY is set.
+  - ProcessName: env_cleared
+    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    Args: [--show, PMT_ONLY, --all-env]
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: Never
+    InheritParentEnviroment: false
+    EnviromentVariables:
+      PMT_ONLY: this
+
+  - ProcessName: display
+    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: Never
+    UseDisplay: true
+    Display: ":7"
+    XAuthority: /tmp/pmt.Xauthority
+
+  - ProcessName: cwd_tmp
+    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    Cwd: /tmp
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: Never
+
+  - ProcessName: cwd_missing
+    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    Cwd: /nonexistent/pmt
+    StdioMode: Pipe
+    GracePeriodMs: 100
+    RestartMode: Never
