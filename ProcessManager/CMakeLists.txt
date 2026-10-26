@@ -15,32 +15,57 @@ set(PM_LOG_DIR "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/log/processmanager/" CACHE S
 set(PM_SHARE_DIR "${CMAKE_INSTALL_FULL_DATADIR}/processmanager/" CACHE STRING "Directory of the fallback ProcessManagerConfig.yaml")
 set(PM_BIN_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}" CACHE STRING "Install directory of the programs")
 
-# Dependencies: libzmq with cppzmq (found here, since four directories use it), cxxopts (found in
-# ProcessManagerApp/source) and GoogleTest for the tests are installed packages; fkYAML 0.4.4 is vendored in
-# third_party (see third_party/README.md). Nothing is downloaded: a missing package stops the configure step
-# and names what to install.
-find_package(cppzmq 4.7 CONFIG QUIET)
-if(NOT cppzmq_FOUND)
-    message(FATAL_ERROR "cppzmq 4.7 or newer, with libzmq, was not found. Install cppzmq-dev and libzmq3-dev "
-        "(Debian, Ubuntu) or cppzmq-devel and zeromq-devel (Fedora, RHEL); cppzmq 4.10 with libzmq 4.3 is tested. "
-        "Add their prefix to CMAKE_PREFIX_PATH if it is not a system one.")
+# Dependencies: libzmq 4.3.5, cppzmq 4.10.0, cxxopts 3.3.1, fkYAML 0.4.4 and, for the tests, GoogleTest 1.18.0 are
+# vendored in third_party and built here (see third_party/README.md): the build needs no installed package and
+# downloads nothing. The vendored directories other than fkYAML are EXCLUDE_FROM_ALL: only what our targets link is
+# built, and nothing of theirs is installed.
+
+# libzmq builds only its static library, without tests, tools, docs or optional system libraries, so the programs
+# need no libzmq at run time. CMP0077 lets its options take these variables. CMake 4 refuses its
+# cmake_minimum_required(VERSION 2.8.12) unless CMAKE_POLICY_VERSION_MINIMUM raises it; CMake 3.27 to 3.31 only warn
+# that it is deprecated.
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+set(BUILD_SHARED OFF)
+set(BUILD_STATIC ON)
+set(BUILD_TESTS OFF)
+set(WITH_PERF_TOOL OFF)
+set(WITH_DOCS OFF)
+set(WITH_LIBBSD OFF)
+set(ENABLE_DRAFTS OFF)
+set(ENABLE_CPACK OFF)
+set(build_type_before_libzmq "${CMAKE_BUILD_TYPE}")
+add_subdirectory(third_party/libzmq EXCLUDE_FROM_ALL)
+# libzmq makes Release the default build type of the whole build; the project keeps CMake's, which is none.
+if(NOT build_type_before_libzmq AND NOT CMAKE_CONFIGURATION_TYPES)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY VALUE "")
 endif()
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+
+# Its cppzmq-static target is the two headers with libzmq-static. Its tests would download Catch2.
+set(CPPZMQ_BUILD_TESTS OFF)
+add_subdirectory(third_party/cppzmq EXCLUDE_FROM_ALL)
+
+# As a subproject, cxxopts builds no tests or examples and installs nothing; the manager links cxxopts::cxxopts.
+add_subdirectory(third_party/cxxopts EXCLUDE_FROM_ALL)
 
 if(ENABLE_TEST)
-    find_package(GTest QUIET)
-    if(NOT GTest_FOUND)
-        message(FATAL_ERROR "GoogleTest was not found. Install libgtest-dev (Debian, Ubuntu) or gtest-devel "
-            "(Fedora, RHEL), GoogleTest 1.10 or newer, or configure with -DENABLE_TEST=OFF to build without the tests.")
-    endif()
+    # Only gtest and gtest_main, which the suites link as GTest::gtest_main.
+    set(BUILD_GMOCK OFF)
+    set(INSTALL_GTEST OFF)
+    add_subdirectory(third_party/googletest EXCLUDE_FROM_ALL)
     enable_testing()
 endif()
 
 set(FK_YAML_USE_SINGLE_HEADER ON)
 add_subdirectory(third_party/fkYAML)
-# fkYAML's headers count as system headers, so its warnings stay out of ours. Set as a property because
+
+# The vendored headers count as system headers, so their warnings stay out of ours. Set as a property because
 # add_subdirectory(... SYSTEM) needs CMake 3.25, and older versions take SYSTEM for a build directory name.
-get_target_property(fkyaml_include_dirs fkYAML INTERFACE_INCLUDE_DIRECTORIES)
-set_target_properties(fkYAML PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${fkyaml_include_dirs}")
+foreach(vendored IN ITEMS libzmq-static cppzmq-static cxxopts fkYAML)
+    get_target_property(vendored_include_dirs ${vendored} INTERFACE_INCLUDE_DIRECTORIES)
+    set_target_properties(${vendored} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${vendored_include_dirs}")
+endforeach()
 
 add_subdirectory(ConfigSection)
 add_subdirectory(Logger)

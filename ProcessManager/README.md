@@ -3,18 +3,16 @@
 ### Build Requirements
 
 #### Linux Dev Env.
-gcc11, cmake 3.30. At least CMake 3.20 and a C++20 compiler (GCC 10 or newer).
+gcc11, cmake 3.30. At least CMake 3.20, a C++20 compiler (GCC 10 or newer) and a C compiler, for libzmq.
 
 #### Dependencies
-Installed packages, found with `find_package`. Nothing is downloaded, so an airgapped machine installs them
-offline first; a missing one stops the configure step and names the package.
-- libzmq 4.3 with cppzmq 4.7 or newer: `libzmq3-dev` and `cppzmq-dev` (Debian, Ubuntu). libzmq is linked as a
-  shared library, so the machine that runs the manager needs `libzmq5`.
-- cxxopts 3: `libcxxopts-dev`.
-- GoogleTest 1.10 or newer: `libgtest-dev`, only for the tests. `-DENABLE_TEST=OFF` builds without them.
-
-Vendored in `third_party/` (see its README), so they need nothing installed:
+All vendored in `third_party/` (see its README) and built with the project, so an airgapped machine needs no
+package installed for them and nothing is downloaded:
+- libzmq 4.3.5 (MPL-2.0), linked statically: the machine that runs the manager needs no ZeroMQ library.
+- cppzmq 4.10.0 (MIT, header-only).
+- cxxopts 3.3.1 (MIT, header-only).
 - fkYAML 0.4.4 (MIT, header-only).
+- GoogleTest 1.18.0 (BSD-3-Clause), only for the tests. `-DENABLE_TEST=OFF` builds without them.
 
 #### Build
 ```text
@@ -66,9 +64,9 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   connected dealers, the events, and a toolbar pill that turns red when a service that sends heartbeats is
   not connected or the status stops. `--network` points the GUI elsewhere.
 - The tree is a project of its own instead of a directory that another build adds. Its root `CMakeLists.txt`
-  sets C++20, finds libzmq with cppzmq, cxxopts and GoogleTest as installed packages, and sets the config, log
-  and share paths, the install directory and the version, which that build used to provide. libzmq is now
-  linked as a shared library instead of the static `libzmq-static` target.
+  sets C++20, builds libzmq 4.3.5, cppzmq 4.10.0, cxxopts 3.3.1 and GoogleTest 1.18.0 from `third_party/`
+  (libzmq statically, as before), and sets the config, log and share paths, the install directory and the
+  version, which that build used to provide.
 
 ### 0.1.0 
 - First release

@@ -1,5 +1,5 @@
 add_executable(keepalive "keepalive.cpp")
-target_link_libraries(keepalive PUBLIC cppzmq)
+target_link_libraries(keepalive PUBLIC cppzmq-static)
 
 install(
 	TARGETS keepalive 

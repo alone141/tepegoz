@@ -1,9 +1,3 @@
-find_package(cxxopts 3.0 CONFIG QUIET)
-if(NOT cxxopts_FOUND)
-	message(FATAL_ERROR "cxxopts 3.0 or newer was not found. Install libcxxopts-dev (Debian, Ubuntu) or cxxopts-devel "
-		"(Fedora), cxxopts 3. Add its prefix to CMAKE_PREFIX_PATH if it is not a system one.")
-endif()
-
 add_executable(ProcessManagerApp)
 
 # The paths are set in the root CMakeLists.txt; the version is the project's.

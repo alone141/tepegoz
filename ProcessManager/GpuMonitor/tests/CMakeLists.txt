@@ -1,5 +1,3 @@
-find_package(GTest REQUIRED)
-
 include(GoogleTest)
 add_executable(gpu_monitor_tests GpuMonitorTest.cpp)
 target_link_libraries(gpu_monitor_tests PRIVATE gpu_monitor GTest::gtest_main)
