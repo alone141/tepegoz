@@ -1224,7 +1224,7 @@ class ServiceDetailPage(QWidget):
         journal_layout.setContentsMargins(0, 0, 0, 0)
         journal_layout.setSpacing(4)
         lbl_journal = QLabel(
-            f"journalctl -u {SERVICE_UNIT} · new entries are appended; "
+            f"journalctl -u {SERVICE_UNIT} on the manager's machine · new entries are appended; "
             "the view follows the newest line until you scroll up"
         )
         lbl_journal.setStyleSheet(f"color: {TEXT_DIM};")

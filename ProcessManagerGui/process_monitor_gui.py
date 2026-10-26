@@ -97,14 +97,9 @@ from process_views import (  # noqa: F401  re-exported
     service_active_text,
     uptime_text,
 )
+from remote_journal import JOURNAL_ENDPOINT, JOURNAL_PORT, JournalReader, endpoint_on
 from systemd_logs import (
-    JOURNAL_LINES,
     REFRESH_MS,
-    SERVICE_UNIT,
-    fetch_journal_cgroup,
-    fetch_journal_pid,
-    fetch_snapshot,
-    find_task_cgroup,
     snapshot_cgroup_members,
     task_cgroup_name,
 )
@@ -124,8 +119,9 @@ _color_for_pid = color_for_pid  # former name
 COMMAND_SEND_TIMEOUT_SEC = 3.0
 # A sent command still waiting for the manager's reply after this is forgotten.
 REPLY_TIMEOUT_SEC = 10.0
-# One worker round makes at most one journalctl call (5 s), so waiting this long
-# never has to fall back to QThread.terminate() in practice.
+# A worker round waits for the journal server in 100 ms steps and stops waiting
+# when asked to stop (a local journalctl call takes at most 5 s), so waiting this
+# long never has to fall back to QThread.terminate() in practice.
 WORKER_STOP_TIMEOUT_MS = 8000
 # Tooltip of the GPU indicator for each state without GPU data.
 GPU_STATE_TEXT = {
@@ -455,117 +451,132 @@ class NetworkWorker(QObject):
 # Systemd / cgroup workers
 # ──────────────────────────────────────────────────────────────────────────────
 
-class SystemdLogWorker(QObject):
-    """Poll systemctl status + journalctl off the UI thread."""
+def journal_pairs(lines: list) -> list:
+    """(pid, text) pairs for the journal views."""
+    return [(ln.pid if ln.pid is not None else 0, ln.text) for ln in lines]
 
-    snapshot_ready = pyqtSignal(str, list, str)  # status, [(pid, text), ...], error
+
+class JournalWorkerBase(QObject):
+    """A worker that reads journals through the manager's journal server (remote_journal).
+
+    The endpoint can change while it runs; the reader is made again in the
+    worker's thread, which owns its ZMQ socket.
+    """
+
     finished = pyqtSignal()
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, endpoint: str, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._running = False
+        self._endpoint = endpoint
+        self._changed = False
 
-    @pyqtSlot()
-    def start(self):
-        self._running = True
-        while self._running:
-            try:
-                snap = fetch_snapshot(SERVICE_UNIT, JOURNAL_LINES)
-                err = snap.error or ""
-                pairs = [
-                    (ln.pid if ln.pid is not None else 0, ln.text)
-                    for ln in snap.journal_lines
-                ]
-                if not pairs and snap.journal_text:
-                    pairs = [(0, snap.journal_text)]
-                self.snapshot_ready.emit(snap.status_text, pairs, err)
-            except Exception as e:
-                self.snapshot_ready.emit("", [], str(e))
-            slept = 0
-            interval_ms = REFRESH_MS
-            while self._running and slept < interval_ms:
-                QThread.msleep(100)
-                slept += 100
-        self.finished.emit()
+    def set_endpoint(self, endpoint: str) -> None:
+        """Thread-safe: single attribute writes, read by the loop each round."""
+        self._endpoint = endpoint
+        self._changed = True
 
     def stop(self):
         self._running = False
 
+    def _reader(self, kind: str, value: str = "") -> JournalReader:
+        # A wait for the journal server ends as soon as the worker is asked to stop.
+        return JournalReader(self._endpoint, kind, value, cancelled=lambda: not self._running)
 
-class CgroupLogWorker(QObject):
-    """Poll journalctl for a task_<name> cgroup or a single PID (log windows)."""
+    def _sleep(self) -> None:
+        slept = 0
+        while self._running and slept < REFRESH_MS and not self._changed:
+            QThread.msleep(100)
+            slept += 100
 
-    lines_ready = pyqtSignal(list, str, str)  # pairs, cgroup_path_or_empty, error
-    finished = pyqtSignal()
+
+class SystemdLogWorker(JournalWorkerBase):
+    """Poll the manager unit's systemctl status and journal off the UI thread."""
+
+    snapshot_ready = pyqtSignal(str, list, str)  # status, [(pid, text), ...], error
+
+    def __init__(self, endpoint: str = JOURNAL_ENDPOINT, parent: Optional[QObject] = None):
+        super().__init__(endpoint, parent)
+
+    @pyqtSlot()
+    def start(self):
+        self._running = True
+        reader: Optional[JournalReader] = None
+        while self._running:
+            self._changed = False
+            if reader is None or reader.endpoint != self._endpoint:
+                if reader is not None:
+                    reader.close()
+                reader = self._reader("manager")
+            try:
+                lines, _where, journal_err = reader.read()
+                status, status_err = reader.unit_status()
+                pairs = journal_pairs(lines)
+                if not pairs and journal_err:
+                    pairs = [(0, journal_err)]
+                errors = [e for e in dict.fromkeys((status_err, journal_err)) if e]
+                self.snapshot_ready.emit(status or status_err or "", pairs, "; ".join(errors))
+            except Exception as e:
+                self.snapshot_ready.emit("", [], str(e))
+            self._sleep()
+        if reader is not None:
+            reader.close()
+        self.finished.emit()
+
+
+class CgroupLogWorker(JournalWorkerBase):
+    """Poll the journal of a service (task_<name> cgroup) or of a single PID (log windows)."""
+
+    lines_ready = pyqtSignal(list, str, str)  # pairs, where_or_empty, error
 
     def __init__(
         self,
         process_name: str = "",
         pid: Optional[int] = None,
+        endpoint: str = JOURNAL_ENDPOINT,
         parent: Optional[QObject] = None,
     ):
-        super().__init__(parent)
+        super().__init__(endpoint, parent)
         self.process_name = process_name
         self.pid = pid
-        self._running = False
 
     @pyqtSlot()
     def start(self):
         self._running = True
+        reader: Optional[JournalReader] = None
         while self._running:
-            try:
+            self._changed = False
+            if reader is None or reader.endpoint != self._endpoint:
+                if reader is not None:
+                    reader.close()
                 if self.pid:
-                    lines, err = fetch_journal_pid(self.pid, JOURNAL_LINES)
-                    pairs = [
-                        (ln.pid if ln.pid is not None else 0, ln.text) for ln in lines
-                    ]
-                    self.lines_ready.emit(
-                        pairs, f"_PID={self.pid}", err or ""
-                    )
+                    reader = self._reader("pid", str(int(self.pid)))
                 else:
-                    cg = find_task_cgroup(self.process_name)
-                    if not cg:
-                        self.lines_ready.emit(
-                            [],
-                            "",
-                            f"cgroup {task_cgroup_name(self.process_name)} "
-                            f"not found under /sys/fs/cgroup",
-                        )
-                    else:
-                        lines, err = fetch_journal_cgroup(cg, JOURNAL_LINES)
-                        pairs = [
-                            (ln.pid if ln.pid is not None else 0, ln.text)
-                            for ln in lines
-                        ]
-                        self.lines_ready.emit(pairs, cg, err or "")
+                    reader = self._reader("service", self.process_name)
+            try:
+                lines, where, err = reader.read()
+                self.lines_ready.emit(journal_pairs(lines), where, err or "")
             except Exception as e:
                 self.lines_ready.emit([], "", str(e))
-            slept = 0
-            while self._running and slept < REFRESH_MS:
-                QThread.msleep(100)
-                slept += 100
+            self._sleep()
+        if reader is not None:
+            reader.close()
         self.finished.emit()
 
-    def stop(self):
-        self._running = False
 
-
-class DetailJournalWorker(QObject):
-    """Poll journalctl for the cgroup of whichever process is selected.
+class DetailJournalWorker(JournalWorkerBase):
+    """Poll the journal of whichever process is selected.
 
     The target follows the sidebar selection; changing it wakes the loop,
     so the new journal appears without waiting out the refresh interval.
     """
 
-    # process, pairs, cgroup_path_or_empty, error
+    # process, pairs, where_or_empty, error
     lines_ready = pyqtSignal(str, list, str, str)
-    finished = pyqtSignal()
 
-    def __init__(self, parent: Optional[QObject] = None):
-        super().__init__(parent)
-        self._running = False
+    def __init__(self, endpoint: str = JOURNAL_ENDPOINT, parent: Optional[QObject] = None):
+        super().__init__(endpoint, parent)
         self._name = ""
-        self._changed = False
 
     def set_process(self, name: str) -> None:
         """Thread-safe: single attribute writes, read by the loop each round."""
@@ -575,35 +586,25 @@ class DetailJournalWorker(QObject):
     @pyqtSlot()
     def start(self):
         self._running = True
+        reader: Optional[JournalReader] = None
         while self._running:
             self._changed = False
             name = self._name
+            if reader is not None and (reader.value != name or reader.endpoint != self._endpoint):
+                reader.close()
+                reader = None
             if name:
+                if reader is None:
+                    reader = self._reader("service", name)
                 try:
-                    cg = find_task_cgroup(name)
-                    if not cg:
-                        self.lines_ready.emit(
-                            name,
-                            [],
-                            "",
-                            f"cgroup {task_cgroup_name(name)} not found under /sys/fs/cgroup",
-                        )
-                    else:
-                        lines, err = fetch_journal_cgroup(cg, JOURNAL_LINES)
-                        pairs = [
-                            (ln.pid if ln.pid is not None else 0, ln.text) for ln in lines
-                        ]
-                        self.lines_ready.emit(name, pairs, cg, err or "")
+                    lines, where, err = reader.read()
+                    self.lines_ready.emit(name, journal_pairs(lines), where, err or "")
                 except Exception as e:
                     self.lines_ready.emit(name, [], "", str(e))
-            slept = 0
-            while self._running and slept < REFRESH_MS and not self._changed:
-                QThread.msleep(100)
-                slept += 100
+            self._sleep()
+        if reader is not None:
+            reader.close()
         self.finished.emit()
-
-    def stop(self):
-        self._running = False
 
 
 class CgroupMembersWorker(QObject):
@@ -648,6 +649,7 @@ class ProcessLogWindow(QMainWindow):
         parent: Optional[QWidget] = None,
         pid: Optional[int] = None,
         comm: str = "",
+        journal_endpoint: str = JOURNAL_ENDPOINT,
     ):
         super().__init__(parent)
         self.process_name = process_name
@@ -683,20 +685,25 @@ class ProcessLogWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self._thread = QThread(self)
-        self._worker = CgroupLogWorker(process_name=process_name, pid=pid)
+        self._worker = CgroupLogWorker(process_name=process_name, pid=pid, endpoint=journal_endpoint)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.start)
         self._worker.lines_ready.connect(self._on_lines)
         self._thread.start()
 
+    def set_journal_endpoint(self, endpoint: str) -> None:
+        worker = getattr(self, "_worker", None)
+        if worker is not None:
+            worker.set_endpoint(endpoint)
+
     @pyqtSlot(list, str, str)
-    def _on_lines(self, pairs: list, cgroup_path: str, error: str):
-        cg = task_cgroup_name(self.process_name)
-        if cgroup_path:
-            self.lbl_meta.setText(f"{cg}  →  {cgroup_path}")
+    def _on_lines(self, pairs: list, where: str, error: str):
+        target = f"_PID={self.pid}" if self.pid else task_cgroup_name(self.process_name)
+        if where:
+            self.lbl_meta.setText(f"{target}  →  {where}")
             self.lbl_meta.setStyleSheet(mono_style(TEXT_DIM))
         else:
-            self.lbl_meta.setText(error or f"{cg} not found")
+            self.lbl_meta.setText(error or f"{target} not found")
             self.lbl_meta.setStyleSheet(mono_style("#f44336"))
         self._journal.show([(0, error)] if error and not pairs else pairs)
 
@@ -860,11 +867,13 @@ class ProcessMonitorWindow(QMainWindow):
         dealer_endpoint: str,
         network_endpoint: str = NETWORK_ENDPOINT,
         parent: Optional[QWidget] = None,
+        journal_endpoint: str = JOURNAL_ENDPOINT,
     ):
         super().__init__(parent)
         self.sub_endpoint    = sub_endpoint
         self.dealer_endpoint = dealer_endpoint
         self.network_endpoint = network_endpoint
+        self.journal_endpoint = journal_endpoint
 
         self.setWindowTitle("Process Manager – Health Monitor")
         fit_to_screen(self, QSize(1180, 760), minimum=QSize(900, 600))
@@ -968,6 +977,16 @@ class ProcessMonitorWindow(QMainWindow):
         self.edit_network.setClearButtonEnabled(True)
         self.edit_network.returnPressed.connect(self._reconnect)
         strip.addWidget(self.edit_network)
+        strip.addSpacing(8)
+        strip.addWidget(QLabel("JOURNAL"))
+        self.edit_journal = QLineEdit(self.journal_endpoint)
+        self.edit_journal.setPlaceholderText("tcp://host:port")
+        self.edit_journal.setToolTip(
+            "ZMQ endpoint of the manager's journal server: the logs, read on the manager's machine"
+        )
+        self.edit_journal.setClearButtonEnabled(True)
+        self.edit_journal.returnPressed.connect(self._reconnect)
+        strip.addWidget(self.edit_journal)
         self.btn_reconnect = QPushButton("Reconnect")
         self.btn_reconnect.setStyleSheet(RECONNECT_STYLE)
         self.btn_reconnect.setToolTip("Apply new endpoints and reconnect")
@@ -1055,7 +1074,7 @@ class ProcessMonitorWindow(QMainWindow):
     def _show_endpoints(self) -> None:
         self.lbl_endpoints.setText(
             f"SUB {self.sub_endpoint}   ·   DEALER {self.dealer_endpoint}"
-            f"   ·   NET {self.network_endpoint}"
+            f"   ·   NET {self.network_endpoint}   ·   JOURNAL {self.journal_endpoint}"
         )
 
     def _show_status(self, message: str) -> None:
@@ -1175,7 +1194,7 @@ class ProcessMonitorWindow(QMainWindow):
 
     def _start_systemd_worker(self):
         self.systemd_thread = QThread()
-        self.systemd_worker = SystemdLogWorker()
+        self.systemd_worker = SystemdLogWorker(self.journal_endpoint)
         self.systemd_worker.moveToThread(self.systemd_thread)
         self.systemd_thread.started.connect(self.systemd_worker.start)
         self.systemd_worker.snapshot_ready.connect(self._on_systemd_snapshot)
@@ -1183,7 +1202,7 @@ class ProcessMonitorWindow(QMainWindow):
 
     def _start_detail_journal_worker(self):
         self.detail_journal_thread = QThread()
-        self.detail_journal_worker = DetailJournalWorker()
+        self.detail_journal_worker = DetailJournalWorker(self.journal_endpoint)
         self.detail_journal_worker.moveToThread(self.detail_journal_thread)
         self.detail_journal_thread.started.connect(self.detail_journal_worker.start)
         self.detail_journal_worker.lines_ready.connect(self._on_detail_journal)
@@ -1464,7 +1483,9 @@ class ProcessMonitorWindow(QMainWindow):
                 return
             except RuntimeError:
                 self._log_windows.pop(key, None)
-        win = ProcessLogWindow(process_name=process_name, pid=pid, comm=comm)
+        win = ProcessLogWindow(
+            process_name=process_name, pid=pid, comm=comm, journal_endpoint=self.journal_endpoint
+        )
         win.destroyed.connect(lambda *_n, k=key: self._log_windows.pop(k, None))
         self._log_windows[key] = win
         win.show()
@@ -1492,6 +1513,18 @@ class ProcessMonitorWindow(QMainWindow):
         stop_workers([self._detach_zmq_worker(), self._detach_network_worker()], 4000)
         self._start_zmq_worker()
         self._start_network_worker()
+        # The journal workers keep running and switch endpoints on their next round.
+        self.journal_endpoint = self.edit_journal.text().strip() or self.journal_endpoint
+        self.edit_journal.setText(self.journal_endpoint)
+        self._show_endpoints()
+        for worker in (getattr(self, "systemd_worker", None), getattr(self, "detail_journal_worker", None)):
+            if worker is not None:
+                worker.set_endpoint(self.journal_endpoint)
+        for window in list(self._log_windows.values()):
+            try:
+                window.set_journal_endpoint(self.journal_endpoint)
+            except RuntimeError:
+                pass
         self.btn_reconnect.setEnabled(True)
         self._show_status(
             f"Connecting to SUB={self.sub_endpoint}  "
@@ -1563,26 +1596,38 @@ def main():
         description="Process Manager Health Monitor (PyQt6 + ZMQ)"
     )
     parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="machine the manager runs on: the default host of every endpoint below (default: 127.0.0.1)",
+    )
+    parser.add_argument(
         "--sub",
-        default="tcp://127.0.0.1:6667",
-        help="ZMQ SUB endpoint (default: tcp://127.0.0.1:6667)",
+        help="ZMQ SUB endpoint (default: tcp://HOST:6667)",
     )
     parser.add_argument(
         "--dealer",
-        default="tcp://127.0.0.1:5557",
-        help="ZMQ DEALER endpoint (default: tcp://127.0.0.1:5557)",
+        help="ZMQ DEALER endpoint (default: tcp://HOST:5557)",
     )
     parser.add_argument(
         "--network",
-        default=NETWORK_ENDPOINT,
-        help=f"ZMQ SUB endpoint of the network manager's status (default: {NETWORK_ENDPOINT})",
+        help="ZMQ SUB endpoint of the network manager's status (default: tcp://HOST:6669)",
+    )
+    parser.add_argument(
+        "--journal",
+        help=f"ZMQ endpoint of the manager's journal server (default: tcp://HOST:{JOURNAL_PORT})",
     )
     args = parser.parse_args()
+    network_port = int(NETWORK_ENDPOINT.rsplit(":", 1)[1])
 
     app = QApplication(sys.argv)
     apply_dark_theme(app)
 
-    win = ProcessMonitorWindow(args.sub, args.dealer, args.network)
+    win = ProcessMonitorWindow(
+        args.sub or endpoint_on(args.host, 6667),
+        args.dealer or endpoint_on(args.host, 5557),
+        args.network or endpoint_on(args.host, network_port),
+        journal_endpoint=args.journal or endpoint_on(args.host, JOURNAL_PORT),
+    )
     win.show()
     sys.exit(app.exec())
 

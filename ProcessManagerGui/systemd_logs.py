@@ -1,4 +1,8 @@
-"""Local systemd status + journal fetch for the Service tab. No Qt."""
+"""Local systemd status + journal fetch for the Service tab. No Qt.
+
+remote_journal reads the same journals through the manager's journal server, and falls back to these functions
+for a manager on this machine that has no journal server.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ class JournalLine:
     pid: Optional[int]
     text: str
     raw_message: str
+    cursor: str = ""  # journald's __CURSOR: where to go on from after this line
 
 
 @dataclass
@@ -119,7 +124,8 @@ def parse_journal_json(text: str) -> List[JournalLine]:
                 pid = None
         message = _decode_message(entry.get("MESSAGE"))
         display = _format_short_iso(entry, pid, message)
-        lines.append(JournalLine(pid=pid, text=display, raw_message=message))
+        cursor = str(entry.get("__CURSOR") or "")
+        lines.append(JournalLine(pid=pid, text=display, raw_message=message, cursor=cursor))
     return lines
 
 

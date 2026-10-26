@@ -52,5 +52,7 @@ namespace process_manager
 		inline const char* HEALTH_PUBLISH_PORT_SIMPLE = "tcp://*:6668";
 		inline const char* HEALTH_LISTEN_PORT_DETAILED = "tcp://localhost:6667";
 		inline const char* HEALTH_LISTEN_PORT_SIMPLE = "tcp://localhost:6667";
+		// Journal reads for a monitor GUI on another machine (JournalServer).
+		inline const char* JOURNAL_SERVER_PORT = "tcp://*:6670";
 	}
 }

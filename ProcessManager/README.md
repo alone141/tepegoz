@@ -69,6 +69,13 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   sets C++20, builds libzmq 4.3.5, cppzmq 4.10.0, cxxopts 3.3.1 and GoogleTest 1.18.0 from `third_party/`
   (libzmq statically, as before), and sets the config, log and share paths, the install directory and the
   version, which that build used to provide.
+- The manager serves its journal on `tcp://*:6670` (`JournalServer/`), so the monitor GUI shows the logs
+  when it runs on another machine. The GUI asks for the manager's, a service's or a process's journal, and
+  the manager runs journalctl (or systemctl status) on its own machine and sends back what it prints. After
+  the first read, the GUI asks only for the lines after the last one it has, so no line is lost between
+  refreshes. `--host H` points every GUI endpoint at the manager's machine, and `--journal` points the
+  journal elsewhere. A manager from before this has no journal server; on the GUI's own machine, the GUI
+  then runs journalctl itself, as before. The cgroup PIDs tab still reads the GUI's own machine.
 - `TestServices/` holds test programs with planned behaviours (clean and failing exits, crashes, ignored
   SIGTERM, heartbeats, children, output, environment, CPU and memory use), scenario configs that run them,
   and `run_scenarios.py`, which runs the manager with each config and checks what it does.

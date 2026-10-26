@@ -20,6 +20,7 @@
 #include <ProcessGroupBuilder.h>
 #include "ConfigSection.hpp"
 #include "GpuMonitor.hpp"
+#include "JournalServer.hpp"
 #include "Logger.hpp"
 using namespace process_manager;
 
@@ -32,6 +33,15 @@ namespace
 	std::string FixedString(const char* text, size_t capacity)
 	{
 		return std::string(text, ::strnlen(text, capacity));
+	}
+
+	// The manager's unit, and the cgroup that holds task_pm and every task_<name>, as journald records them.
+	journal_server::ManagerIdentity JournalIdentity()
+	{
+		const std::filesystem::path parent = ProcessGroupBuilder::GetInstance().GetParentGroupPath();
+		const std::filesystem::path relative = parent.lexically_relative("/sys/fs/cgroup");
+		const bool inside = !relative.empty() && relative != "." && *relative.begin() != "..";
+		return journal_server::IdentityFromCgroup(inside ? "/" + relative.generic_string() : "/", ::getpid());
 	}
 
 	// A process on a GPU, with what tells which service it belongs to.
@@ -219,6 +229,19 @@ void process_manager::ProcessManager::Run()
 	// Sampled on a thread of its own: a driver call that hangs must not hold up the supervision.
 	gpu_monitor::GpuMonitor gpuMonitor{ gpu_monitor::LoadNvml, gpu_monitor::default_period, gpu_monitor::default_retry_period };
 	GpuUsageReporter gpuUsage;
+	// Reads the journal for a monitor GUI on another machine, which cannot run journalctl here. Without it the
+	// manager still supervises; only such a GUI loses its logs.
+	journal_server::JournalServer journalServer{ comm::JOURNAL_SERVER_PORT, JournalIdentity(),
+		std::string(journal_server::default_journalctl), std::string(journal_server::default_systemctl) };
+	std::string journalError;
+	if (journalServer.Start(journalError) == journal_server::StartCode::Ok)
+	{
+		logger::Info("Journal reads will be served from %s", comm::JOURNAL_SERVER_PORT);
+	}
+	else
+	{
+		logger::Error("Journal server could not bind %s: %s; a GUI on another machine will show no logs", comm::JOURNAL_SERVER_PORT, journalError.c_str());
+	}
 	while (enabled)
 	{
 		StartSequentialAsync();

@@ -13,6 +13,9 @@ PUB  (bind, --network) – the network manager's status and events (network_stat
       BPM is connected; running processes connect and send heartbeats, unhealthy
       ones go quiet, stopped ones leave; the GUI joins with its first command.
       --missing NAME keeps a heartbeating process off the network manager.
+ROUTER (bind, --journal) – the manager's journal server (remote_journal): the
+      manager and every running process write journal lines now and then, and
+      the GUI reads them as from a manager on another machine.
 """
 
 from __future__ import annotations
@@ -156,12 +159,83 @@ class MockNetwork:
         self.sock.send_multipart([topic, json.dumps(payload).encode()])
 
 
+class MockJournal:
+    """The manager's journal server: answers version, journal and unit-status like JournalServer."""
+
+    MANAGER_IDENT = "iltaren-ProcessManager"
+    KEEP = 5000
+
+    def __init__(self, sock: zmq.Socket, manager_pid: int):
+        self.sock = sock
+        self.manager_pid = manager_pid
+        self.seq = 0
+        self.entries: List[dict] = []  # {"seq", "ident", "pid", "record"}, oldest first
+
+    def write(self, ident: str, pid: int, message: str) -> None:
+        self.seq += 1
+        record = {
+            "__CURSOR": f"s=mock;i={self.seq:x}",
+            "__REALTIME_TIMESTAMP": str(time.time_ns() // 1000),
+            "_HOSTNAME": "mock-target",
+            "SYSLOG_IDENTIFIER": ident,
+            "_PID": str(pid),
+            "MESSAGE": message,
+        }
+        self.entries.append({"seq": self.seq, "ident": ident, "pid": str(pid), "record": record})
+        del self.entries[:-self.KEEP]
+
+    def answer(self) -> None:
+        frames = self.sock.recv_multipart(zmq.NOBLOCK)
+        # [identity][empty][request…] from a REQ client, [identity][request…] from a DEALER.
+        envelope = frames[:2] if len(frames) > 1 and frames[1] == b"" else frames[:1]
+        request = [f.decode("utf-8", errors="replace") for f in frames[len(envelope):]]
+        status, payload = self._handle(request)
+        self.sock.send_multipart(envelope + [status, payload.encode("utf-8")])
+
+    def _handle(self, request: List[str]):
+        name = request[0] if request else ""
+        if name == "version":
+            return b"ok", "1"
+        if name == "unit-status":
+            return b"ok", (
+                "● processmanager.service - Process manager (mock)\n"
+                "     Loaded: loaded (/etc/systemd/system/processmanager.service; enabled)\n"
+                "     Active: active (running)\n"
+                f"   Main PID: {self.manager_pid} (iltaren-ProcessManager)\n"
+            )
+        if name != "journal" or len(request) < 2:
+            return b"error", "unknown request; the journal server answers version, journal and unit-status"
+        kind = request[1]
+        value = request[2] if len(request) > 2 else ""
+        lines = int(request[3]) if len(request) > 3 and request[3].isdigit() else 50
+        after = request[4] if len(request) > 4 else ""
+        if kind == "manager":
+            chosen = [e for e in self.entries if e["ident"] == self.MANAGER_IDENT]
+        elif kind == "service":
+            chosen = [e for e in self.entries if e["ident"] == value]
+        elif kind == "pid":
+            chosen = [e for e in self.entries if e["pid"] == value]
+        else:
+            return b"error", "unknown journal target; use manager, service or pid"
+        if after:
+            try:
+                after_seq = int(after.rsplit("i=", 1)[1], 16)
+            except (IndexError, ValueError):
+                return b"error", "bad journal cursor"
+            chosen = [e for e in chosen if e["seq"] > after_seq][:max(lines, 1)]
+        else:
+            chosen = chosen[-max(lines, 1):]
+        return b"ok", "".join(json.dumps(e["record"]) + "\n" for e in chosen)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pub", default="tcp://*:6667")
     parser.add_argument("--router", default="tcp://*:5557")
     parser.add_argument("--network", default="tcp://*:6669",
                         help="PUB endpoint of the network manager's status ('' for none)")
+    parser.add_argument("--journal", default="tcp://*:6670",
+                        help="ROUTER endpoint of the manager's journal server ('' for none)")
     parser.add_argument("--missing", action="append", default=[],
                         help="a process that sends heartbeats but never connects (repeatable)")
     parser.add_argument("--interval", type=float, default=0.5)
@@ -184,6 +258,14 @@ def main():
         network = MockNetwork(net, args.router.replace("*", "0.0.0.0"))
         print(f"[NET]    bound to {args.network}")
 
+    journal = None
+    if args.journal:
+        journal_sock = ctx.socket(zmq.ROUTER)
+        journal_sock.bind(args.journal)
+        journal = MockJournal(journal_sock, manager_pid=4321)
+        journal.write(MockJournal.MANAGER_IDENT, journal.manager_pid, "Mock manager started")
+        print(f"[JOURNAL] bound to {args.journal}")
+
     router = ctx.socket(zmq.ROUTER)
     router.bind(args.router)
     print(f"[ROUTER] bound to {args.router}")
@@ -200,6 +282,7 @@ def main():
     mem_base   = {n: random.randint(20, 400) * 1024 * 1024 for n in PROCESSES}
     restarts   = {n: random.randint(0, 3) for n in PROCESSES}
     missed     = {n: 0 for n in PROCESSES}
+    logged_states: Dict[str, RuntimeState] = {}  # what the mock journal last said about each
 
     last_snap = time.time_ns()
     running = True
@@ -213,6 +296,8 @@ def main():
 
     poller = zmq.Poller()
     poller.register(router, zmq.POLLIN)
+    if journal is not None:
+        poller.register(journal.sock, zmq.POLLIN)
 
     print("Publishing health reports… (Ctrl+C to stop)\n")
 
@@ -222,6 +307,12 @@ def main():
             events = dict(poller.poll(10))
         except zmq.ZMQError:
             break
+
+        if journal is not None and journal.sock in events:
+            try:
+                journal.answer()
+            except zmq.Again:
+                pass
 
         if router in events:
             try:
@@ -276,6 +367,11 @@ def main():
                             states[svc] = RuntimeState.STARTING
                             restarts[svc] += 1
                             print(f"   → restarting {svc}")
+                    if journal is not None:
+                        journal.write(MockJournal.MANAGER_IDENT, journal.manager_pid,
+                                      f"{cmd.name if isinstance(cmd, CommandEnum) else cmd} {svc} from "
+                                      f"{identity.decode(errors='replace')}: "
+                                      f"{'accepted' if accepted else 'refused'}")
                     if identity == GUI_IDENTITY:
                         # Like the manager: [BPM][b"1" accepted | b"0" refused], GUI only.
                         router.send_multipart([identity, b"BPM", b"1" if accepted else b"0"])
@@ -356,6 +452,16 @@ def main():
         last_snap = now
         pub.send(reports_to_bytes(reports))
 
+        # ── journal: running processes write now and then, the manager logs state changes
+        if journal is not None:
+            for name in PROCESSES:
+                if states[name] == RuntimeState.RUNNING and random.random() < 0.15:
+                    journal.write(name, pids[name], f"{name}: cycle {random.randint(1, 99999)} done")
+                if states[name] != logged_states.get(name):
+                    journal.write(MockJournal.MANAGER_IDENT, journal.manager_pid,
+                                  f"[{name}] is {states[name].name.title()}")
+                    logged_states[name] = states[name]
+
         # ── network manager: heartbeats of the running, joins and leaves ─
         if network is not None:
             for name in PROCESSES:
@@ -379,6 +485,8 @@ def main():
     router.close(0)
     if network is not None:
         network.sock.close(0)
+    if journal is not None:
+        journal.sock.close(0)
     ctx.term()
 
 
