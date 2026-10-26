@@ -140,7 +140,17 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 	// Allow unknown options
 	//options.allow_unrecognised_options();
 
-	auto result = options.parse(argc, argv);
+	// cxxopts throws for a command line it cannot parse, such as an unknown option or one without its value.
+	cxxopts::ParseResult result;
+	try
+	{
+		result = options.parse(argc, argv);
+	}
+	catch (const cxxopts::exceptions::exception& e)
+	{
+		std::cerr << e.what() << ". Use --help to list the options.\n";
+		return 1;
+	}
 	const std::string cmd = result["command"].as<std::string>();
 	const std::string startCmd = result["start"].as<std::string>();
 	const std::string disableCmd = result["disable"].as<std::string>();
