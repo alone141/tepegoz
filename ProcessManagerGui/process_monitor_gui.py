@@ -916,7 +916,7 @@ class ProcessMonitorWindow(QMainWindow):
         self.network_endpoint = network_endpoint
         self.journal_endpoint = journal_endpoint
 
-        self.setWindowTitle("Process Manager – Health Monitor")
+        self.setWindowTitle("Bihter: Process Manager – Health Monitor")
         fit_to_screen(self, QSize(1180, 760), minimum=QSize(900, 600))
 
         self._prev: Dict[str, Tuple[int, int]] = {}   # name → (cpu_usec, snap_ns)

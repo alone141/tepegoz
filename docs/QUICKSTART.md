@@ -1,4 +1,4 @@
-# Quick start
+# Bihter: Process Manager – Quick start
 
 The process manager starts the programs listed in `ProcessManagerConfig.yaml`, keeps them running and stops them.
 The monitor GUI shows their state, resource use and logs, and starts, stops or restarts them. The GUI can run on

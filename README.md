@@ -1,4 +1,4 @@
-# ProcessManager
+# Bihter: Process Manager
 
 Starts the programs of a machine, keeps them running and stops them. A monitor GUI shows their state, resource
 use and logs, and starts and stops them, from the same machine or another one.
