@@ -957,7 +957,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         # The window has no system title bar: the toolbar's row is its title bar.
         self.set_title_bar(toolbar).setStyleSheet(TOOLBAR_STYLE)
 
-        title = QLabel("Process manager")
+        title = QLabel("Bihter: Process Manager")
         title.setFont(ui_font(1.1, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {TEXT}; padding: 0 4px;")
         toolbar.addWidget(title)
