@@ -30,10 +30,8 @@ from network_status import (
     NetworkStatus,
     dealer_state,
     format_age_ms,
-    missing_services,
 )
 from process_views import (
-    DANGER,
     NETWORK_NAME,
     SMALL_BUTTON_STYLE,
     STALE_COLOR,
@@ -50,14 +48,12 @@ STATE_COLORS: Dict[str, str] = {
     "connected": "#4caf50",
     "quiet": "#ff9800",
     "no name yet": "#9e9e9e",
-    "not connected": DANGER,
 }
 STATE_TIPS: Dict[str, str] = {
     "connected": "Connected to the network manager",
     "quiet": "Connected, but this process has sent nothing (no heartbeat) for a while",
     "no name yet": "Connected but has sent nothing yet, so its name is unknown "
                    "(a dealer that only receives stays like this)",
-    "not connected": "This process sends heartbeats, but is not connected to the network manager",
 }
 EVENT_COLORS: Dict[str, str] = {
     "joined": "#81c784",
@@ -143,13 +139,6 @@ class NetworkPage(QWidget):
             self.tiles[key] = tile
         root.addLayout(tiles)
 
-        # Processes that send heartbeats but are not connected get a line of their own.
-        self.lbl_missing = QLabel()
-        self.lbl_missing.setStyleSheet(f"color: {DANGER}; font-weight: bold;")
-        self.lbl_missing.setWordWrap(True)
-        self.lbl_missing.setVisible(False)
-        root.addWidget(self.lbl_missing)
-
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(6)
@@ -213,7 +202,6 @@ class NetworkPage(QWidget):
             f"up {format_age_ms(now - status.started_ms)} · since {_clock(status.started_ms)}"
             f" · status {_clock(now)} · {status.forwarded} forwarded in all"
         )
-        missing = missing_services(reports, status)
         values = {
             "connected": str(len(status.dealers)) + (f" + {len(status.unnamed)}" if status.unnamed else ""),
             "rate": "—" if forwarded_per_s is None else f"{forwarded_per_s:.1f}",
@@ -222,10 +210,6 @@ class NetworkPage(QWidget):
         }
         for key, text in values.items():
             self.tiles[key].set_value(text)
-        self.lbl_missing.setText(
-            "Not connected to the network manager, though they send heartbeats: " + ", ".join(missing)
-        )
-        self.lbl_missing.setVisible(bool(missing))
 
         rows: List[Tuple[str, str, str, str, str, str, str]] = []
         for dealer in status.dealers:
@@ -241,8 +225,6 @@ class NetworkPage(QWidget):
             ))
         for address, since in status.unnamed:
             rows.append(("—", "no name yet", address, format_age_ms(now - since) if since else "—", "0", "—", "—"))
-        for name in missing:
-            rows.append((name, "not connected", "—", "—", "—", "—", "—"))
         self._fill(rows)
 
     def _fill(self, rows: Sequence[Tuple[str, ...]]) -> None:
@@ -250,7 +232,7 @@ class NetworkPage(QWidget):
         for r, row in enumerate(rows):
             state = row[1]
             color = STALE_COLOR.name() if self._stale else STATE_COLORS.get(state, TEXT)
-            text_color = STALE_COLOR.name() if self._stale else (DANGER if state == "not connected" else TEXT)
+            text_color = STALE_COLOR.name() if self._stale else TEXT
             for c, text in enumerate(row):
                 if c == 1:
                     item = _item(f"● {text}", color, STATE_TIPS.get(state, ""))

@@ -67,7 +67,6 @@ from network_status import (
     NetworkStatus,
     forwarded_rate,
     message_rates,
-    missing_services,
     parse_message,
 )
 from network_view import NetworkPage
@@ -1321,7 +1320,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
             f"Last update: {time.strftime('%H:%M:%S')}"
         )
         self.lbl_process_count.setText(f"Processes: {len(self._current)}")
-        self._refresh_network()  # which heartbeat senders are missing follows the reports
+        self._refresh_network()  # which connections are quiet follows the reports
         self._refresh_feed_status()
 
     def _record_usage(self, now: float) -> None:
@@ -1403,17 +1402,10 @@ class ProcessMonitorWindow(FramelessMainWindow):
             tip = (f"No status from the network manager at {self.network_endpoint} for a while; "
                    "its page shows the last one received (greyed out)")
         else:
-            missing = missing_services(self._current, status)
-            if missing:
-                text, color = f"Network · {len(missing)} missing", "#f44336"
-                hint, kind = f"{len(missing)} missing", "badge"
-                tip = ("Not connected to the network manager, though they send heartbeats: "
-                       + ", ".join(missing))
-            else:
-                text, color = f"Network · {len(status.dealers)}", "#4caf50"
-                hint, kind = str(len(status.dealers)), "muted"  # short: the row's name stays whole
-                names = ", ".join(d.name for d in status.dealers) or "none"
-                tip = f"{len(status.dealers)} connected to the network manager: {names}"
+            text, color = f"Network · {len(status.dealers)}", "#4caf50"
+            hint, kind = str(len(status.dealers)), "muted"  # short: the row's name stays whole
+            names = ", ".join(d.name for d in status.dealers) or "none"
+            tip = f"{len(status.dealers)} connected to the network manager: {names}"
         self.lbl_network.setText(text)
         self.lbl_network.setStyleSheet(pill_style(color))
         self.lbl_network.setToolTip(tip)

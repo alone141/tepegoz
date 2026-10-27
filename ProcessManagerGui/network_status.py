@@ -134,30 +134,15 @@ def forwarded_rate(previous: Optional[NetworkStatus], current: NetworkStatus) ->
     return (current.forwarded - previous.forwarded) / ((current.now_ms - previous.now_ms) / 1000.0)
 
 
-def expects_connection(report: dict) -> bool:
-    """A running process that has sent heartbeats should be connected to the broker."""
-    from health_structs import RuntimeState  # local: keeps this module importable alone
-
-    return bool(report.get("lastSeen")) and report.get("state") in (
-        RuntimeState.RUNNING, RuntimeState.UNHEALTHY,
-    )
-
-
-def missing_services(reports: Dict[str, dict], status: NetworkStatus) -> List[str]:
-    """Processes that should be connected (see expects_connection) but are not, sorted."""
-    connected = {d.name for d in status.dealers}
-    return sorted(
-        name for name, report in reports.items()
-        if expects_connection(report) and name not in connected
-    )
-
-
 def dealer_state(dealer: Dealer, now_ms: int, reports: Dict[str, dict]) -> str:
     """ "connected", or "quiet" for a process that sends heartbeats yet has been silent too long."""
+    from health_structs import RuntimeState  # local: keeps this module importable alone
+
     report = reports.get(dealer.name)
     if (
         report is not None
-        and expects_connection(report)
+        and report.get("lastSeen")
+        and report.get("state") in (RuntimeState.RUNNING, RuntimeState.UNHEALTHY)
         and dealer.last_message_ms
         and now_ms - dealer.last_message_ms > QUIET_AFTER_MS
     ):

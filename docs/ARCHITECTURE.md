@@ -442,5 +442,3 @@ stop, and keeps a 15-minute history for the state band and the graphs.
   `MissedHeartbeatThreshold × HeartbeatPeriodMs` after its start is restarted before it beats.
 - **Grace periods hold up the start order:** while one service is in its grace period, the services after it
   wait.
-- **The GUI's Network pill expects every running service on the broker:** services that send no heartbeats count
-  as missing.

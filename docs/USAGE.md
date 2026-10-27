@@ -359,8 +359,7 @@ set with the options above when the GUI starts. When the endpoints are on differ
   - the feed state: **Live** while reports arrive, **Waiting for data…** before the first one, and
     **No data for N s** when they stop;
   - the manager's machine; hovering over it lists the four endpoints;
-  - the **Network** pill: red when a running service is not connected to the broker. Every running service is
-    expected to be connected, the ones that send no heartbeats included, so those always count as missing;
+  - the **Network** pill: how many are connected to the broker, red when the broker's status stops coming;
   - the **GPU** pill;
   - **Connection**.
 - **Sidebar:** the manager (**processmanager**), its **network manager** (the broker), then every service
@@ -380,8 +379,9 @@ set with the options above when the GUI starts. When the endpoints are on differ
 - **The manager's page:** `systemctl status` of its unit, and its own log.
 - **The network manager's page:**
   - tiles for connections, messages forwarded per second, messages not delivered and messages rejected;
-  - a table of the connected services, with their address, message rate and last message, and which services
-    are missing;
+  - a table of everything connected to the broker, services and other processes alike, with its address, how
+    long it has been connected, its messages, their rate and when it last sent one. Services that never
+    connect are not listed: a service need not use the broker;
   - the broker's events, newest first.
 
 ### Commands
