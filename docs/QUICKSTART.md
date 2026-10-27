@@ -137,7 +137,7 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 | See its processes | Open **cgroup PIDs**. Double-click a PID for that process's own log. |
 | Compare services over time | Open the **Graphs** tab, or **Pop out** for a larger window. |
 | See the manager's own log | Click **processmanager** at the top of the sidebar. |
-| Change the machine it watches | Click **Connection**, edit the endpoints, then **Reconnect**. |
+| Change the machine it watches | Click **Connection**, type the machine in **HOST**, and press Enter. |
 
 ## 6. When something is wrong
 

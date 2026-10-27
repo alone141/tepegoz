@@ -97,7 +97,15 @@ from process_views import (  # noqa: F401  re-exported
     service_active_text,
     uptime_text,
 )
-from remote_journal import JOURNAL_ENDPOINT, JOURNAL_PORT, JournalReader, MembersReader, endpoint_on
+from remote_journal import (
+    JOURNAL_ENDPOINT,
+    JOURNAL_PORT,
+    JournalReader,
+    MembersReader,
+    endpoint_host,
+    endpoint_on,
+    endpoint_port,
+)
 from systemd_logs import (
     REFRESH_MS,
     task_cgroup_name,
@@ -121,6 +129,10 @@ REPLY_TIMEOUT_SEC = 10.0
 # Queued report messages read in one go before the newest is shown; a limit so
 # a flood of them cannot hold up the commands.
 MAX_REPORTS_PER_READ = 100
+# The manager's ports: health reports, the broker (commands), the broker's status.
+REPORT_PORT = 6667
+COMMAND_PORT = 5557
+NETWORK_PORT = endpoint_port(NETWORK_ENDPOINT) or 6669
 # A worker round waits for the journal server in 100 ms steps and stops waiting
 # when asked to stop (a local journalctl call takes at most 5 s), so waiting this
 # long never has to fall back to QThread.terminate() in practice.
@@ -133,6 +145,18 @@ GPU_STATE_TEXT = {
     GpuState.FAILED: "GPU sampling failed in the process manager; its journal has the NVML error",
     GpuState.STALLED: "The process manager's GPU sampling stopped: a driver call is not returning",
 }
+
+
+def typed_host(text: str) -> str:
+    """The machine in what was typed in the HOST field: a name or an address,
+    or the host of a pasted endpoint or host:port. An IPv6 address comes
+    without brackets; endpoint_on adds them."""
+    text = text.strip()
+    if "://" in text:
+        text = endpoint_host(text)
+    elif text.count(":") == 1:  # host:port; an IPv6 address has more colons
+        text = text.split(":", 1)[0]
+    return text.strip("[]")
 
 
 def stop_workers(
@@ -183,7 +207,9 @@ class ZmqWorker(QObject):
         self.sub_endpoint    = sub_endpoint
         self.dealer_endpoint = dealer_endpoint
         self.sub_topic       = sub_topic
-        self._running        = False
+        # Cleared by stop() and never set again, so a stop that comes before the
+        # thread runs start() is kept.
+        self._running        = True
         self._ctx: Optional[zmq.Context] = None
         self._sub: Optional[zmq.Socket] = None
         self._dealer: Optional[zmq.Socket] = None
@@ -199,7 +225,6 @@ class ZmqWorker(QObject):
 
     @pyqtSlot()
     def start(self):
-        self._running = True
         self._ctx = zmq.Context.instance()
         try:
             # SUB
@@ -404,13 +429,12 @@ class NetworkWorker(QObject):
     def __init__(self, endpoint: str = NETWORK_ENDPOINT, parent: Optional[QObject] = None):
         super().__init__(parent)
         self.endpoint = endpoint
-        self._running = False
+        self._running = True  # cleared by stop() only, which may come before start()
         self._sub: Optional[zmq.Socket] = None
         self._last_error = ""
 
     @pyqtSlot()
     def start(self):
-        self._running = True
         try:
             self._sub = zmq.Context.instance().socket(zmq.SUB)
             self._sub.setsockopt(zmq.RCVHWM, 1000)
@@ -496,7 +520,7 @@ class JournalWorkerBase(QObject):
 
     def __init__(self, endpoint: str, parent: Optional[QObject] = None):
         super().__init__(parent)
-        self._running = False
+        self._running = True  # cleared by stop() only, which may come before start()
         self._endpoint = endpoint
         self._changed = False
 
@@ -529,7 +553,6 @@ class SystemdLogWorker(JournalWorkerBase):
 
     @pyqtSlot()
     def start(self):
-        self._running = True
         reader: Optional[JournalReader] = None
         while self._running:
             self._changed = False
@@ -571,7 +594,6 @@ class CgroupLogWorker(JournalWorkerBase):
 
     @pyqtSlot()
     def start(self):
-        self._running = True
         reader: Optional[JournalReader] = None
         while self._running:
             self._changed = False
@@ -614,7 +636,6 @@ class DetailJournalWorker(JournalWorkerBase):
 
     @pyqtSlot()
     def start(self):
-        self._running = True
         reader: Optional[JournalReader] = None
         while self._running:
             self._changed = False
@@ -646,7 +667,6 @@ class CgroupMembersWorker(JournalWorkerBase):
 
     @pyqtSlot()
     def start(self):
-        self._running = True
         reader: Optional[MembersReader] = None
         while self._running:
             self._changed = False
@@ -852,16 +872,19 @@ TOOLBAR_STYLE = f"""
     QToolButton:hover {{ background: #2f2f2f; }}
     QToolButton:checked {{ background: #333; border-color: {ACCENT}; }}
 """
+# The open strip sets the window's minimum width, so the fields' minimums are
+# small; they grow into any room the window has.
 CONNECTION_STYLE = f"""
     QWidget#connection {{ background: #232323; border-bottom: 1px solid {BORDER}; }}
     QWidget#connection QLabel {{ color: {TEXT_DIM}; }}
     QLineEdit {{
         background: #1a1a1a; color: {TEXT};
         border: 1px solid #444; border-radius: 3px;
-        padding: 3px 6px; min-width: 190px;
+        padding: 3px 6px; min-width: 135px;
         font-family: {MONO_FONT_FAMILIES};
     }}
     QLineEdit:focus {{ border-color: {ACCENT}; }}
+    QLineEdit#host {{ min-width: 145px; }}
 """
 RECONNECT_STYLE = """
     QPushButton {
@@ -979,13 +1002,24 @@ class ProcessMonitorWindow(QMainWindow):
         strip = QHBoxLayout(self.connection_strip)
         strip.setContentsMargins(12, 6, 12, 6)
         strip.setSpacing(8)
+        strip.addWidget(QLabel("HOST"))
+        self.edit_host = QLineEdit()
+        self.edit_host.setObjectName("host")
+        self.edit_host.setPlaceholderText("machine")
+        self.edit_host.setToolTip(
+            "The manager's machine. Enter puts it in all four endpoints, keeps their ports, and reconnects"
+        )
+        self.edit_host.setClearButtonEnabled(True)
+        self.edit_host.returnPressed.connect(self._apply_host)
+        strip.addWidget(self.edit_host, 2)
+        strip.addSpacing(16)
         strip.addWidget(QLabel("SUB"))
         self.edit_sub = QLineEdit(self.sub_endpoint)
         self.edit_sub.setPlaceholderText("tcp://host:port")
         self.edit_sub.setToolTip("ZMQ SUB endpoint for health report broadcasts")
         self.edit_sub.setClearButtonEnabled(True)
         self.edit_sub.returnPressed.connect(self._reconnect)
-        strip.addWidget(self.edit_sub)
+        strip.addWidget(self.edit_sub, 3)
         strip.addSpacing(8)
         strip.addWidget(QLabel("DEALER"))
         self.edit_dealer = QLineEdit(self.dealer_endpoint)
@@ -995,7 +1029,7 @@ class ProcessMonitorWindow(QMainWindow):
         )
         self.edit_dealer.setClearButtonEnabled(True)
         self.edit_dealer.returnPressed.connect(self._reconnect)
-        strip.addWidget(self.edit_dealer)
+        strip.addWidget(self.edit_dealer, 3)
         strip.addSpacing(8)
         strip.addWidget(QLabel("NET"))
         self.edit_network = QLineEdit(self.network_endpoint)
@@ -1003,7 +1037,7 @@ class ProcessMonitorWindow(QMainWindow):
         self.edit_network.setToolTip("ZMQ SUB endpoint of the network manager's status and events")
         self.edit_network.setClearButtonEnabled(True)
         self.edit_network.returnPressed.connect(self._reconnect)
-        strip.addWidget(self.edit_network)
+        strip.addWidget(self.edit_network, 3)
         strip.addSpacing(8)
         strip.addWidget(QLabel("JOURNAL"))
         self.edit_journal = QLineEdit(self.journal_endpoint)
@@ -1013,7 +1047,7 @@ class ProcessMonitorWindow(QMainWindow):
         )
         self.edit_journal.setClearButtonEnabled(True)
         self.edit_journal.returnPressed.connect(self._reconnect)
-        strip.addWidget(self.edit_journal)
+        strip.addWidget(self.edit_journal, 3)
         self.btn_reconnect = QPushButton("Reconnect")
         self.btn_reconnect.setStyleSheet(RECONNECT_STYLE)
         self.btn_reconnect.setToolTip("Apply new endpoints and reconnect")
@@ -1022,7 +1056,9 @@ class ProcessMonitorWindow(QMainWindow):
         wire = ElidedLabel("identity GUI · frames BPM + CommandMessage (65 B)")
         wire.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         wire.setStyleSheet(mono_style(TEXT_MUTED))
-        strip.addWidget(wire)
+        # Only a share of the spare room, so the endpoint fields grow first.
+        wire.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        strip.addWidget(wire, 1)
         self.connection_strip.setVisible(False)
         self.btn_connection.toggled.connect(self.connection_strip.setVisible)
 
@@ -1103,6 +1139,29 @@ class ProcessMonitorWindow(QMainWindow):
             f"SUB {self.sub_endpoint}   ·   DEALER {self.dealer_endpoint}"
             f"   ·   NET {self.network_endpoint}   ·   JOURNAL {self.journal_endpoint}"
         )
+        endpoints = (self.sub_endpoint, self.dealer_endpoint, self.network_endpoint, self.journal_endpoint)
+        hosts = {endpoint_host(endpoint).strip("[]") for endpoint in endpoints}
+        # HOST shows the machine when all four are on one; it stays empty otherwise.
+        self.edit_host.setText(next(iter(hosts)) if len(hosts) == 1 else "")
+        self.edit_host.setPlaceholderText("machine" if len(hosts) == 1 else "several machines")
+
+    def _apply_host(self) -> None:
+        """Put the machine typed in HOST in all four endpoints, keeping their ports, and reconnect."""
+        typed = self.edit_host.text().strip()
+        host = typed_host(typed)
+        if not host or any(c.isspace() or c == "/" for c in host):
+            self._show_status(f"Not a machine name or address: {typed!r}")
+            return
+        for edit, endpoint, default_port in (
+            (self.edit_sub, self.sub_endpoint, REPORT_PORT),
+            (self.edit_dealer, self.dealer_endpoint, COMMAND_PORT),
+            (self.edit_network, self.network_endpoint, NETWORK_PORT),
+            (self.edit_journal, self.journal_endpoint, JOURNAL_PORT),
+        ):
+            # A port typed in a field but not applied yet is kept too.
+            port = endpoint_port(edit.text().strip() or endpoint) or default_port
+            edit.setText(endpoint_on(host, port))
+        self._reconnect()
 
     def _show_status(self, message: str) -> None:
         # One line: multi-line parse errors would make the status bar grow.
@@ -1661,15 +1720,14 @@ def main():
         help=f"ZMQ endpoint of the manager's journal server (default: tcp://HOST:{JOURNAL_PORT})",
     )
     args = parser.parse_args()
-    network_port = int(NETWORK_ENDPOINT.rsplit(":", 1)[1])
 
     app = QApplication(sys.argv)
     apply_dark_theme(app)
 
     win = ProcessMonitorWindow(
-        args.sub or endpoint_on(args.host, 6667),
-        args.dealer or endpoint_on(args.host, 5557),
-        args.network or endpoint_on(args.host, network_port),
+        args.sub or endpoint_on(args.host, REPORT_PORT),
+        args.dealer or endpoint_on(args.host, COMMAND_PORT),
+        args.network or endpoint_on(args.host, NETWORK_PORT),
         journal_endpoint=args.journal or endpoint_on(args.host, JOURNAL_PORT),
     )
     win.show()

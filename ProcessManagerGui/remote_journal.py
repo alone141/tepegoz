@@ -59,6 +59,13 @@ def endpoint_host(endpoint: str) -> str:
     return rest.rsplit(":", 1)[0] if ":" in rest else rest
 
 
+def endpoint_port(endpoint: str) -> Optional[int]:
+    """The port of a tcp://host:port endpoint, or None without one."""
+    rest = endpoint.split("://", 1)[-1]
+    port = rest.rsplit(":", 1)[1] if ":" in rest else ""
+    return int(port) if port.isdigit() else None
+
+
 def endpoint_on(host: str, port: int) -> str:
     """tcp://host:port, with an IPv6 address in brackets."""
     if ":" in host and not host.startswith("["):

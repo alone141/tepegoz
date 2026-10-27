@@ -341,8 +341,12 @@ It needs Python 3 with PyQt6 and pyzmq. It runs on Linux and Windows.
 | `--network ENDPOINT` | `tcp://HOST:6669` | The broker's status. |
 | `--journal ENDPOINT` | `tcp://HOST:6670` | The journal server: the logs. |
 
-The **Connection** button in the toolbar shows the same four endpoints. Edit them and press **Reconnect** to
-switch machines without restarting the GUI.
+The **Connection** button in the toolbar shows a **HOST** field and the same four endpoints, so you can switch
+machines without restarting the GUI:
+- **HOST:** type the manager's machine, a name or an address, and press Enter. It goes into all four endpoints,
+  each keeping its port, and the GUI reconnects. A pasted endpoint or `host:port` works too; only its host is
+  used. HOST is empty when the endpoints are on different machines.
+- **The endpoints:** edit any of them, for a port of its own, and press **Reconnect**.
 
 ### The window
 
