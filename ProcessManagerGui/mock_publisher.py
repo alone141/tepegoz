@@ -359,8 +359,8 @@ def main():
                     except ValueError:
                         cmd = cmd_msg.command
                     svc  = cmd_msg.ServiceName.split(b"\x00", 1)[0].decode(errors="replace")
-                    args = cmd_msg.Args.split(b"\x00", 1)[0].decode(errors="replace")
-                    print(f"   CMD={cmd}  ServiceName={svc!r}  Args={args!r}")
+                    cmd_args = cmd_msg.Args.split(b"\x00", 1)[0].decode(errors="replace")
+                    print(f"   CMD={cmd}  ServiceName={svc!r}  Args={cmd_args!r}")
 
                     accepted = svc in states and cmd in (
                         CommandEnum.START, CommandEnum.STOP, CommandEnum.RESTART
