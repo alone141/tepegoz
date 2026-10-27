@@ -111,9 +111,11 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   services: 50 services beating every 100 ms sent 186 reports, 1.3 MiB, a second to each GUI, and now send 2
   reports, 14 KiB. The monitor GUI now shows only the newest report waiting, so a busy GUI skips reports
   instead of falling behind.
-- The GUI's Connection strip has a HOST field: a machine typed there goes into all four endpoints, each
-  keeping its port, and the GUI reconnects, as `--host` does at start. Closing the GUI right after a
-  reconnect no longer hangs for 8 s and then kills its own worker threads.
+- The GUI's Connection strip holds only a HOST field: a machine typed there goes into all four endpoints,
+  each keeping its port, and the GUI reconnects, as `--host` does at start. The window no longer shows or
+  edits the endpoints themselves; the toolbar shows the machine, and `--sub`, `--dealer`, `--network` and
+  `--journal` still set an endpoint at start. Closing the GUI right after a reconnect no longer hangs for
+  8 s and then kills its own worker threads.
 - `TestServices/` holds test programs with planned behaviours (clean and failing exits, crashes, ignored
   SIGTERM, heartbeats, children, output, environment, CPU and memory use), scenario configs that run them,
   and `run_scenarios.py`, which runs the manager with each config and checks what it does.

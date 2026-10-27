@@ -341,19 +341,21 @@ It needs Python 3 with PyQt6 and pyzmq. It runs on Linux and Windows.
 | `--network ENDPOINT` | `tcp://HOST:6669` | The broker's status. |
 | `--journal ENDPOINT` | `tcp://HOST:6670` | The journal server: the logs. |
 
-The **Connection** button in the toolbar shows a **HOST** field and the same four endpoints, so you can switch
-machines without restarting the GUI:
-- **HOST:** type the manager's machine, a name or an address, and press Enter. It goes into all four endpoints,
-  each keeping its port, and the GUI reconnects. A pasted endpoint or `host:port` works too; only its host is
-  used. HOST is empty when the endpoints are on different machines.
-- **The endpoints:** edit any of them, for a port of its own, and press **Reconnect**.
+The **Connection** button in the toolbar shows a **HOST** field, so you can switch machines without restarting
+the GUI. Type the manager's machine, a name or an address, and press Enter or **Reconnect**. It goes into all four
+endpoints, each keeping its port, and the GUI reconnects. A pasted endpoint or `host:port` works too; only its host
+is used.
+
+The window does not show or edit the four endpoints. A port of their own, or an endpoint on another machine, is
+set with the options above when the GUI starts. When the endpoints are on different machines, HOST is empty, and
+**Reconnect** with HOST empty reconnects to them as they are.
 
 ### The window
 
 - **Toolbar:**
   - the feed state: **Live** while reports arrive, **Waiting for data…** before the first one, and
     **No data for N s** when they stop;
-  - the endpoints;
+  - the manager's machine; hovering over it lists the four endpoints;
   - the **Network** pill: red when a running service is not connected to the broker. Every running service is
     expected to be connected, the ones that send no heartbeats included, so those always count as missing;
   - the **GPU** pill;

@@ -246,10 +246,6 @@ class ZmqWorker(QObject):
             self._dealer.connect(self.dealer_endpoint)
 
             self.connection_status.emit("connected")
-            self.log_message.emit(
-                f"SUB → {self.sub_endpoint}  |  "
-                f"DEALER(identity={GUI_IDENTITY.decode()}) → {self.dealer_endpoint}"
-            )
         except zmq.ZMQError as e:
             self._running = False
             self._cleanup()
@@ -872,19 +868,16 @@ TOOLBAR_STYLE = f"""
     QToolButton:hover {{ background: #2f2f2f; }}
     QToolButton:checked {{ background: #333; border-color: {ACCENT}; }}
 """
-# The open strip sets the window's minimum width, so the fields' minimums are
-# small; they grow into any room the window has.
 CONNECTION_STYLE = f"""
     QWidget#connection {{ background: #232323; border-bottom: 1px solid {BORDER}; }}
     QWidget#connection QLabel {{ color: {TEXT_DIM}; }}
     QLineEdit {{
         background: #1a1a1a; color: {TEXT};
         border: 1px solid #444; border-radius: 3px;
-        padding: 3px 6px; min-width: 135px;
+        padding: 3px 6px; min-width: 260px;
         font-family: {MONO_FONT_FAMILIES};
     }}
     QLineEdit:focus {{ border-color: {ACCENT}; }}
-    QLineEdit#host {{ min-width: 145px; }}
 """
 RECONNECT_STYLE = """
     QPushButton {
@@ -955,6 +948,7 @@ class ProcessMonitorWindow(QMainWindow):
         self._start_systemd_worker()
         self._start_cgroup_members_worker()
         self._start_detail_journal_worker()
+        self._show_connecting()
 
     # ── UI ────────────────────────────────────────────────────────────────
 
@@ -975,12 +969,12 @@ class ProcessMonitorWindow(QMainWindow):
 
         # Takes the spare toolbar width and elides, so the pills and the
         # Connection button never fall into the toolbar's overflow menu.
-        self.lbl_endpoints = ElidedLabel()
-        self.lbl_endpoints.setAlignment(
+        self.lbl_machine = ElidedLabel()
+        self.lbl_machine.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        self.lbl_endpoints.setStyleSheet(mono_style(TEXT_MUTED))
-        toolbar.addWidget(self.lbl_endpoints)
+        self.lbl_machine.setStyleSheet(mono_style(TEXT_MUTED))
+        toolbar.addWidget(self.lbl_machine)
 
         self.lbl_network = QLabel("Network …")
         toolbar.addWidget(self.lbl_network)
@@ -992,10 +986,11 @@ class ProcessMonitorWindow(QMainWindow):
         self.btn_connection = QToolButton()
         self.btn_connection.setText("Connection")
         self.btn_connection.setCheckable(True)
-        self.btn_connection.setToolTip("Show the ZMQ endpoints and reconnect")
+        self.btn_connection.setToolTip("Show the manager's machine and reconnect")
         toolbar.addWidget(self.btn_connection)
 
-        # Endpoints strip: shown on demand, and when connecting fails.
+        # Machine strip: shown on demand, and when connecting fails. The four
+        # endpoints are not shown; HOST moves them all, keeping their ports.
         self.connection_strip = QWidget()
         self.connection_strip.setObjectName("connection")
         self.connection_strip.setStyleSheet(CONNECTION_STYLE)
@@ -1004,61 +999,17 @@ class ProcessMonitorWindow(QMainWindow):
         strip.setSpacing(8)
         strip.addWidget(QLabel("HOST"))
         self.edit_host = QLineEdit()
-        self.edit_host.setObjectName("host")
         self.edit_host.setPlaceholderText("machine")
-        self.edit_host.setToolTip(
-            "The manager's machine. Enter puts it in all four endpoints, keeps their ports, and reconnects"
-        )
+        self.edit_host.setToolTip("The manager's machine, a name or an address. Enter reconnects to it")
         self.edit_host.setClearButtonEnabled(True)
         self.edit_host.returnPressed.connect(self._apply_host)
-        strip.addWidget(self.edit_host, 2)
-        strip.addSpacing(16)
-        strip.addWidget(QLabel("SUB"))
-        self.edit_sub = QLineEdit(self.sub_endpoint)
-        self.edit_sub.setPlaceholderText("tcp://host:port")
-        self.edit_sub.setToolTip("ZMQ SUB endpoint for health report broadcasts")
-        self.edit_sub.setClearButtonEnabled(True)
-        self.edit_sub.returnPressed.connect(self._reconnect)
-        strip.addWidget(self.edit_sub, 3)
-        strip.addSpacing(8)
-        strip.addWidget(QLabel("DEALER"))
-        self.edit_dealer = QLineEdit(self.dealer_endpoint)
-        self.edit_dealer.setPlaceholderText("tcp://host:port")
-        self.edit_dealer.setToolTip(
-            "ZMQ DEALER endpoint (ROUTER side). Identity is fixed to 'GUI'"
-        )
-        self.edit_dealer.setClearButtonEnabled(True)
-        self.edit_dealer.returnPressed.connect(self._reconnect)
-        strip.addWidget(self.edit_dealer, 3)
-        strip.addSpacing(8)
-        strip.addWidget(QLabel("NET"))
-        self.edit_network = QLineEdit(self.network_endpoint)
-        self.edit_network.setPlaceholderText("tcp://host:port")
-        self.edit_network.setToolTip("ZMQ SUB endpoint of the network manager's status and events")
-        self.edit_network.setClearButtonEnabled(True)
-        self.edit_network.returnPressed.connect(self._reconnect)
-        strip.addWidget(self.edit_network, 3)
-        strip.addSpacing(8)
-        strip.addWidget(QLabel("JOURNAL"))
-        self.edit_journal = QLineEdit(self.journal_endpoint)
-        self.edit_journal.setPlaceholderText("tcp://host:port")
-        self.edit_journal.setToolTip(
-            "ZMQ endpoint of the manager's journal server: the logs, read on the manager's machine"
-        )
-        self.edit_journal.setClearButtonEnabled(True)
-        self.edit_journal.returnPressed.connect(self._reconnect)
-        strip.addWidget(self.edit_journal, 3)
+        strip.addWidget(self.edit_host, 1)
         self.btn_reconnect = QPushButton("Reconnect")
         self.btn_reconnect.setStyleSheet(RECONNECT_STYLE)
-        self.btn_reconnect.setToolTip("Apply new endpoints and reconnect")
-        self.btn_reconnect.clicked.connect(self._reconnect)
+        self.btn_reconnect.setToolTip("Reconnect to the machine in HOST")
+        self.btn_reconnect.clicked.connect(self._apply_host)
         strip.addWidget(self.btn_reconnect)
-        wire = ElidedLabel("identity GUI · frames BPM + CommandMessage (65 B)")
-        wire.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        wire.setStyleSheet(mono_style(TEXT_MUTED))
-        # Only a share of the spare room, so the endpoint fields grow first.
-        wire.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        strip.addWidget(wire, 1)
+        strip.addStretch(2)
         self.connection_strip.setVisible(False)
         self.btn_connection.toggled.connect(self.connection_strip.setVisible)
 
@@ -1134,33 +1085,38 @@ class ProcessMonitorWindow(QMainWindow):
         self.stack.setCurrentWidget(self.service_page)
         self.sidebar.setFocus()
 
-    def _show_endpoints(self) -> None:
-        self.lbl_endpoints.setText(
-            f"SUB {self.sub_endpoint}   ·   DEALER {self.dealer_endpoint}"
-            f"   ·   NET {self.network_endpoint}   ·   JOURNAL {self.journal_endpoint}"
-        )
+    def _machine(self) -> Optional[str]:
+        """The machine all four endpoints are on, or None when they are on several."""
         endpoints = (self.sub_endpoint, self.dealer_endpoint, self.network_endpoint, self.journal_endpoint)
         hosts = {endpoint_host(endpoint).strip("[]") for endpoint in endpoints}
+        return next(iter(hosts)) if len(hosts) == 1 else None
+
+    def _show_endpoints(self) -> None:
+        machine = self._machine()
+        self.lbl_machine.setText("several machines" if machine is None else machine)
+        self.lbl_machine.setToolTip(
+            f"SUB {self.sub_endpoint}\nDEALER {self.dealer_endpoint}"
+            f"\nNET {self.network_endpoint}\nJOURNAL {self.journal_endpoint}"
+        )
         # HOST shows the machine when all four are on one; it stays empty otherwise.
-        self.edit_host.setText(next(iter(hosts)) if len(hosts) == 1 else "")
-        self.edit_host.setPlaceholderText("machine" if len(hosts) == 1 else "several machines")
+        self.edit_host.setText(machine or "")
+        self.edit_host.setPlaceholderText("several machines" if machine is None else "machine")
 
     def _apply_host(self) -> None:
-        """Put the machine typed in HOST in all four endpoints, keeping their ports, and reconnect."""
+        """Put the machine typed in HOST in all four endpoints, keeping their ports, and reconnect.
+
+        An empty HOST reconnects to the endpoints as they are, which may be on several machines.
+        """
         typed = self.edit_host.text().strip()
-        host = typed_host(typed)
-        if not host or any(c.isspace() or c == "/" for c in host):
-            self._show_status(f"Not a machine name or address: {typed!r}")
-            return
-        for edit, endpoint, default_port in (
-            (self.edit_sub, self.sub_endpoint, REPORT_PORT),
-            (self.edit_dealer, self.dealer_endpoint, COMMAND_PORT),
-            (self.edit_network, self.network_endpoint, NETWORK_PORT),
-            (self.edit_journal, self.journal_endpoint, JOURNAL_PORT),
-        ):
-            # A port typed in a field but not applied yet is kept too.
-            port = endpoint_port(edit.text().strip() or endpoint) or default_port
-            edit.setText(endpoint_on(host, port))
+        if typed:
+            host = typed_host(typed)
+            if not host or any(c.isspace() or c == "/" for c in host):
+                self._show_status(f"Not a machine name or address: {typed!r}")
+                return
+            self.sub_endpoint = endpoint_on(host, endpoint_port(self.sub_endpoint) or REPORT_PORT)
+            self.dealer_endpoint = endpoint_on(host, endpoint_port(self.dealer_endpoint) or COMMAND_PORT)
+            self.network_endpoint = endpoint_on(host, endpoint_port(self.network_endpoint) or NETWORK_PORT)
+            self.journal_endpoint = endpoint_on(host, endpoint_port(self.journal_endpoint) or JOURNAL_PORT)
         self._reconnect()
 
     def _show_status(self, message: str) -> None:
@@ -1208,21 +1164,9 @@ class ProcessMonitorWindow(QMainWindow):
 
     # ── ZMQ worker lifecycle ──────────────────────────────────────────────
 
-    def _get_endpoints(self) -> tuple[str, str]:
-        sub    = self.edit_sub.text().strip()    or self.sub_endpoint
-        dealer = self.edit_dealer.text().strip() or self.dealer_endpoint
-        return sub, dealer
-
     def _start_zmq_worker(self):
-        sub, dealer = self._get_endpoints()
-        self.sub_endpoint    = sub
-        self.dealer_endpoint = dealer
-        self.edit_sub.setText(sub)
-        self.edit_dealer.setText(dealer)
-        self._show_endpoints()
-
         self.worker_thread = QThread()
-        self.worker = ZmqWorker(sub, dealer)
+        self.worker = ZmqWorker(self.sub_endpoint, self.dealer_endpoint)
         self.worker.moveToThread(self.worker_thread)
 
         self.worker_thread.started.connect(self.worker.start)
@@ -1297,13 +1241,8 @@ class ProcessMonitorWindow(QMainWindow):
             self.detail_journal_worker.set_process(self.detail.name)
 
     def _start_network_worker(self):
-        endpoint = self.edit_network.text().strip() or self.network_endpoint
-        self.network_endpoint = endpoint
-        self.edit_network.setText(endpoint)
-        self._show_endpoints()
-
         self.network_thread = QThread()
-        self.network_worker = NetworkWorker(endpoint)
+        self.network_worker = NetworkWorker(self.network_endpoint)
         self.network_worker.moveToThread(self.network_thread)
         self.network_thread.started.connect(self.network_worker.start)
         self.network_worker.status_received.connect(self._on_network_status)
@@ -1413,7 +1352,7 @@ class ProcessMonitorWindow(QMainWindow):
         self._feed.on_disconnected()
         if status.startswith("error"):
             self._set_link_status(status, "#f44336")
-            self.btn_connection.setChecked(True)  # show the endpoints to fix them
+            self.btn_connection.setChecked(True)  # show HOST to change the machine
         else:
             self._set_link_status("Disconnected", "#f44336")
 
@@ -1613,8 +1552,6 @@ class ProcessMonitorWindow(QMainWindow):
         self._start_zmq_worker()
         self._start_network_worker()
         # The journal workers keep running and switch endpoints on their next round.
-        self.journal_endpoint = self.edit_journal.text().strip() or self.journal_endpoint
-        self.edit_journal.setText(self.journal_endpoint)
         self._show_endpoints()
         for worker in (
             getattr(self, "systemd_worker", None),
@@ -1629,10 +1566,11 @@ class ProcessMonitorWindow(QMainWindow):
             except RuntimeError:
                 pass
         self.btn_reconnect.setEnabled(True)
-        self._show_status(
-            f"Connecting to SUB={self.sub_endpoint}  "
-            f"DEALER={self.dealer_endpoint}  (id={GUI_IDENTITY.decode()})"
-        )
+        self._show_connecting()
+
+    def _show_connecting(self) -> None:
+        machine = self._machine()
+        self._show_status(f"Connecting to {'several machines' if machine is None else machine}")
 
     def _send_cmd(self, cmd: CommandEnum, name: str):
         reply = QMessageBox.question(
