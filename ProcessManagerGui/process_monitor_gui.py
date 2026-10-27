@@ -915,7 +915,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self.network_endpoint = network_endpoint
         self.journal_endpoint = journal_endpoint
 
-        self.setWindowTitle("Bihter: Process Manager – Health Monitor")
+        self.setWindowTitle("Process Monitor")
         fit_to_screen(self, QSize(1180, 760), minimum=QSize(900, 600))
 
         self._prev: Dict[str, Tuple[int, int]] = {}   # name → (cpu_usec, snap_ns)
@@ -957,7 +957,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         # The window has no system title bar: the toolbar's row is its title bar.
         self.set_title_bar(toolbar).setStyleSheet(TOOLBAR_STYLE)
 
-        title = QLabel("Bihter: Process Manager")
+        title = QLabel("Process Monitor")
         title.setFont(ui_font(1.1, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {TEXT}; padding: 0 4px;")
         toolbar.addWidget(title)

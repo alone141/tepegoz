@@ -1,4 +1,4 @@
-# Bihter: Process Manager – Usage guide
+# Usage guide
 
 The complete reference for running the process manager and its monitor GUI. For the short version, see
 [QUICKSTART.md](QUICKSTART.md). For how the parts fit together, see [ARCHITECTURE.md](ARCHITECTURE.md).

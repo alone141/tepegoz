@@ -1,4 +1,4 @@
-# Bihter: Process Manager – Release Notes
+# ProcessManager Release Notes
 
 How to use and how it works: [quick start](../docs/QUICKSTART.md), [usage guide](../docs/USAGE.md),
 [architecture](../docs/ARCHITECTURE.md).

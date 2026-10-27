@@ -1,4 +1,4 @@
-# Bihter: Process Manager – Architecture
+# Architecture
 
 How the process manager and its monitor GUI are built, and how they talk to each other. For how to use them, see
 [QUICKSTART.md](QUICKSTART.md) and [USAGE.md](USAGE.md).
