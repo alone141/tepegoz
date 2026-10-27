@@ -119,6 +119,7 @@ from ui_scale import (  # noqa: F401  re-exported
     ui_point_size,
 )
 from usage_graphs import UsageGraphWindow, UsageHistory, UsageSample
+from window_frame import FramelessMainWindow
 
 _color_for_pid = color_for_pid  # former name
 
@@ -856,10 +857,8 @@ class FeedMonitor:
 # ──────────────────────────────────────────────────────────────────────────────
 
 TOOLBAR_STYLE = f"""
-    QToolBar {{
-        spacing: 10px; padding: 4px 10px; background: #252525;
-        border-bottom: 1px solid {BORDER};
-    }}
+    QWidget#titleBar {{ background: #252525; border-bottom: 1px solid {BORDER}; }}
+    QToolBar {{ spacing: 10px; padding: 4px 10px; background: transparent; border: none; }}
     QToolBar QLabel {{ color: {TEXT_DIM}; }}
     QToolButton {{
         color: {TEXT}; background: transparent; border: 1px solid #444;
@@ -901,7 +900,7 @@ STATUSBAR_STYLE = f"""
 """
 
 
-class ProcessMonitorWindow(QMainWindow):
+class ProcessMonitorWindow(FramelessMainWindow):
     def __init__(
         self,
         sub_endpoint: str,
@@ -955,8 +954,8 @@ class ProcessMonitorWindow(QMainWindow):
     def _build_ui(self):
         toolbar = QToolBar("Main")
         toolbar.setMovable(False)
-        toolbar.setStyleSheet(TOOLBAR_STYLE)
-        self.addToolBar(toolbar)
+        # The window has no system title bar: the toolbar's row is its title bar.
+        self.set_title_bar(toolbar).setStyleSheet(TOOLBAR_STYLE)
 
         title = QLabel("Process manager")
         title.setFont(ui_font(1.1, QFont.Weight.Bold))

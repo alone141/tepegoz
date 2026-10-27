@@ -376,6 +376,7 @@ A forked child never logs, because it may hold no lock between `fork` and `exec`
 | `systemd_logs.py` | Local `journalctl`, `systemctl` and cgroup reading, and the journal JSON parser. |
 | `health_structs.py` | The binary layouts of reports and commands. |
 | `ui_scale.py` | Font and window sizes that follow the screen. |
+| `window_frame.py` | The main window without the system title bar: the toolbar's row is the title bar, with the window buttons, and the window's border resizes it. |
 | `mock_publisher.py` | A stand-in manager for working on the GUI. |
 
 Each data source has a worker on its own `QThread`. A worker sends Qt signals to the window, which updates the

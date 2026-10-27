@@ -352,6 +352,9 @@ set with the options above when the GUI starts. When the endpoints are on differ
 
 ### The window
 
+- **Title bar:** the window has no system title bar; the toolbar takes its place. Drag the toolbar to move the
+  window, double-click it to maximize or restore the window, and use the buttons at its right end to minimize,
+  maximize or close it. The window's edges resize it.
 - **Toolbar:**
   - the feed state: **Live** while reports arrive, **Waiting for data…** before the first one, and
     **No data for N s** when they stop;

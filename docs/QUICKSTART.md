@@ -118,7 +118,7 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 ### Find your way around
 
 ```
-┌ toolbar: Live · machine · Network pill · GPU pill · [Connection] ───────────────────────────┐
+┌ toolbar: Live · machine · Network pill · GPU pill · [Connection] · – □ ✕ ───────────────────┐
 │ sidebar            │ the page of the selected row                                             │
 │  Manager           │  process: state, Start / Stop / Restart, CPU · Memory · GPU · VRAM ·      │
 │   processmanager   │           Missed beats · Restarts, a 15-minute state band, and the tabs   │
