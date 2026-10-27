@@ -31,7 +31,8 @@ How the process manager and its monitor GUI are built, and how they talk to each
 The manager is a single process that runs the services as its children. All communication goes over ZeroMQ.
 - **The broker (port 5557):** relays commands from the command line and the GUI to the supervision loop, and
   heartbeats from the services.
-- **Health reports (port 6667):** the supervision loop publishes the state of every service.
+- **Health reports (port 6667):** the supervision loop publishes the state of every service every 500 ms, and at
+  once when a service's state changes.
 - **Journal server (port 6670):** reads the systemd journal, and lists the processes in each service's cgroup,
   for the GUI, which may be on another machine.
 
@@ -106,15 +107,22 @@ take the newest GPU sample
 for each service:  check heartbeats → advance a stop in progress → reap an exit (waitpid WNOHANG)
                    → read piped output → build its health report (with its GPU use)
 for each service being retired (--disable, --start all): advance its stop, reap it
-publish the detailed reports on 6667 and the short status on 6668
-wait for messages on the DEALER, at most 500 ms (50 ms while a stop is in progress)
+if 500 ms have passed since the last report, or a service's state, pid or restart count changed:
+                   publish the detailed reports on 6667 and the short status on 6668
+wait for messages on the DEALER, until the next report is due (at most 50 ms while a stop is in progress)
 handle up to 64 messages: commands from PMC or GUI, heartbeats from services
 ```
 
 The start step goes through the services in start order. A service in its grace period, or being stopped, ends
 the step for every service after it, so their starts, automatic restarts and stops for missed heartbeats wait.
 
-So the reports come at least every 500 ms, and sooner when a message arrives. Each service is reaped with
+Every message that arrives starts a pass, so heartbeats keep the passes frequent, but the reports still come
+every 500 ms. A report on every pass would make each subscriber's traffic grow with the square of the number of
+services: N services beating every P seconds start N/P passes a second, each with a report of 144 × N bytes. A
+start, stop, restart, or a service added or removed goes out at once, so a client sees it even when it is over
+within 500 ms.
+
+Each service is reaped with
 `waitpid(pid)`, never `waitpid(-1)`, so other children of the manager, such as the journal server's
 `journalctl`, are left to their owners.
 
@@ -375,12 +383,16 @@ views:
 
 | Worker | Reads | Every |
 |---|---|---|
-| `ZmqWorker` | Reports on 6667. It also sends commands as `GUI` through 5557 and reads the answers. | As they come |
+| `ZmqWorker` | Reports on 6667, keeping only the newest. It also sends commands as `GUI` through 5557 and reads the answers. | As they come |
 | `NetworkWorker` | Broker status on 6669 | As it comes |
 | `SystemdLogWorker` | The manager's unit status and journal, through 6670 | 2 s |
 | `DetailJournalWorker` | The selected service's journal, through 6670 | 2 s, and at once on a new selection |
 | `CgroupLogWorker` | One process's journal, for a log window | 2 s |
 | `CgroupMembersWorker` | The processes in each service's cgroup, through 6670 | 2 s |
+
+Each report holds every service, so an older one has nothing a newer one lacks. `ZmqWorker` reads every report
+waiting on its socket and keeps the last, and it signals the window only after the window has taken the previous
+one. A window that is busy then skips reports instead of falling further behind.
 
 The window computes CPU percent from the difference between two reports. It marks the feed stale when reports
 stop, and keeps a 15-minute history for the state band and the graphs.

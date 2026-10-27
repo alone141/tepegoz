@@ -105,6 +105,12 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   so the GUI's cgroup PIDs tab shows them when the GUI runs on another machine; it used to read the GUI's
   own machine and stayed empty there. A line above the table says why it is empty: the service is not
   running, it runs without a cgroup, or the journal server does not answer.
+- The health reports on 6667, and the short status on 6668, go out every 500 ms, and at once when a service
+  starts, stops, restarts, or is added or removed. They used to go out on every pass of the supervision loop,
+  and every heartbeat starts a pass, so each subscriber's traffic grew with the square of the number of
+  services: 50 services beating every 100 ms sent 186 reports, 1.3 MiB, a second to each GUI, and now send 2
+  reports, 14 KiB. The monitor GUI now shows only the newest report waiting, so a busy GUI skips reports
+  instead of falling behind.
 - `TestServices/` holds test programs with planned behaviours (clean and failing exits, crashes, ignored
   SIGTERM, heartbeats, children, output, environment, CPU and memory use), scenario configs that run them,
   and `run_scenarios.py`, which runs the manager with each config and checks what it does.

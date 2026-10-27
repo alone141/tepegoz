@@ -118,6 +118,9 @@ _color_for_pid = color_for_pid  # former name
 COMMAND_SEND_TIMEOUT_SEC = 3.0
 # A sent command still waiting for the manager's reply after this is forgotten.
 REPLY_TIMEOUT_SEC = 10.0
+# Queued report messages read in one go before the newest is shown; a limit so
+# a flood of them cannot hold up the commands.
+MAX_REPORTS_PER_READ = 100
 # A worker round waits for the journal server in 100 ms steps and stops waiting
 # when asked to stop (a local journalctl call takes at most 5 s), so waiting this
 # long never has to fall back to QThread.terminate() in practice.
@@ -165,7 +168,7 @@ def stop_workers(
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ZmqWorker(QObject):
-    reports_received  = pyqtSignal(list)   # list[dict]
+    reports_ready     = pyqtSignal()       # take_reports() has the newest list[dict]
     connection_status = pyqtSignal(str)
     log_message       = pyqtSignal(str)
 
@@ -191,6 +194,8 @@ class ZmqWorker(QObject):
         self._awaiting: Deque[Tuple[float, str]] = deque()  # (sent at, label), oldest first
         self._finished = False  # the loop has ended; nothing drains the queue
         self._finish_lock = threading.Lock()
+        self._newest: Optional[List[dict]] = None  # reports the window has not taken yet
+        self._newest_lock = threading.Lock()
 
     @pyqtSlot()
     def start(self):
@@ -282,14 +287,11 @@ class ZmqWorker(QObject):
 
             if self._sub in events:
                 try:
-                    frames = self._sub.recv_multipart(flags=zmq.NOBLOCK)
-                    data = frames[-1]          # last frame = payload
-                    # An empty payload is a manager with no processes left.
-                    reports = parse_health_reports(data)
-                    dicts = [report_to_dict(r) for r in reports]
-                    self.reports_received.emit(dicts)
-                except zmq.Again:
-                    pass
+                    data = self._read_newest()
+                    if data is not None:
+                        # An empty payload is a manager with no processes left.
+                        reports = parse_health_reports(data)
+                        self._offer([report_to_dict(r) for r in reports])
                 except ValueError as e:
                     self.log_message.emit(f"Parse error: {e}")
                 except Exception as e:
@@ -302,6 +304,34 @@ class ZmqWorker(QObject):
 
     def stop(self):
         self._running = False
+
+    def take_reports(self) -> Optional[List[dict]]:
+        """Thread-safe: the newest reports not taken yet, or None."""
+        with self._newest_lock:
+            reports, self._newest = self._newest, None
+        return reports
+
+    def _read_newest(self) -> Optional[bytes]:
+        """Take the queued report messages and keep the payload of the last one:
+        each report has every process, so the older ones are out of date."""
+        data = None
+        for _ in range(MAX_REPORTS_PER_READ):
+            try:
+                frames = self._sub.recv_multipart(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+            data = frames[-1]  # last frame = payload
+        return data
+
+    def _offer(self, reports: List[dict]) -> None:
+        """Leave the newest reports for the window. It is only signalled once it
+        has taken the previous ones, so a busy window skips reports instead of
+        working through a backlog of old ones."""
+        with self._newest_lock:
+            signalled = self._newest is not None
+            self._newest = reports
+        if not signalled:
+            self.reports_ready.emit()
 
     def send_command(self, command: CommandEnum, service_name: str, args: str = "") -> bool:
         """Thread-safe: SimpleQueue from any thread; worker drains it.
@@ -1137,7 +1167,7 @@ class ProcessMonitorWindow(QMainWindow):
         self.worker.moveToThread(self.worker_thread)
 
         self.worker_thread.started.connect(self.worker.start)
-        self.worker.reports_received.connect(self._on_reports)
+        self.worker.reports_ready.connect(self._on_reports_ready)
         self.worker.connection_status.connect(self._on_connection_status)
         self.worker.log_message.connect(self._on_log)
 
@@ -1151,7 +1181,7 @@ class ProcessMonitorWindow(QMainWindow):
         thread = getattr(self, "worker_thread", None)
         if worker is not None:
             for sig in (
-                worker.reports_received,
+                worker.reports_ready,
                 worker.connection_status,
                 worker.log_message,
             ):
@@ -1252,6 +1282,12 @@ class ProcessMonitorWindow(QMainWindow):
     def _on_detail_journal(self, name: str, pairs: list, cgroup_path: str, error: str):
         if name and name == self.detail.name:
             self.detail.set_journal(pairs, cgroup_path, error)
+
+    @pyqtSlot()
+    def _on_reports_ready(self) -> None:
+        reports = self.worker.take_reports() if self.worker is not None else None
+        if reports is not None:
+            self._on_reports(reports)
 
     @pyqtSlot(list)
     def _on_reports(self, reports: List[dict]):

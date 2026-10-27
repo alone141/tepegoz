@@ -29,6 +29,22 @@ namespace
 	constexpr int max_messages_per_cycle = 64;
 	// A GPU sample this old means the sampling thread is stuck in a driver call.
 	constexpr std::chrono::milliseconds gpu_sample_stale_after{ 5'000 };
+	// Reports go out on this schedule, not on every pass: each heartbeat wakes the loop, so a report per pass made
+	// every subscriber's traffic grow with the square of the number of services.
+	constexpr std::chrono::milliseconds report_period{ 500 };
+
+	// Whether two reports show the same services in the same states. A change goes out at once instead of at the
+	// next scheduled report, so a start, stop or restart is seen even when it is over within one period.
+	bool SameStates(const std::vector<process_manager::DetailedHealthReportStruct>& a, const std::vector<process_manager::DetailedHealthReportStruct>& b)
+	{
+		return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+			[](const process_manager::DetailedHealthReportStruct& x, const process_manager::DetailedHealthReportStruct& y)
+			{
+				return x.pid == y.pid && x.runtimeHealth.state == y.runtimeHealth.state
+					&& x.runtimeHealth.restatCount == y.runtimeHealth.restatCount
+					&& std::strncmp(x.processName, y.processName, sizeof(x.processName)) == 0;
+			});
+	}
 
 	std::string FixedString(const char* text, size_t capacity)
 	{
@@ -242,6 +258,8 @@ void process_manager::ProcessManager::Run()
 	{
 		logger::Error("Journal server could not bind %s: %s; a GUI on another machine will show no logs", comm::JOURNAL_SERVER_PORT, journalError.c_str());
 	}
+	std::vector<process_manager::DetailedHealthReportStruct> published;
+	auto nextReport = std::chrono::steady_clock::now();
 	while (enabled)
 	{
 		StartSequentialAsync();
@@ -266,16 +284,26 @@ void process_manager::ProcessManager::Run()
 		retiring.erase(std::remove_if(retiring.begin(), retiring.end(),
 			[](const Process& p) { return !p.HasPid(); }), retiring.end());
 
-		zmq::message_t detailedReport(status.data(), sizeof(process_manager::DetailedHealthReportStruct) * status.size());
-		statusPublisher.send(detailedReport, zmq::send_flags::none);
+		const auto now = std::chrono::steady_clock::now();
+		if (now >= nextReport || !SameStates(status, published))
+		{
+			zmq::message_t detailedReport(status.data(), sizeof(process_manager::DetailedHealthReportStruct) * status.size());
+			statusPublisher.send(detailedReport, zmq::send_flags::none);
 
-		auto report = GetSimplifiedHealthReport();
-		zmq::message_t simplifiedReport(reinterpret_cast<char*>(&report), sizeof(report));
-		//listener.send(zmq::buffer(comm::GUI_ID), zmq::send_flags::sndmore);
-		simpleHealthPublisher.send(simplifiedReport, zmq::send_flags::none);
+			auto report = GetSimplifiedHealthReport();
+			zmq::message_t simplifiedReport(reinterpret_cast<char*>(&report), sizeof(report));
+			//listener.send(zmq::buffer(comm::GUI_ID), zmq::send_flags::sndmore);
+			simpleHealthPublisher.send(simplifiedReport, zmq::send_flags::none);
 
-		// Pipe output is drained once per pass above, so a pass comes at least every 500 ms.
-		const auto timeout = IsStopInProgress() ? std::chrono::milliseconds(50) : std::chrono::milliseconds(500);
+			published = std::move(status);
+			nextReport = now + report_period;
+		}
+
+		// Pipe output is drained once per pass above, so a pass comes at least every 500 ms. The wait also ends
+		// when the next report is due.
+		const auto longest = IsStopInProgress() ? std::chrono::milliseconds(50) : std::chrono::milliseconds(500);
+		const auto untilReport = std::chrono::ceil<std::chrono::milliseconds>(nextReport - std::chrono::steady_clock::now());
+		const auto timeout = std::clamp(untilReport, std::chrono::milliseconds(0), longest);
 		try
 		{
 			zmq::poll(items, 1, timeout);
