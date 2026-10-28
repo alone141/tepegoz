@@ -373,6 +373,7 @@ A forked child never logs, because it may hold no lock between `fork` and `exec`
 | `usage_graphs.py` | Usage history (15 minutes) and the graphs. |
 | `journal_view.py` | Log text view: one colour per pid, new lines appended in place. |
 | `remote_journal.py` | Client of the journal server: follows a journal with cursors and lists the cgroups' processes. For an older manager on the GUI's machine it falls back to local `journalctl` and `/sys/fs/cgroup`. |
+| `log_recorder.py`, `record_view.py` | Recording services' logs into files on the GUI's machine, and the **Record logs** dialog. |
 | `systemd_logs.py` | Local `journalctl`, `systemctl` and cgroup reading, and the journal JSON parser. |
 | `health_structs.py` | The binary layouts of reports and commands. |
 | `ui_scale.py` | Font and window sizes that follow the screen. |
@@ -390,6 +391,7 @@ views:
 | `DetailJournalWorker` | The selected service's journal, through 6670 | 2 s, and at once on a new selection |
 | `CgroupLogWorker` | One process's journal, for a log window | 2 s |
 | `CgroupMembersWorker` | The processes in each service's cgroup, through 6670 | 2 s |
+| `LogRecordWorker` | The recorded services' journals, through 6670, written to their files | 2 s, and again at once for one that is behind |
 
 Each report holds every service, so an older one has nothing a newer one lacks. `ZmqWorker` reads every report
 waiting on its socket and keeps the last, and it signals the window only after the window has taken the previous

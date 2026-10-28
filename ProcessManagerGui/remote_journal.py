@@ -251,6 +251,53 @@ class JournalReader(ServerReader):
         return lines, f"{cgroup} (here)", error
 
 
+class JournalFollower(ServerReader):
+    """The lines a journal gets from a moment on, for recording it.
+
+    The first read that reaches the server takes the newest FOLLOW_LINES lines and keeps those written at
+    ``since_us`` or later, by the journal's clock; without ``since_us`` it keeps none, and only finds where the
+    journal ends. So a server that answers late loses nothing written since. Each later read returns the lines
+    written after the previous one, at most FOLLOW_LINES; ``behind`` then says more are waiting. Nothing is read
+    on this machine instead: without the server there is no cursor to go on from.
+    """
+
+    def __init__(self, endpoint: str, kind: str, value: str = "", since_us: Optional[int] = None,
+                 client: Optional[JournalClient] = None, cancelled: Optional[Callable[[], bool]] = None):
+        super().__init__(endpoint, client, cancelled)
+        self.kind = kind
+        self.value = value
+        self.since_us = since_us
+        self.started = False  # the first read is done: what comes after it is new
+        self.behind = False
+        self._cursor = ""
+
+    def read_new(self) -> Tuple[List[JournalLine], Optional[str]]:
+        """Returns (the lines written since the previous read, error)."""
+        self.behind = False
+        if not self._server_answers():
+            return [], self._no_answer()
+        lines = str(FOLLOW_LINES if self.started or self.since_us is not None else 1)
+        payload, error, answered = self._client.request(
+            ["journal", self.kind, self.value, lines, self._cursor], cancelled=self._cancelled
+        )
+        if not answered:
+            self._server_lost()
+            return [], error
+        if error is not None:
+            return [], error
+        new = parse_journal_json(payload or "")
+        if new and new[-1].cursor:
+            self._cursor = new[-1].cursor
+        if not self.started:
+            # Before the first line, an empty journal leaves no cursor: all it gets later is new.
+            self.started = True
+            if self.since_us is None:
+                return [], None
+            return [line for line in new if line.realtime_us >= self.since_us], None
+        self.behind = len(new) >= FOLLOW_LINES
+        return new, None
+
+
 class MembersReader(ServerReader):
     """The processes in every service's cgroup (task_<name>) on the manager's machine."""
 

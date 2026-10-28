@@ -30,7 +30,7 @@ import threading
 import time
 from collections import deque
 from queue import Empty, SimpleQueue
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Sequence, Tuple
 
 import zmq
 from PyQt6.QtCore import QObject, QSize, QThread, QTimer, pyqtSignal, pyqtSlot, Qt
@@ -70,6 +70,7 @@ from network_status import (
     parse_message,
 )
 from network_view import NetworkPage
+from log_recorder import DEFAULT_FOLDER, LogRecorder
 from journal_view import (  # noqa: F401  re-exported: former home of these names
     JournalView,
     NO_PID_COLOR,
@@ -81,6 +82,7 @@ from process_views import (  # noqa: F401  re-exported
     ACCENT,
     ALIVE_STATES,
     BORDER,
+    DANGER,
     MANAGER_NAME,
     SIDEBAR_BG,
     STALE_COLOR,
@@ -105,6 +107,7 @@ from remote_journal import (
     endpoint_on,
     endpoint_port,
 )
+from record_view import RecordLogsDialog
 from systemd_logs import (
     REFRESH_MS,
     task_cgroup_name,
@@ -681,6 +684,45 @@ class CgroupMembersWorker(JournalWorkerBase):
         self.finished.emit()
 
 
+class LogRecordWorker(JournalWorkerBase):
+    """Record the chosen services' journals into files on this machine (log_recorder), off the UI thread."""
+
+    states_ready = pyqtSignal(list)  # [RecordingState], when they change
+    failed = pyqtSignal(str)
+
+    def __init__(self, endpoint: str = JOURNAL_ENDPOINT, parent: Optional[QObject] = None):
+        super().__init__(endpoint, parent)
+        self._wanted: Tuple[Tuple[str, ...], str, Optional[int]] = ((), DEFAULT_FOLDER, None)
+
+    def set_recording(self, names: Sequence[str], folder: str, since_us: Optional[int] = None) -> None:
+        """Thread-safe: a single attribute write, read by the loop each round. No names stops recording.
+
+        New recordings keep the lines written from since_us on, by the manager's clock.
+        """
+        self._wanted = (tuple(names), folder, since_us)
+        self._changed = True
+
+    @pyqtSlot()
+    def start(self):
+        recorder = LogRecorder(cancelled=lambda: not self._running)
+        shown: Optional[list] = None
+        while self._running:
+            self._changed = False
+            names, folder, since_us = self._wanted
+            try:
+                recorder.update(names, folder, self._endpoint, since_us)
+                recorder.poll()
+                states = recorder.states()
+                if states != shown:
+                    shown = states
+                    self.states_ready.emit(states)
+            except Exception as e:
+                self.failed.emit(f"Recording logs: {e}")
+            self._sleep()
+        recorder.close()
+        self.finished.emit()
+
+
 class ProcessLogWindow(QMainWindow):
     """A journal window for one PID (or, kept for scripts, one cgroup)."""
 
@@ -899,6 +941,9 @@ STATUSBAR_STYLE = f"""
 """
 
 
+RECORD_TIP = "Record services' logs into files on this machine"
+
+
 class ProcessMonitorWindow(FramelessMainWindow):
     def __init__(
         self,
@@ -935,6 +980,11 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self._network_rates: Dict[str, Optional[float]] = {}
         self._network_forwarded_rate: Optional[float] = None
         self._network_stale = False
+        self._record_folder = DEFAULT_FOLDER
+        # The manager's clock minus this machine's, from the reports' snapshot times; 0 until one arrives.
+        self._manager_clock_offset_ns = 0
+        self._recording: Tuple[str, ...] = ()  # the services being recorded
+        self._record_dialog: Optional[RecordLogsDialog] = None
 
         self._build_ui()
         self._feed_timer = QTimer(self)
@@ -946,6 +996,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self._start_systemd_worker()
         self._start_cgroup_members_worker()
         self._start_detail_journal_worker()
+        self._start_log_record_worker()
         self._show_connecting()
 
     # ── UI ────────────────────────────────────────────────────────────────
@@ -980,6 +1031,11 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self.lbl_gpu = QLabel("GPU …")
         toolbar.addWidget(self.lbl_gpu)
         self._show_gpu_state(None)
+
+        self.btn_record = QToolButton()
+        self.btn_record.clicked.connect(self._open_record_dialog)
+        toolbar.addWidget(self.btn_record)
+        self._show_recording()
 
         self.btn_connection = QToolButton()
         self.btn_connection.setText("Connection")
@@ -1201,7 +1257,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         worker = getattr(self, worker_attr, None)
         thread = getattr(self, thread_attr, None)
         if worker is not None:
-            for name in ("snapshot_ready", "members_ready", "lines_ready"):
+            for name in ("snapshot_ready", "members_ready", "lines_ready", "states_ready", "failed"):
                 signal = getattr(worker, name, None)
                 if signal is None:
                     continue
@@ -1238,6 +1294,15 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self.detail_journal_thread.start()
         if self.stack.currentWidget() is self.detail and self.detail.name:
             self.detail_journal_worker.set_process(self.detail.name)
+
+    def _start_log_record_worker(self):
+        self.log_record_thread = QThread()
+        self.log_record_worker = LogRecordWorker(self.journal_endpoint)
+        self.log_record_worker.moveToThread(self.log_record_thread)
+        self.log_record_thread.started.connect(self.log_record_worker.start)
+        self.log_record_worker.states_ready.connect(self._on_record_states)
+        self.log_record_worker.failed.connect(self._show_status)
+        self.log_record_thread.start()
 
     def _start_network_worker(self):
         self.network_thread = QThread()
@@ -1302,6 +1367,9 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self._current = new_current
         if reports:  # one GPU sample for all of them; an empty array says nothing
             self._on_gpu_state(reports[0]["gpuState"])
+            # A report leaves the manager as soon as it is taken, so its snapshot time is about the manager's
+            # now; a late one only makes a recording start a little early.
+            self._manager_clock_offset_ns = max(r["snapshotTime"] for r in reports) - time.time_ns()
 
         now = time.monotonic()
         self._feed.on_report(now)
@@ -1313,6 +1381,8 @@ class ProcessMonitorWindow(FramelessMainWindow):
         if self.stack.currentWidget() is self.detail and shown and shown not in self._current:
             self.sidebar.select_manager()  # the shown process left the reports
         self.sidebar.set_processes(self._current)
+        if self._record_dialog is not None:
+            self._record_dialog.set_services(sorted(self._current))
         self._refresh_detail()
         if self._auto_select and self._current:
             self._auto_select = False
@@ -1549,6 +1619,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
             getattr(self, "systemd_worker", None),
             getattr(self, "detail_journal_worker", None),
             getattr(self, "cgroup_members_worker", None),
+            getattr(self, "log_record_worker", None),
         ):
             if worker is not None:
                 worker.set_endpoint(self.journal_endpoint)
@@ -1563,6 +1634,61 @@ class ProcessMonitorWindow(FramelessMainWindow):
     def _show_connecting(self) -> None:
         machine = self._machine()
         self._show_status(f"Connecting to {'several machines' if machine is None else machine}")
+
+    # ── recording logs ────────────────────────────────────────────────────
+
+    def _open_record_dialog(self) -> None:
+        if self._record_dialog is None:
+            dialog = RecordLogsDialog(self._record_folder, self)
+            dialog.record_requested.connect(self._start_recording)
+            dialog.stop_requested.connect(self._stop_recording)
+            dialog.set_recording(bool(self._recording))
+            # The service on show starts ticked.
+            shown = self.detail.name if self.stack.currentWidget() is self.detail else ""
+            dialog.set_services(sorted(self._current), self._recording or ([shown] if shown else []))
+            self._record_dialog = dialog
+        self._record_dialog.show()
+        self._record_dialog.raise_()
+        self._record_dialog.activateWindow()
+
+    def _start_recording(self, names: List[str], folder: str) -> None:
+        self._recording = tuple(names)
+        self._record_folder = folder
+        since_us = (time.time_ns() + self._manager_clock_offset_ns) // 1000
+        worker = getattr(self, "log_record_worker", None)
+        if worker is not None:
+            worker.set_recording(self._recording, folder, since_us)
+        self._show_recording()
+        plural = "service" if len(names) == 1 else "services"
+        self._show_status(f"Recording the logs of {len(names)} {plural} into {folder}")
+
+    def _stop_recording(self) -> None:
+        self._recording = ()
+        worker = getattr(self, "log_record_worker", None)
+        if worker is not None:
+            worker.set_recording((), self._record_folder)
+        self._show_recording()
+        self._show_status(f"Recording stopped; the files are in {self._record_folder}")
+
+    def _on_record_states(self, states: list) -> None:
+        if self._record_dialog is not None:
+            self._record_dialog.set_states(states)
+        active = [s for s in states if s.active]
+        self.btn_record.setToolTip(
+            "\n".join(f"{s.name}: {s.lines} lines" + (f" · {s.error}" if s.error else "") for s in active)
+            if active else RECORD_TIP
+        )
+
+    def _show_recording(self) -> None:
+        if self._recording:
+            self.btn_record.setText(f"● Recording · {len(self._recording)}")
+            self.btn_record.setStyleSheet(f"QToolButton {{ color: {DANGER}; border-color: {DANGER}; }}")
+        else:
+            self.btn_record.setText("Record logs")
+            self.btn_record.setStyleSheet("")
+            self.btn_record.setToolTip(RECORD_TIP)
+        if self._record_dialog is not None:
+            self._record_dialog.set_recording(bool(self._recording))
 
     def _send_cmd(self, cmd: CommandEnum, name: str):
         reply = QMessageBox.question(
@@ -1597,6 +1723,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
             except RuntimeError:
                 pass
         for worker_attr, thread_attr in (
+            ("log_record_worker", "log_record_thread"),
             ("cgroup_members_worker", "cgroup_members_thread"),
             ("detail_journal_worker", "detail_journal_thread"),
             ("systemd_worker", "systemd_thread"),
@@ -1617,6 +1744,8 @@ class ProcessMonitorWindow(FramelessMainWindow):
                 self._usage_window.close()
             except RuntimeError:
                 pass
+        if self._record_dialog is not None:
+            self._record_dialog.close()
         super().closeEvent(event)
 
 

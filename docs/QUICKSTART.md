@@ -118,7 +118,7 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 ### Find your way around
 
 ```
-┌ toolbar: Live · machine · Network pill · GPU pill · [Connection] · – □ ✕ ───────────────────┐
+┌ toolbar: Live · machine · Network pill · GPU pill · [Record logs] · [Connection] · – □ ✕ ──────┐
 │ sidebar            │ the page of the selected row                                             │
 │  Manager           │  process: state, Start / Stop / Restart, CPU · Memory · GPU · VRAM ·      │
 │   processmanager   │           Missed beats · Restarts, a 15-minute state band, and the tabs   │
@@ -134,6 +134,7 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 | See a service's state and use | Click it in the sidebar. The dot colour is its state. |
 | Start, stop or restart it | Click **Start**, **Stop** or **Restart** on its page, or right-click it in the sidebar and pick one, then confirm. |
 | Read its log | Open the **Journal** tab. New lines are added as they arrive. |
+| Record logs into files | Click **Record logs**, tick the services, and press **Record**. **Stop** ends it. |
 | See its processes | Open **cgroup PIDs**. Double-click a PID for that process's own log. |
 | See its use over time | Open the **Graphs** tab. |
 | Compare services over time | Click **Pop out** on the **Graphs** tab and tick the services. |

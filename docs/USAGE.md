@@ -361,6 +361,8 @@ set with the options above when the GUI starts. When the endpoints are on differ
   - the manager's machine; hovering over it lists the four endpoints;
   - the **Network** pill: how many are connected to the broker, red when the broker's status stops coming;
   - the **GPU** pill;
+  - **Record logs**, which reads **● Recording · N** while N services are recorded (see
+    [Recording logs](#recording-logs));
   - **Connection**.
 - **Sidebar:** the manager (**processmanager**), its **network manager** (the broker), then every service
   with a dot for its state and its CPU use. The filter box narrows the list. Right-click a service for
@@ -402,6 +404,24 @@ The GUI reads every log through the manager's journal server on port 6670. The m
 - **cgroup PIDs:** the same server lists the processes in each service's cgroup, read from `/sys/fs/cgroup`
   and `/proc` on the manager's machine. A manager from before this gives no list; on the GUI's own machine the
   GUI then reads the cgroups itself.
+
+### Recording logs
+
+**Record logs** in the toolbar records services' logs into files on the GUI's machine:
+1. Tick the services. The one on show starts ticked.
+2. Pick the folder. It is `ProcessMonitorLogs` in your home folder until you pick another, and it is made if
+   missing.
+3. Press **Record**. Each service gets a file of its own, `<service>_<date>_<time>.log`, with the lines its
+   journal gets from that moment on, by the manager's clock, as `journalctl -o short-iso` prints them.
+4. Press **Stop**. The GUI reads each journal once more, so the files hold everything up to the stop.
+
+While it records:
+- the dialog shows each file and its line count, and can be closed; the toolbar button opens it again;
+- the ticks and the folder stay as they were; to change them, stop and record again;
+- a service that restarts goes on in the same file;
+- if the journal server stops answering, the lines it misses are fetched once it answers again, as long as the
+  journal still holds them;
+- the GUI must stay open: closing it ends the recording, with the lines read up to then.
 
 ### Trying the GUI without a manager
 

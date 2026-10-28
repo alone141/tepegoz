@@ -34,6 +34,7 @@ class JournalLine:
     text: str
     raw_message: str
     cursor: str = ""  # journald's __CURSOR: where to go on from after this line
+    realtime_us: int = 0  # journald's __REALTIME_TIMESTAMP: when it was written, by the writer's clock
 
 
 @dataclass
@@ -125,7 +126,12 @@ def parse_journal_json(text: str) -> List[JournalLine]:
         message = _decode_message(entry.get("MESSAGE"))
         display = _format_short_iso(entry, pid, message)
         cursor = str(entry.get("__CURSOR") or "")
-        lines.append(JournalLine(pid=pid, text=display, raw_message=message, cursor=cursor))
+        try:
+            realtime_us = int(entry.get("__REALTIME_TIMESTAMP") or 0)
+        except (TypeError, ValueError):
+            realtime_us = 0
+        lines.append(JournalLine(pid=pid, text=display, raw_message=message, cursor=cursor,
+                                 realtime_us=realtime_us))
     return lines
 
 
