@@ -363,13 +363,14 @@ set with the options above when the GUI starts. When the endpoints are on differ
   - the **GPU** pill;
   - **Connection**.
 - **Sidebar:** the manager (**processmanager**), its **network manager** (the broker), then every service
-  with a dot for its state and its CPU use. The filter box narrows the list.
+  with a dot for its state and its CPU use. The filter box narrows the list. Right-click a service for
+  **Start**, **Stop** and **Restart**, which ask for confirmation like the buttons on its page.
 - **A service's page:**
   - its state and pid, and **Start**, **Stop** and **Restart** (each asks for confirmation);
   - tiles for CPU (percent of one core), memory, GPU, VRAM, missed beats and restarts;
   - a band of its states over the last 15 minutes;
   - three tabs:
-    - **Graphs**: CPU, memory, GPU and VRAM over time. **Pop out** opens them in a larger window comparing
+    - **Graphs**: its CPU, memory, GPU and VRAM over time. **Pop out** opens them in a larger window comparing
       services.
     - **cgroup PIDs**: the processes in its cgroup on the manager's machine, with their memory and command
       line. Double-click one to open that process's log in a window of its own. The line above the table
@@ -386,9 +387,9 @@ set with the options above when the GUI starts. When the endpoints are on differ
 
 ### Commands
 
-**Start**, **Stop** and **Restart** behave like `--start`, `--kill` and `--restart`. The manager answers
-accepted or refused, and the status bar shows the answer. Only one GUI at a time gets these answers. A second
-GUI that connects takes them over, though both still see every report.
+**Start**, **Stop** and **Restart**, on a service's page or in its sidebar menu, behave like `--start`, `--kill`
+and `--restart`. The manager answers accepted or refused, and the status bar shows the answer. Only one GUI at a
+time gets these answers. A second GUI that connects takes them over, though both still see every report.
 
 ### Logs in the GUI
 

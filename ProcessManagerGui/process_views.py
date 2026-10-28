@@ -18,7 +18,7 @@ import re
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -36,9 +36,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLayout,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -132,6 +132,12 @@ ACTION_STYLES: Dict[CommandEnum, str] = {
     CommandEnum.STOP: _action_style("#c62828", "#d32f2f"),
     CommandEnum.RESTART: _action_style("#ef6c00", "#fb8c00"),
 }
+# The commands, in the order of the page's buttons and of the sidebar's menu.
+COMMAND_LABELS: Tuple[Tuple[CommandEnum, str], ...] = (
+    (CommandEnum.START, "Start"),
+    (CommandEnum.STOP, "Stop"),
+    (CommandEnum.RESTART, "Restart"),
+)
 
 TAB_STYLE = f"""
     QTabWidget::pane {{ border: 1px solid {BORDER}; background: {BG}; }}
@@ -167,6 +173,13 @@ SMALL_BUTTON_STYLE = f"""
     }}
     QPushButton:hover {{ background: #455a64; }}
     QPushButton:pressed {{ background: #263238; }}
+"""
+# The dark palette leaves disabled text as bright as the rest: the menu greys it.
+MENU_STYLE = f"""
+    QMenu {{ background: #2d2d2d; color: {TEXT}; border: 1px solid #444; padding: 4px 0; }}
+    QMenu::item {{ padding: 4px 28px 4px 14px; }}
+    QMenu::item:selected {{ background: {ACCENT}; color: white; }}
+    QMenu::item:disabled {{ background: transparent; color: #666666; }}
 """
 
 
@@ -399,11 +412,13 @@ class SidebarDelegate(QStyledItemDelegate):
 
 
 class ProcessSidebar(QListWidget):
-    """The manager unit and its network manager, then one row per reported process, sorted by name."""
+    """The manager unit and its network manager, then one row per reported process, sorted by name.
+    Right-clicking a process offers Start, Stop and Restart."""
 
     manager_selected = pyqtSignal()
     network_selected = pyqtSignal()
     process_selected = pyqtSignal(str)
+    command_requested = pyqtSignal(object, str)  # CommandEnum, process name
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -524,78 +539,29 @@ class ProcessSidebar(QListWidget):
         elif kind == "svc":
             self.process_selected.emit(current.text())
 
+    # ── commands ──────────────────────────────────────────────────────────
+
+    def contextMenuEvent(self, event) -> None:
+        item = self.itemAt(event.pos())
+        if item is None or item.data(KIND_ROLE) != "svc":
+            return
+        # Like a click: the row's page shows, so the command's effect is in view.
+        self.setCurrentItem(item)
+        name = item.text()  # the row may leave while the menu is open
+        state = (item.data(REPORT_ROLE) or {}).get("state", RuntimeState.UNKNOWN)
+        menu = QMenu(self)
+        menu.setStyleSheet(MENU_STYLE)
+        commands = {}
+        for command, label in COMMAND_LABELS:
+            action = menu.addAction(label)
+            action.setEnabled(action_enabled(command, state))
+            commands[action] = command
+        chosen = menu.exec(event.globalPos())
+        if chosen in commands:
+            self.command_requested.emit(commands[chosen], name)
+
 
 # ── generic widgets ──────────────────────────────────────────────────────────
-
-
-class FlowLayout(QLayout):
-    """Lays widgets out left to right and wraps them onto new rows, like
-    words in a paragraph (a port of Qt's flow layout example)."""
-
-    def __init__(
-        self, parent: Optional[QWidget] = None, h_spacing: int = 6, v_spacing: int = 6
-    ):
-        super().__init__(parent)
-        self._items: List = []
-        self._h_spacing = h_spacing
-        self._v_spacing = v_spacing
-        self.setContentsMargins(0, 0, 0, 0)
-
-    def addItem(self, item) -> None:
-        self._items.append(item)
-
-    def count(self) -> int:
-        return len(self._items)
-
-    def itemAt(self, index: int):
-        return self._items[index] if 0 <= index < len(self._items) else None
-
-    def takeAt(self, index: int):
-        return self._items.pop(index) if 0 <= index < len(self._items) else None
-
-    def expandingDirections(self):
-        return Qt.Orientation.Horizontal
-
-    def hasHeightForWidth(self) -> bool:
-        return True
-
-    def heightForWidth(self, width: int) -> int:
-        return self._arrange(QRect(0, 0, width, 0), test_only=True)
-
-    def setGeometry(self, rect: QRect) -> None:
-        super().setGeometry(rect)
-        self._arrange(rect, test_only=False)
-
-    def sizeHint(self) -> QSize:
-        return self.minimumSize()
-
-    def minimumSize(self) -> QSize:
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        margins = self.contentsMargins()
-        return size + QSize(
-            margins.left() + margins.right(), margins.top() + margins.bottom()
-        )
-
-    def _arrange(self, rect: QRect, test_only: bool) -> int:
-        margins = self.contentsMargins()
-        area = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
-        x, y = area.x(), area.y()
-        row_height = 0
-        for item in self._items:
-            if item.isEmpty():  # a hidden widget takes no room
-                continue
-            hint = item.sizeHint()
-            if x + hint.width() > area.right() + 1 and row_height > 0:
-                x = area.x()
-                y += row_height + self._v_spacing
-                row_height = 0
-            if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), hint))
-            x += hint.width() + self._h_spacing
-            row_height = max(row_height, hint.height())
-        return y + row_height - rect.y() + margins.bottom()
 
 
 class ElidedLabel(QLabel):
@@ -731,8 +697,7 @@ class StateBand(QWidget):
 
 
 class GraphsPanel(QWidget):
-    """The four usage charts for the selected process, with a time span
-    selector and chips to overlay other processes in their own colours."""
+    """The four usage charts for the selected process, with a time span selector."""
 
     SPANS = ((60, "1 min"), (300, "5 min"), (900, "15 min"))
     DEFAULT_SPAN = 300
@@ -741,9 +706,7 @@ class GraphsPanel(QWidget):
         super().__init__(parent)
         self.history = history
         self.name = ""
-        self._compare: set = set()
         self._colors: Dict[str, QColor] = {}
-        self.chips: Dict[str, QPushButton] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 6, 8, 4)
@@ -769,17 +732,6 @@ class GraphsPanel(QWidget):
         top.addStretch()
         root.addLayout(top)
 
-        # Compare chips wrap onto further rows when the pane is narrow.
-        compare_row = QWidget()
-        self._chips_layout = FlowLayout(compare_row, h_spacing=6, v_spacing=4)
-        lbl_compare = QLabel("Compare")
-        lbl_compare.setStyleSheet(f"color: {TEXT_MUTED};")
-        self._chips_layout.addWidget(lbl_compare)
-        self.lbl_none = QLabel("no other process in view")
-        self.lbl_none.setStyleSheet(f"color: {TEXT_MUTED};")
-        self._chips_layout.addWidget(self.lbl_none)
-        root.addWidget(compare_row)
-
         grid = QGridLayout()
         grid.setSpacing(6)
         self.charts = [UsageChart(metric) for metric in METRICS]
@@ -788,7 +740,7 @@ class GraphsPanel(QWidget):
         root.addLayout(grid, 1)
 
         self.lbl_hint = QLabel(
-            "Hover a chart to read every visible series at that moment · "
+            "Hover a chart to read its value at that moment · "
             "one sample a second · the last 15 minutes are kept"
         )
         self.lbl_hint.setStyleSheet(f"color: {TEXT_MUTED};")
@@ -798,7 +750,6 @@ class GraphsPanel(QWidget):
 
     def set_process(self, name: str) -> None:
         self.name = name
-        self._compare.discard(name)
         self._update_legend()
         self.refresh_now()
 
@@ -811,9 +762,6 @@ class GraphsPanel(QWidget):
         checked = self._spans.checkedId()
         return float(checked if checked > 0 else self.DEFAULT_SPAN)
 
-    def compared(self) -> List[str]:
-        return sorted(self._compare)
-
     def shown_names(self) -> List[str]:
         return [name for name, _color, _points in self.charts[0].series]
 
@@ -823,11 +771,7 @@ class GraphsPanel(QWidget):
     def refresh(self, now: float, wall_now: float) -> None:
         span = self.span_seconds()
         since = now - span
-        in_view = [n for n in self.history.names() if self.history.samples(n, since)]
-        self._sync_chips([n for n in in_view if n != self.name])
-        shown = ([self.name] if self.name else []) + [
-            n for n in in_view if n in self._compare and n != self.name
-        ]
+        shown = [self.name] if self.name else []
         samples = {n: self.history.samples(n, since) for n in shown}
         for chart in self.charts:
             chart.set_data(
@@ -842,43 +786,6 @@ class GraphsPanel(QWidget):
         self.lbl_legend.setText(
             f'<span style="color:{color}">■</span> {html.escape(self.name)}'
         )
-
-    def _sync_chips(self, names: List[str]) -> None:
-        if names == list(self.chips):
-            return
-        for chip in self.chips.values():
-            self._chips_layout.removeWidget(chip)
-            chip.hide()  # gone at once, not after the event loop deletes it
-            chip.deleteLater()
-        self.chips = {}
-        for name in names:
-            chip = QPushButton(name)
-            chip.setCheckable(True)
-            chip.setChecked(name in self._compare)
-            chip.setStyleSheet(self._chip_style(name))
-            chip.setToolTip(f"Overlay {name} on the charts")
-            chip.toggled.connect(lambda checked, n=name: self._on_chip(n, checked))
-            self._chips_layout.addWidget(chip)
-            self.chips[name] = chip
-        self.lbl_none.setVisible(not names)
-
-    def _chip_style(self, name: str) -> str:
-        color = self.color(name).name()
-        radius = max(6, int(ui_point_size() * 0.9))
-        return (
-            f"QPushButton {{ border: 1px solid #555; border-radius: {radius}px; "
-            f"padding: 1px {radius}px; color: {TEXT_DIM}; background: transparent; }}"
-            f"QPushButton:checked {{ border-color: {color}; color: {color}; "
-            f"background: {tint(color, 0.16)}; }}"
-            f"QPushButton:hover {{ color: {TEXT}; }}"
-        )
-
-    def _on_chip(self, name: str, checked: bool) -> None:
-        if checked:
-            self._compare.add(name)
-        else:
-            self._compare.discard(name)
-        self.refresh_now()
 
 
 RUNNING_STATES = (RuntimeState.STARTING, RuntimeState.RUNNING, RuntimeState.UNHEALTHY)
@@ -1023,11 +930,7 @@ class ProcessDetailPage(QWidget):
         header.addWidget(self.pill)
         header.addStretch()
         self.buttons: Dict[CommandEnum, QPushButton] = {}
-        for command, label in (
-            (CommandEnum.START, "Start"),
-            (CommandEnum.STOP, "Stop"),
-            (CommandEnum.RESTART, "Restart"),
-        ):
+        for command, label in COMMAND_LABELS:
             button = QPushButton(label)
             button.setStyleSheet(ACTION_STYLES[command])
             button.setEnabled(False)

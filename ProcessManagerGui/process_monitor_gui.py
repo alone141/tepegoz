@@ -1027,6 +1027,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self.sidebar.manager_selected.connect(self._on_manager_selected)
         self.sidebar.network_selected.connect(self._on_network_selected)
         self.sidebar.process_selected.connect(self._on_process_selected)
+        self.sidebar.command_requested.connect(self._send_cmd)
         side_layout.addWidget(self.sidebar, stretch=1)
 
         # Detail: one page per kind of selection

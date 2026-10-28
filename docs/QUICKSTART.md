@@ -132,10 +132,11 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 | To | Do this |
 |---|---|
 | See a service's state and use | Click it in the sidebar. The dot colour is its state. |
-| Start, stop or restart it | Click **Start**, **Stop** or **Restart** on its page, then confirm. |
+| Start, stop or restart it | Click **Start**, **Stop** or **Restart** on its page, or right-click it in the sidebar and pick one, then confirm. |
 | Read its log | Open the **Journal** tab. New lines are added as they arrive. |
 | See its processes | Open **cgroup PIDs**. Double-click a PID for that process's own log. |
-| Compare services over time | Open the **Graphs** tab, or **Pop out** for a larger window. |
+| See its use over time | Open the **Graphs** tab. |
+| Compare services over time | Click **Pop out** on the **Graphs** tab and tick the services. |
 | See the manager's own log | Click **processmanager** at the top of the sidebar. |
 | Change the machine it watches | Click **Connection**, type the machine in **HOST**, and press Enter. |
 
