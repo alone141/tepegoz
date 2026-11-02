@@ -116,6 +116,13 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   edits the endpoints themselves; the toolbar shows the machine, and `--sub`, `--dealer`, `--network` and
   `--journal` still set an endpoint at start. Closing the GUI right after a reconnect no longer hangs for
   8 s and then kills its own worker threads.
+- `status` draws a new table: columns that fit the names, uptime, heartbeat age or missed beats, GPU % and
+  VRAM, coloured states, and a header line with the machine, the count of each state, the GPU state and the
+  time, which says `No report for N s` when the reports stop. Unhealthy services show their CPU and memory,
+  which read 0 before, and the CPU column is headed `CPU %`. `status --once` prints one table and exits.
+- `--start`, `--kill`, `--restart` and `--disable` refuse a name the manager does not have, follow the reports
+  for up to 10 s and print what happened to each service. They exit with 0 when done, 1 when it failed and 2
+  when it is not done within 10 s. `--no-wait` only sends the command, as before.
 - `TestServices/` holds test programs with planned behaviours (clean and failing exits, crashes, ignored
   SIGTERM, heartbeats, children, output, environment, CPU and memory use), scenario configs that run them,
   and `run_scenarios.py`, which runs the manager with each config and checks what it does.

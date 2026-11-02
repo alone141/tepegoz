@@ -87,6 +87,7 @@ Run these on the manager's machine while the manager is running:
 
 ```bash
 iltaren-ProcessManager status                   # live table of every service; Ctrl+C to leave
+iltaren-ProcessManager status --once            # one table, then exit
 iltaren-ProcessManager --start viewer           # start it, and the services in its DependsOn
 iltaren-ProcessManager --kill viewer            # stop it; it stays stopped until started again
 iltaren-ProcessManager --restart server
@@ -94,7 +95,8 @@ iltaren-ProcessManager --kill all               # stop every service
 iltaren-ProcessManager --start all              # stop, rebuild and start every service, Manual ones too
 ```
 
-An exit code of 0 means that the command was sent. Check `status`, or the GUI, to see its effect.
+Each command prints what it did, for example `viewer: Running, pid 4321`. It exits with 0 once that is done,
+1 if it failed or the name is unknown, and 2 if it is not done within 10 s. `--no-wait` only sends the command.
 
 ## 5. Open the monitor GUI
 

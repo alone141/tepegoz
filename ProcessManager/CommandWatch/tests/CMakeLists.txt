@@ -1,0 +1,4 @@
+include(GoogleTest)
+add_executable(command_watch_tests CommandWatchTest.cpp)
+target_link_libraries(command_watch_tests PRIVATE command_watch status_table GTest::gtest_main)
+gtest_discover_tests(command_watch_tests)

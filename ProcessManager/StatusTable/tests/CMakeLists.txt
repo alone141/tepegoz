@@ -1,0 +1,4 @@
+include(GoogleTest)
+add_executable(status_table_tests StatusTableTest.cpp)
+target_link_libraries(status_table_tests PRIVATE status_table GTest::gtest_main)
+gtest_discover_tests(status_table_tests)

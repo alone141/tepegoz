@@ -29,17 +29,10 @@ namespace process_manager {
 
 		static bool ValidateConfig(std::string config); // true when no problem was found
 		static void PrintDependencyGraph(std::string config);
-
-		static void PrintProcessStatus();
-		static bool SendStartService(std::string serviceName);
-		static bool SendDisableService(std::string serviceName);
-		static bool SendKillService(std::string serviceName);
-		static bool SendRestartService(std::string serviceName);
 	private:
 		static void InitializeLogger();
 		bool InitializeProcessManager(const config_section::ConfigValue& document);
 		static void PrintErrors(const std::vector<std::string>& errList);
-		static bool SendCommandMessage(ProcessManagerCommandEnum command, const std::string& serviceName);
 
 		std::unique_ptr<IProcessManager> processManager;
 	};

@@ -41,7 +41,10 @@ The manager is a single process that runs the services as its children. All comm
 | Path | What it is |
 |---|---|
 | `ProcessManager/` | The C++20 CMake project: the manager, its modules and tests. |
-| `ProcessManager/ProcessManagerApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command-line client (`status`, `validate`, `graph`, `--start` …). `test/keepalive.cpp` is a heartbeat example. |
+| `ProcessManager/ProcessManagerApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `--start` …). `test/keepalive.cpp` is a heartbeat example. |
+| `ProcessManager/StatusTable/` | The `status` table, drawn from the health reports. |
+| `ProcessManager/CommandWatch/` | Follows a command in the health reports: where each service stands. |
+| `ProcessManager/StatusClient/` | The command line's ZeroMQ side: reads the reports for `status`, and sends a command and follows it. |
 | `ProcessManager/ProcessManager/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `ProcessManagerCommands.h` holds the command format and the endpoints. |
 | `ProcessManager/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealthStruct.h`). |
 | `ProcessManager/NetworkManager/` | The ZeroMQ message broker. |
@@ -59,7 +62,7 @@ There are two code styles:
 - **Original modules** (`ProcessManagerApp`, `ProcessManager`, `Process`): tabs, `.h` headers, namespace
   `process_manager`.
 - **Newer modules** (`NetworkManager`, `ConfigSection`, `Logger`, `GpuMonitor`, `JournalServer`,
-  `TestServices`): one concept per module, `include/`, `src/` and `tests/` folders, a snake_case namespace,
+  `TestServices`, `StatusTable`, `CommandWatch`, `StatusClient`): one concept per module, `include/`, `src/` and `tests/` folders, a snake_case namespace,
   Doxygen on every public function, and `enum class` result codes instead of exceptions.
 
 ## The manager process
@@ -430,6 +433,9 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 | `gpu_monitor_tests` | 27 | NVML stand-in: sampling, process lists, stuck calls |
 | `journal_server_tests` | 42 | Argument building, the request protocol, stand-in `journalctl` scripts, cgroup listing |
 | `test_service_tests` | 10 | The TestServices helpers |
+| `status_table_tests` | 19 | The `status` table: columns, CPU figures, header, colours |
+| `command_watch_tests` | 17 | Following start, stop, restart and disable, for one service and for all |
+| `status_client_tests` | 13 | Report decoding, `status --once` and commands against a stand-in manager |
 
 `ctest` runs all of them. Two more checks run outside ctest:
 - `TestServices/scripts/run_scenarios.py` runs the real manager against nine scenario configurations, covering

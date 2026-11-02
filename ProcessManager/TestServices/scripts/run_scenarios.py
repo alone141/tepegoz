@@ -147,7 +147,8 @@ class Manager:
                                         stderr=subprocess.STDOUT, start_new_session=True)
 
     def command(self, flag: str, name: str) -> int:
-        result = subprocess.run([self.paths.manager, "--" + flag, name], stdout=subprocess.DEVNULL,
+        # --no-wait: the scenarios time the effect themselves, from before the command.
+        result = subprocess.run([self.paths.manager, "--" + flag, name, "--no-wait"], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, timeout=10)
         return result.returncode
 

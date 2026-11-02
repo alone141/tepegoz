@@ -119,7 +119,8 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 | `validate --config FILE` | Checks `FILE`: YAML syntax with line numbers, unknown keys, wrong values, reserved names, missing executables and folders, missing dependencies, duplicates, cycles. Exits 1 if it finds a problem. |
 | `graph --config FILE` | Prints the order in which the services start. |
 | `generate` | Writes `ProcessManagerConfig.yaml` with every key documented, in the current folder. |
-| `status` | Shows a live table, refreshed every second: name, pid, state, missed beats, restarts, CPU and memory in MB. The CPU column, headed `CPU Usage(us)`, shows percent of one core. CPU and memory show 0 unless the service is Running or Starting. Ctrl+C leaves. |
+| `status` | Shows a live table, redrawn every second. See [The status table](#the-status-table). Ctrl+C leaves. |
+| `status --once` | Prints the table once and exits. It follows the reports for a second first, so CPU has a figure. Exits with 1 if no report comes within 3 s. |
 | `--start NAME`, `-s NAME` | Starts `NAME` and the services in its `DependsOn`. Sets it to Auto, so it is restarted by its `RestartMode`. |
 | `--kill NAME`, `-k NAME` | Stops `NAME` and sets it to Manual, so it stays stopped. |
 | `--restart NAME`, `-r NAME` | Stops `NAME` and starts it again, with its dependencies started first. Sets it to Auto. |
@@ -130,10 +131,40 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 
 - **Where commands go:** `--start`, `--kill`, `--restart` and `--disable` go to the manager on the same machine,
   through `tcp://localhost:5557`.
-- **Exit codes:** 0 means the command was sent, not that it succeeded. The tool exits with 1 if the manager does
-  not take the command within 2 s, or if `NAME` is longer than 31 bytes.
+- **Checking the name:** the command line reads the manager's reports first. A name the manager does not have
+  is not sent; the message lists the names it has.
+- **Following the command:** after sending, the command line follows the reports for up to 10 s and prints what
+  happened to each service, for example `viewer: Running, pid 4321`, `viewer: was not running` or
+  `viewer: started, then stopped again; its log says why`.
+- **Exit codes:**
+  - 0: every service got where the command sends it;
+  - 1: one failed, the name is unknown or longer than 31 bytes, or the manager did not take the command
+    within 2 s;
+  - 2: a service was not there after 10 s, such as one still waiting for its first heartbeat.
+- **`--no-wait`:** sends the command and exits at once, with 0, without checking the name or following it.
 - **Wrong command lines:** an unknown option, an option without its value, or an unknown command exits with 1
   and a message.
+
+### The status table
+
+```text
+target-01 | 4 services: 2 running, 1 unhealthy, 1 stopped | GPU ok | 14:02:31
+NAME              STATE        PID    UPTIME  CPU %    MEMORY  GPU %      VRAM  HEARTBEAT  RESTARTS
+control_loop      Running    10003  02:14:05   27.4  214.1 MB      0       0 B  0.1s ago          2
+sensor_fusion     Unhealthy  10005     05:12    8.1  140.2 MB     21  594.0 MB  3 missed          3
+telemetry_bridge  Running    10006     31:05   15.2   61.4 MB      0       0 B  -                 0
+vision_pipeline   Stopped        -         -      -         -      -         -  -                 5
+```
+
+- **The header line:** the machine, how many services are in each state, the GPU state, and the time of the
+  report. When reports stop, it ends with `No report for N s`.
+- **CPU %:** percent of one core over the last second, so 200 is two busy cores. It shows `-` until two
+  reports of the same process have come.
+- **GPU % and VRAM:** shown only when the manager samples the GPUs.
+- **HEARTBEAT:** how long ago the last heartbeat came, or the missed beats in red. It shows `-` for a service
+  without `CheckHealth`, or before its first heartbeat.
+- **Stopped services:** `-` for the process figures.
+- **Colours:** the states are coloured on a terminal. `NO_COLOR`, `TERM=dumb` or output to a pipe turn them off.
 
 ## Configuration
 

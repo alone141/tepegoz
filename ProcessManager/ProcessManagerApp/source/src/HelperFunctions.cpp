@@ -4,6 +4,8 @@
 #include <string_view>
 #include <cxxopts.hpp>
 #include <ProcessManagerApp.h>
+#include "CommandWatch.hpp"
+#include "StatusClient.hpp"
 
 const char* ConfigTemplate = R"yaml(# Process manager configuration (YAML)
 
@@ -113,6 +115,25 @@ Services:
     XAuthority: /home/user/.Xauthority
 )yaml";
 
+namespace
+{
+	// The manager on this machine: its health reports and its broker.
+	status_client::Endpoints LocalManager()
+	{
+		status_client::Endpoints endpoints{};
+		endpoints.reports = process_manager::comm::HEALTH_LISTEN_PORT_DETAILED;
+		endpoints.commands = process_manager::comm::COMMAND_SERVER_PORT;
+		return endpoints;
+	}
+
+	int SendCommand(command_watch::Command command, const std::string& serviceName, bool follow)
+	{
+		const status_client::CommandCode code = status_client::SendCommand(
+			command, serviceName, LocalManager(), follow, status_client::default_command_timeout);
+		return status_client::ExitCode(code);
+	}
+}
+
 int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 {
 	const std::string prog = (argc > 0 && argv && argv[0]) ? argv[0] : "netmgr";
@@ -125,6 +146,8 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 		("d,disable", "Disable a service", cxxopts::value<std::string>()->default_value(""))
 		("k,kill", "Kill a service", cxxopts::value<std::string>()->default_value(""))
 		("r,restart", "Restart a service", cxxopts::value<std::string>()->default_value(""))
+		("no-wait", "With --start, --kill, --restart or --disable: send the command and exit at once")
+		("once", "With status: print the table once and exit")
 		("c,config", "Path to the YAML config file", cxxopts::value<std::string>()->default_value(""));
 	//("ctl-endpoint", "ZMQ control endpoint (ipc://... or tcp://...)", cxxopts::value<std::string>()->default_value(""))
 	//("log-level", "trace|debug|info|warn|error", cxxopts::value<std::string>()->default_value("info"))
@@ -165,8 +188,12 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 			<< "Commands:\n"
 			<< "  validate   Validate config (keys, values, deps exist, no cycles)\n"
 			<< "  graph      Print dependency order\n"
-			<< "  status     Print current state\n"
+			<< "  status     Live table of every service, redrawn each second; --once prints it once\n"
 			<< "  generate   Generates an example config (ProcessManagerConfig.yaml)\n"
+			<< "\n"
+			<< "--start, --kill, --restart and --disable follow the reports for up to 10 s and print\n"
+			<< "what the command did. Exit code 0: done; 1: failed, unknown service or manager not\n"
+			<< "reachable; 2: not done within 10 s. With --no-wait the command is only sent.\n"
 			<< "\n";
 
 		return 0;
@@ -185,7 +212,11 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 
 	if (cmd == "status")
 	{
-		process_manager::ProcessManagerApp::PrintProcessStatus();
+		if (result.count("once"))
+		{
+			return status_client::PrintStatus(LocalManager()) == status_client::StatusCode::Ok ? 0 : 1;
+		}
+		status_client::WatchStatus(LocalManager());
 		return 0;
 	}
 	else if (cmd == "generate")
@@ -207,21 +238,22 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 		std::cerr << "Unknown command '" << cmd << "'. Use --help to list the commands.\n";
 		return 1;
 	}
-	else if (!startCmd.empty())
+	const bool follow = result.count("no-wait") == 0;
+	if (!startCmd.empty())
 	{
-		return process_manager::ProcessManagerApp::SendStartService(startCmd) ? 0 : 1;
+		return SendCommand(command_watch::Command::Start, startCmd, follow);
 	}
 	else if (!disableCmd.empty())
 	{
-		return process_manager::ProcessManagerApp::SendDisableService(disableCmd) ? 0 : 1;
+		return SendCommand(command_watch::Command::Disable, disableCmd, follow);
 	}
 	else if (!killCmd.empty())
 	{
-		return process_manager::ProcessManagerApp::SendKillService(killCmd) ? 0 : 1;
+		return SendCommand(command_watch::Command::Stop, killCmd, follow);
 	}
 	else if (!restartCmd.empty())
 	{
-		return process_manager::ProcessManagerApp::SendRestartService(restartCmd) ? 0 : 1;
+		return SendCommand(command_watch::Command::Restart, restartCmd, follow);
 	}
 	configPath = config;
 	return -1;
