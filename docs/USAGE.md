@@ -390,8 +390,12 @@ set with the options above when the GUI starts. When the endpoints are on differ
 ### Commands
 
 **Start**, **Stop** and **Restart**, on a service's page or in its sidebar menu, behave like `--start`, `--kill`
-and `--restart`. The manager answers accepted or refused, and the status bar shows the answer. Only one GUI at a
-time gets these answers. A second GUI that connects takes them over, though both still see every report.
+and `--restart`. The manager answers accepted or refused, and the status bar shows the answer:
+- **Each command on a new connection:** the GUI connects to the broker afresh for each command. So a command
+  arrives even when another GUI is open, or when a firewall dropped the GUI's idle connection.
+- **No answer:** a command the manager has not answered within 10 s is reported in the status bar; it may not
+  have arrived.
+- **Several GUIs:** each gets the answers to its own commands, except when two send at the same moment.
 
 ### Logs in the GUI
 

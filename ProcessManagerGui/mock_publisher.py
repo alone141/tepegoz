@@ -277,6 +277,10 @@ def main():
         print(f"[JOURNAL] bound to {args.journal}")
 
     router = ctx.socket(zmq.ROUTER)
+    # Like the manager's broker: a dealer that connects under an identity in use, such as a second GUI, takes it
+    # over, and a reply to an identity that is not connected fails instead of vanishing.
+    router.setsockopt(zmq.ROUTER_HANDOVER, 1)
+    router.setsockopt(zmq.ROUTER_MANDATORY, 1)
     router.bind(args.router)
     print(f"[ROUTER] bound to {args.router}")
     print("Expecting DEALER identity = 'GUI' (or the CLI's 'PMC'), frames: 'BPM' + CommandMessage(65 B)\n")
@@ -384,7 +388,10 @@ def main():
                                       f"{'accepted' if accepted else 'refused'}")
                     if identity == GUI_IDENTITY:
                         # Like the manager: [BPM][b"1" accepted | b"0" refused], GUI only.
-                        router.send_multipart([identity, b"BPM", b"1" if accepted else b"0"])
+                        try:
+                            router.send_multipart([identity, b"BPM", b"1" if accepted else b"0"])
+                        except zmq.ZMQError as e:
+                            print(f"   reply not delivered: {e}")
                     if network is not None:
                         sender = identity.decode(errors="replace")
                         if sender not in network.dealers:

@@ -153,7 +153,8 @@ Each service is reaped with
 
 - **Delivery:** a send never blocks. A message for an identity that is not connected is dropped. The broker logs
   a warning, repeated at most once per 10 s for the same sender and destination, with the count held back.
-- **Takeover:** a second connection with the same identity takes it over (`ROUTER_HANDOVER`).
+- **Takeover:** a second connection with the same identity takes it over (`ROUTER_HANDOVER`). The broker reads
+  nothing more from the first one, which stays open, so what is sent on it vanishes.
 - **Status:** the broker publishes on 6669, as JSON with `"version": 1`.
   - Topic `status` comes every second: who is connected, from where, since when and how many messages each sent.
   - Topic `event` comes for every join, leave and takeover, and for every warning that is logged, so undelivered
@@ -180,6 +181,11 @@ Each service is reaped with
 
 The manager answers the `GUI` identity only, with one frame: `1` for accepted, `0` for refused. The command line
 gets no answer.
+
+Every GUI has the identity `GUI`. Because of the takeover, a GUI whose connection another GUI took over, or whose
+idle connection a firewall dropped without a word, would send into a connection that goes nowhere. So the GUI
+opens a new connection for each command, unless the previous command still waits for its answer. A command with
+no answer after 10 s is reported as such.
 
 ### Heartbeats
 
@@ -385,7 +391,7 @@ views:
 
 | Worker | Reads | Every |
 |---|---|---|
-| `ZmqWorker` | Reports on 6667, keeping only the newest. It also sends commands as `GUI` through 5557 and reads the answers. | As they come |
+| `ZmqWorker` | Reports on 6667, keeping only the newest. It also sends commands as `GUI` through 5557, each on a new connection, and reads the answers. | As they come |
 | `NetworkWorker` | Broker status on 6669 | As it comes |
 | `SystemdLogWorker` | The manager's unit status and journal, through 6670 | 2 s |
 | `DetailJournalWorker` | The selected service's journal, through 6670 | 2 s, and at once on a new selection |
@@ -435,8 +441,8 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 
 - **No authentication:** the ports listen on every interface. Use a firewall.
 - **Fixed ports:** they are compile-time constants, so one manager per machine.
-- **One GUI gets answers:** commands work from every GUI, but only the last GUI to connect gets the
-  accepted/refused answers.
+- **GUIs share one identity:** when two GUIs send commands at the same moment, an answer can reach the other
+  GUI.
 - **Configuration at start-up only:** the file is read once; restart the manager after changing it.
 - **Dependencies only order starts:** stopping or losing a service does not stop the services that depend on it,
   and `--start` starts only direct dependencies.

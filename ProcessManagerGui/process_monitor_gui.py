@@ -127,7 +127,9 @@ _color_for_pid = color_for_pid  # former name
 
 # A command the broker has not accepted by then is dropped, not sent later.
 COMMAND_SEND_TIMEOUT_SEC = 3.0
-# A sent command still waiting for the manager's reply after this is forgotten.
+# Each command opens a new connection; only a wait longer than this is reported.
+CONNECT_GRACE_SEC = 0.5
+# A sent command without the manager's reply after this is reported as unanswered.
 REPLY_TIMEOUT_SEC = 10.0
 # Queued report messages read in one go before the newest is shown; a limit so
 # a flood of them cannot hold up the commands.
@@ -216,6 +218,7 @@ class ZmqWorker(QObject):
         self._ctx: Optional[zmq.Context] = None
         self._sub: Optional[zmq.Socket] = None
         self._dealer: Optional[zmq.Socket] = None
+        self._poller: Optional[zmq.Poller] = None
         self._command_queue: SimpleQueue = SimpleQueue()  # (label, payload)
         self._pending: Optional[Tuple[str, bytes]] = None  # command being sent
         self._pending_since = 0.0  # monotonic time the pending command was taken
@@ -237,16 +240,9 @@ class ZmqWorker(QObject):
             self._sub.connect(self.sub_endpoint)
             self._sub.setsockopt(zmq.RCVTIMEO, 100)
 
-            # DEALER – exact identity required by process manager
-            self._dealer = self._ctx.socket(zmq.DEALER)
-            self._dealer.setsockopt(zmq.IDENTITY, GUI_IDENTITY)
-            self._dealer.setsockopt(zmq.SNDHWM, 100)
-            self._dealer.setsockopt(zmq.SNDTIMEO, 500)
-            self._dealer.setsockopt(zmq.LINGER, 0)
-            # Refuse sends while the broker is unreachable instead of queueing
-            # them to fire whenever it comes back.
-            self._dealer.setsockopt(zmq.IMMEDIATE, 1)
-            self._dealer.connect(self.dealer_endpoint)
+            self._poller = zmq.Poller()
+            self._poller.register(self._sub, zmq.POLLIN)
+            self._open_dealer()
 
             self.connection_status.emit("connected")
         except zmq.ZMQError as e:
@@ -256,10 +252,6 @@ class ZmqWorker(QObject):
             self.connection_status.emit(f"error: {e}")
             self.log_message.emit(f"ZMQ connect failed: {e}")
             return
-
-        poller = zmq.Poller()
-        poller.register(self._sub, zmq.POLLIN)
-        poller.register(self._dealer, zmq.POLLIN)  # the manager's replies
 
         while self._running:
             # ── drain command queue in order (thread-safe SimpleQueue) ──
@@ -271,6 +263,15 @@ class ZmqWorker(QObject):
                         break
                     self._pending_since = time.monotonic()
                     self._pending_logged = False
+                    # A new connection for each command, unless one sent on the
+                    # current connection still waits for its answer.
+                    if not self._awaiting:
+                        try:
+                            self._open_dealer()
+                        except zmq.ZMQError as e:
+                            self.log_message.emit(f"Could not send {self._pending[0]}: {e}")
+                            self._pending = None
+                            continue
                 label, payload = self._pending
                 try:
                     # Original wire format (DEALER → ROUTER):
@@ -290,7 +291,8 @@ class ZmqWorker(QObject):
                         )
                         self._pending = None
                         continue
-                    if not self._pending_logged:
+                    waited = time.monotonic() - self._pending_since
+                    if not self._pending_logged and waited > CONNECT_GRACE_SEC:
                         self.log_message.emit(
                             f"Waiting to send {label} (connecting to {self.dealer_endpoint})"
                         )
@@ -302,12 +304,13 @@ class ZmqWorker(QObject):
 
             # ── poll health reports ──────────────────────────────────────
             try:
-                events = dict(poller.poll(50))
+                events = dict(self._poller.poll(50))
             except zmq.ZMQError:
                 break
 
             if self._dealer in events:
                 self._read_replies()
+            self._expire_replies()
 
             if self._sub in events:
                 try:
@@ -370,6 +373,49 @@ class ZmqWorker(QObject):
             self._command_queue.put((f"{command.name} for {service_name}", payload))
         return True
 
+    def _open_dealer(self) -> None:
+        """A new connection to the broker, in place of the last one.
+
+        It takes the GUI identity over from any connection that holds it: another
+        GUI's, or this GUI's own after a firewall dropped it without a word. The
+        broker then reads nothing from that one, so the commands sent on it would
+        vanish while it seemed connected.
+        """
+        self._close_dealer()
+        dealer = self._ctx.socket(zmq.DEALER)
+        dealer.setsockopt(zmq.IDENTITY, GUI_IDENTITY)  # the manager takes commands from it
+        dealer.setsockopt(zmq.SNDHWM, 100)
+        dealer.setsockopt(zmq.SNDTIMEO, 500)
+        dealer.setsockopt(zmq.LINGER, 0)
+        # Refuse sends while the broker is unreachable instead of queueing
+        # them to fire whenever it comes back.
+        dealer.setsockopt(zmq.IMMEDIATE, 1)
+        try:
+            dealer.connect(self.dealer_endpoint)
+        except zmq.ZMQError:
+            dealer.close(linger=0)
+            raise
+        self._dealer = dealer
+        self._poller.register(dealer, zmq.POLLIN)  # the manager's replies
+
+    def _close_dealer(self) -> None:
+        if self._dealer is None:
+            return
+        if self._poller is not None:
+            self._poller.unregister(self._dealer)
+        self._dealer.close(linger=0)
+        self._dealer = None
+
+    def _expire_replies(self) -> None:
+        """Report the sent commands the manager has not answered in time."""
+        now = time.monotonic()
+        while self._awaiting and now - self._awaiting[0][0] > REPLY_TIMEOUT_SEC:
+            label = self._awaiting.popleft()[1]
+            self.log_message.emit(
+                f"{label}: no answer from the process manager in {REPLY_TIMEOUT_SEC:.0f} s; "
+                "it may not have arrived"
+            )
+
     def _read_replies(self) -> None:
         """The manager answers each command from the GUI identity with b"1" or b"0"."""
         while True:
@@ -383,9 +429,7 @@ class ZmqWorker(QObject):
             reply = frames[-1] if frames else b""
             if reply not in (b"1", b"0"):
                 continue  # not a command reply (version info, for one)
-            now = time.monotonic()
-            while self._awaiting and now - self._awaiting[0][0] > REPLY_TIMEOUT_SEC:
-                self._awaiting.popleft()
+            self._expire_replies()
             label = self._awaiting.popleft()[1] if self._awaiting else "Command"
             if reply == b"1":
                 self.log_message.emit(f"{label}: accepted by the process manager")
@@ -412,9 +456,7 @@ class ZmqWorker(QObject):
         if self._sub:
             self._sub.close(linger=0)
             self._sub = None
-        if self._dealer:
-            self._dealer.close(linger=0)
-            self._dealer = None
+        self._close_dealer()
 
 
 class NetworkWorker(QObject):
