@@ -26,144 +26,144 @@ using namespace process_manager;
 
 namespace
 {
-    constexpr int max_messages_per_cycle = 64;
-    // A GPU sample this old means the sampling thread is stuck in a driver call.
-    constexpr std::chrono::milliseconds gpu_sample_stale_after{ 5'000 };
-    // Reports go out on this schedule, not on every pass: each heartbeat wakes the loop, so a report per pass made
-    // every subscriber's traffic grow with the square of the number of services.
-    constexpr std::chrono::milliseconds report_period{ 500 };
+constexpr int max_messages_per_cycle = 64;
+// A GPU sample this old means the sampling thread is stuck in a driver call.
+constexpr std::chrono::milliseconds gpu_sample_stale_after{ 5'000 };
+// Reports go out on this schedule, not on every pass: each heartbeat wakes the loop, so a report per pass made
+// every subscriber's traffic grow with the square of the number of services.
+constexpr std::chrono::milliseconds report_period{ 500 };
 
-    // Whether two reports show the same services in the same states. A change goes out at once instead of at the
-    // next scheduled report, so a start, stop or restart is seen even when it is over within one period.
-    bool SameStates(const std::vector<process_manager::DetailedHealthReport>& a, const std::vector<process_manager::DetailedHealthReport>& b)
+// Whether two reports show the same services in the same states. A change goes out at once instead of at the
+// next scheduled report, so a start, stop or restart is seen even when it is over within one period.
+bool SameStates(const std::vector<process_manager::DetailedHealthReport>& a, const std::vector<process_manager::DetailedHealthReport>& b)
+{
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+        [](const process_manager::DetailedHealthReport& x, const process_manager::DetailedHealthReport& y)
+        {
+            return x.pid == y.pid && x.runtimeHealth.state == y.runtimeHealth.state
+                && x.runtimeHealth.restartCount == y.runtimeHealth.restartCount
+                && std::strncmp(x.processName, y.processName, sizeof(x.processName)) == 0;
+        });
+}
+
+std::string FixedString(const char* text, size_t capacity)
+{
+    return std::string(text, ::strnlen(text, capacity));
+}
+
+// The manager's unit, and the cgroup that holds task_pm and every task_<name>, as journald records them.
+journal_server::ManagerIdentity JournalIdentity()
+{
+    const std::filesystem::path parent = ProcessGroupBuilder::GetInstance().GetParentGroupPath();
+    const std::filesystem::path relative = parent.lexically_relative("/sys/fs/cgroup");
+    const bool inside = !relative.empty() && relative != "." && *relative.begin() != "..";
+    return journal_server::IdentityFromCgroup(inside ? "/" + relative.generic_string() : "/", ::getpid());
+}
+
+// A process on a GPU, with what tells which service it belongs to.
+struct GpuProcess
+{
+    pid_t pid;
+    pid_t pgid;
+    std::filesystem::path cgroup;
+    gpu_monitor::ProcessGpuUsage usage;
+};
+
+// Turns the GPU samples, which are per process, into GPU use per service for the health reports.
+class GpuUsageReporter
+{
+public:
+    void Update(const gpu_monitor::GpuSnapshot& gpu)
     {
-        return std::equal(a.begin(), a.end(), b.begin(), b.end(),
-            [](const process_manager::DetailedHealthReport& x, const process_manager::DetailedHealthReport& y)
-            {
-                return x.pid == y.pid && x.runtimeHealth.state == y.runtimeHealth.state
-                    && x.runtimeHealth.restartCount == y.runtimeHealth.restartCount
-                    && std::strncmp(x.processName, y.processName, sizeof(x.processName)) == 0;
-            });
+        state = GetState(gpu);
+        if (state != loggedState)
+        {
+            Log(gpu);
+            loggedState = state;
+        }
+        if (gpu.takenAt == takenAt) return; // the sample of the last pass
+        takenAt = gpu.takenAt;
+        processes.clear();
+        for (const auto& entry : gpu.processes)
+        {
+            processes.push_back({ entry.first, ::getpgid(entry.first), ProcessGroupBuilder::GetCgroupPathOf(entry.first), entry.second });
+        }
     }
 
-    std::string FixedString(const char* text, size_t capacity)
+    process_manager::GpuUsage GetUsage(const Process& process) const
     {
-        return std::string(text, ::strnlen(text, capacity));
+        process_manager::GpuUsage usage{};
+        usage.state = state;
+        if (state != process_manager::GpuUsageState::Sampled) return usage;
+
+        bool utilizationKnown = false;
+        bool utilizationMissing = false;
+        int32_t utilization = 0;
+        for (const auto& gpuProcess : processes)
+        {
+            if (!process.IsMember(gpuProcess.pid, gpuProcess.pgid, gpuProcess.cgroup)) continue;
+            usage.memoryUsageInBytes += gpuProcess.usage.memoryBytes;
+            if (gpuProcess.usage.utilizationPercent == gpu_monitor::utilization_unknown)
+            {
+                utilizationMissing = true;
+                continue;
+            }
+            utilizationKnown = true;
+            utilization += gpuProcess.usage.utilizationPercent;
+        }
+        // Unknown only when the driver reports it for none of its GPU processes; without any it uses none.
+        usage.utilizationPercent = utilizationMissing && !utilizationKnown ? -1 : utilization;
+        return usage;
     }
 
-    // The manager's unit, and the cgroup that holds task_pm and every task_<name>, as journald records them.
-    journal_server::ManagerIdentity JournalIdentity()
+private:
+    static process_manager::GpuUsageState GetState(const gpu_monitor::GpuSnapshot& gpu)
     {
-        const std::filesystem::path parent = ProcessGroupBuilder::GetInstance().GetParentGroupPath();
-        const std::filesystem::path relative = parent.lexically_relative("/sys/fs/cgroup");
-        const bool inside = !relative.empty() && relative != "." && *relative.begin() != "..";
-        return journal_server::IdentityFromCgroup(inside ? "/" + relative.generic_string() : "/", ::getpid());
+        if (gpu.status == gpu_monitor::GpuStatus::NotSampled) return process_manager::GpuUsageState::NotSampled;
+        if (std::chrono::steady_clock::now() - gpu.takenAt > gpu_sample_stale_after) return process_manager::GpuUsageState::Stalled;
+        switch (gpu.status)
+        {
+        case gpu_monitor::GpuStatus::Ok:
+            return process_manager::GpuUsageState::Sampled;
+        case gpu_monitor::GpuStatus::LibraryMissing:
+            return process_manager::GpuUsageState::NoDriver;
+        case gpu_monitor::GpuStatus::NoDevice:
+            return process_manager::GpuUsageState::NoDevice;
+        default:
+            return process_manager::GpuUsageState::Failed; // InitFailed or QueryFailed
+        }
     }
 
-    // A process on a GPU, with what tells which service it belongs to.
-    struct GpuProcess
+    void Log(const gpu_monitor::GpuSnapshot& gpu) const
     {
-        pid_t pid;
-        pid_t pgid;
-        std::filesystem::path cgroup;
-        gpu_monitor::ProcessGpuUsage usage;
-    };
-
-    // Turns the GPU samples, which are per process, into GPU use per service for the health reports.
-    class GpuUsageReporter
-    {
-    public:
-        void Update(const gpu_monitor::GpuSnapshot& gpu)
+        switch (state)
         {
-            state = GetState(gpu);
-            if (state != loggedState)
-            {
-                Log(gpu);
-                loggedState = state;
-            }
-            if (gpu.takenAt == takenAt) return; // the sample of the last pass
-            takenAt = gpu.takenAt;
-            processes.clear();
-            for (const auto& entry : gpu.processes)
-            {
-                processes.push_back({ entry.first, ::getpgid(entry.first), ProcessGroupBuilder::GetCgroupPathOf(entry.first), entry.second });
-            }
+        case process_manager::GpuUsageState::Sampled:
+            logger::Info("GPU use is sampled through %s", gpu_monitor::nvml_library);
+            break;
+        case process_manager::GpuUsageState::NoDriver:
+            logger::Info("GPU use is not reported: %s could not be loaded (no NVIDIA driver)", gpu_monitor::nvml_library);
+            break;
+        case process_manager::GpuUsageState::NoDevice:
+            logger::Info("GPU use is not reported: NVML finds no GPU");
+            break;
+        case process_manager::GpuUsageState::Failed:
+            logger::Error("GPU use is not reported: NVML failed with error %d", gpu.nvmlError);
+            break;
+        case process_manager::GpuUsageState::Stalled:
+            logger::Error("GPU use is not reported: no GPU sample for %lld ms, a driver call is not returning",
+                static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - gpu.takenAt).count()));
+            break;
+        default:
+            break;
         }
+    }
 
-        process_manager::GpuUsage GetUsage(const Process& process) const
-        {
-            process_manager::GpuUsage usage{};
-            usage.state = state;
-            if (state != process_manager::GpuUsageState::Sampled) return usage;
-
-            bool utilizationKnown = false;
-            bool utilizationMissing = false;
-            int32_t utilization = 0;
-            for (const auto& gpuProcess : processes)
-            {
-                if (!process.IsMember(gpuProcess.pid, gpuProcess.pgid, gpuProcess.cgroup)) continue;
-                usage.memoryUsageInBytes += gpuProcess.usage.memoryBytes;
-                if (gpuProcess.usage.utilizationPercent == gpu_monitor::utilization_unknown)
-                {
-                    utilizationMissing = true;
-                    continue;
-                }
-                utilizationKnown = true;
-                utilization += gpuProcess.usage.utilizationPercent;
-            }
-            // Unknown only when the driver reports it for none of its GPU processes; without any it uses none.
-            usage.utilizationPercent = utilizationMissing && !utilizationKnown ? -1 : utilization;
-            return usage;
-        }
-
-    private:
-        static process_manager::GpuUsageState GetState(const gpu_monitor::GpuSnapshot& gpu)
-        {
-            if (gpu.status == gpu_monitor::GpuStatus::NotSampled) return process_manager::GpuUsageState::NotSampled;
-            if (std::chrono::steady_clock::now() - gpu.takenAt > gpu_sample_stale_after) return process_manager::GpuUsageState::Stalled;
-            switch (gpu.status)
-            {
-            case gpu_monitor::GpuStatus::Ok:
-                return process_manager::GpuUsageState::Sampled;
-            case gpu_monitor::GpuStatus::LibraryMissing:
-                return process_manager::GpuUsageState::NoDriver;
-            case gpu_monitor::GpuStatus::NoDevice:
-                return process_manager::GpuUsageState::NoDevice;
-            default:
-                return process_manager::GpuUsageState::Failed; // InitFailed or QueryFailed
-            }
-        }
-
-        void Log(const gpu_monitor::GpuSnapshot& gpu) const
-        {
-            switch (state)
-            {
-            case process_manager::GpuUsageState::Sampled:
-                logger::Info("GPU use is sampled through %s", gpu_monitor::nvml_library);
-                break;
-            case process_manager::GpuUsageState::NoDriver:
-                logger::Info("GPU use is not reported: %s could not be loaded (no NVIDIA driver)", gpu_monitor::nvml_library);
-                break;
-            case process_manager::GpuUsageState::NoDevice:
-                logger::Info("GPU use is not reported: NVML finds no GPU");
-                break;
-            case process_manager::GpuUsageState::Failed:
-                logger::Error("GPU use is not reported: NVML failed with error %d", gpu.nvmlError);
-                break;
-            case process_manager::GpuUsageState::Stalled:
-                logger::Error("GPU use is not reported: no GPU sample for %lld ms, a driver call is not returning",
-                    static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - gpu.takenAt).count()));
-                break;
-            default:
-                break;
-            }
-        }
-
-        process_manager::GpuUsageState state = process_manager::GpuUsageState::NotSampled;
-        process_manager::GpuUsageState loggedState = process_manager::GpuUsageState::NotSampled;
-        std::chrono::steady_clock::time_point takenAt{};
-        std::vector<GpuProcess> processes;
-    };
+    process_manager::GpuUsageState state = process_manager::GpuUsageState::NotSampled;
+    process_manager::GpuUsageState loggedState = process_manager::GpuUsageState::NotSampled;
+    std::chrono::steady_clock::time_point takenAt{};
+    std::vector<GpuProcess> processes;
+};
 }
 
 int ProcessManager::StartUp()

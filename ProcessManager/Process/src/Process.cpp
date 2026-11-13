@@ -29,73 +29,73 @@ namespace fs = std::filesystem;
 
 namespace
 {
-    constexpr size_t max_stdio_line = 1024;
-    constexpr int max_stdio_reads = 16;
-    constexpr std::chrono::minutes max_restart_delay{ 5 };
+constexpr size_t max_stdio_line = 1024;
+constexpr int max_stdio_reads = 16;
+constexpr std::chrono::minutes max_restart_delay{ 5 };
 
-    // systemd sets JOURNAL_STREAM to <device>:<inode> of the journal stream behind stdout.
-    bool IsStdoutJournal()
+// systemd sets JOURNAL_STREAM to <device>:<inode> of the journal stream behind stdout.
+bool IsStdoutJournal()
+{
+    const char* stream = std::getenv("JOURNAL_STREAM");
+    unsigned long long device = 0;
+    unsigned long long inode = 0;
+    if (stream == nullptr || std::sscanf(stream, "%llu:%llu", &device, &inode) != 2) return false;
+
+    struct stat status {};
+    if (::fstat(STDOUT_FILENO, &status) != 0) return false;
+    return static_cast<unsigned long long>(status.st_dev) == device && static_cast<unsigned long long>(status.st_ino) == inode;
+}
+
+// The header sd_journal_stream_fd() sends: identifier, unit, priority (6, info),
+// level prefix, forward to syslog, to kmsg, to console.
+std::string JournalStreamHeader(const std::string& identifier)
+{
+    return identifier + "\n\n6\n1\n0\n0\n0\n";
+}
+
+// The functions below run in the child between fork and exec: async-signal-safe calls only.
+void WriteAll(int fd, const char* data, size_t size)
+{
+    while (size > 0)
     {
-        const char* stream = std::getenv("JOURNAL_STREAM");
-        unsigned long long device = 0;
-        unsigned long long inode = 0;
-        if (stream == nullptr || std::sscanf(stream, "%llu:%llu", &device, &inode) != 2) return false;
-
-        struct stat status {};
-        if (::fstat(STDOUT_FILENO, &status) != 0) return false;
-        return static_cast<unsigned long long>(status.st_dev) == device && static_cast<unsigned long long>(status.st_ino) == inode;
+        const ssize_t written = ::write(fd, data, size);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) return;
+        data += written;
+        size -= static_cast<size_t>(written);
     }
+}
 
-    // The header sd_journal_stream_fd() sends: identifier, unit, priority (6, info),
-    // level prefix, forward to syslog, to kmsg, to console.
-    std::string JournalStreamHeader(const std::string& identifier)
+void ChildError(const char* processName, const char* what)
+{
+    const char* reason = std::strerror(errno);
+    for (const char* part : { "[", processName, "] ", what, ": ", reason, "\n" })
     {
-        return identifier + "\n\n6\n1\n0\n0\n0\n";
+        WriteAll(STDERR_FILENO, part, std::strlen(part));
     }
+}
 
-    // The functions below run in the child between fork and exec: async-signal-safe calls only.
-    void WriteAll(int fd, const char* data, size_t size)
+// stdout and stderr become a journal stream of the child's own, so journald files the
+// child's lines under its PID and cgroup instead of the manager's.
+bool ConnectJournalStream(const std::string& header)
+{
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return false;
+
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::strncpy(address.sun_path, JOURNAL_STDOUT_SOCKET, sizeof(address.sun_path) - 1);
+    if (::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0)
     {
-        while (size > 0)
-        {
-            const ssize_t written = ::write(fd, data, size);
-            if (written < 0 && errno == EINTR) continue;
-            if (written <= 0) return;
-            data += written;
-            size -= static_cast<size_t>(written);
-        }
-    }
-
-    void ChildError(const char* processName, const char* what)
-    {
-        const char* reason = std::strerror(errno);
-        for (const char* part : { "[", processName, "] ", what, ": ", reason, "\n" })
-        {
-            WriteAll(STDERR_FILENO, part, std::strlen(part));
-        }
-    }
-
-    // stdout and stderr become a journal stream of the child's own, so journald files the
-    // child's lines under its PID and cgroup instead of the manager's.
-    bool ConnectJournalStream(const std::string& header)
-    {
-        const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-        if (fd < 0) return false;
-
-        sockaddr_un address{};
-        address.sun_family = AF_UNIX;
-        std::strncpy(address.sun_path, JOURNAL_STDOUT_SOCKET, sizeof(address.sun_path) - 1);
-        if (::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0)
-        {
-            ::close(fd);
-            return false;
-        }
-        ::shutdown(fd, SHUT_RD);
-        WriteAll(fd, header.data(), header.size());
-        const bool redirected = ::dup2(fd, STDOUT_FILENO) != -1 && ::dup2(fd, STDERR_FILENO) != -1;
         ::close(fd);
-        return redirected;
+        return false;
     }
+    ::shutdown(fd, SHUT_RD);
+    WriteAll(fd, header.data(), header.size());
+    const bool redirected = ::dup2(fd, STDOUT_FILENO) != -1 && ::dup2(fd, STDERR_FILENO) != -1;
+    ::close(fd);
+    return redirected;
+}
 }
 
 int Process::UpdateArgs(config_section::ConfigSection& section)

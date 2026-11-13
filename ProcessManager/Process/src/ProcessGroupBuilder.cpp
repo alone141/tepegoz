@@ -7,24 +7,24 @@ namespace fs = std::filesystem;
 using namespace process_manager;
 namespace
 {
-    // The cgroup v2 directory a /proc/<pid>/cgroup file names; empty when it names none.
-    fs::path ReadCgroupPath(const fs::path& cgroupFile)
-    {
-        std::ifstream cgroup_file(cgroupFile);
-        std::string line;
+// The cgroup v2 directory a /proc/<pid>/cgroup file names; empty when it names none.
+fs::path ReadCgroupPath(const fs::path& cgroupFile)
+{
+    std::ifstream cgroup_file(cgroupFile);
+    std::string line;
 
-        while (std::getline(cgroup_file, line))
+    while (std::getline(cgroup_file, line))
+    {
+        // cgroup v2 format: "0::/path/to/cgroup"
+        size_t pos = line.find("0::");
+        if (pos != std::string::npos)
         {
-            // cgroup v2 format: "0::/path/to/cgroup"
-            size_t pos = line.find("0::");
-            if (pos != std::string::npos)
-            {
-                std::string path_suffix = line.substr(pos + 3);
-                return fs::path("/sys/fs/cgroup") / fs::path(path_suffix).relative_path();
-            }
+            std::string path_suffix = line.substr(pos + 3);
+            return fs::path("/sys/fs/cgroup") / fs::path(path_suffix).relative_path();
         }
-        return {};
     }
+    return {};
+}
 }
 ProcessGroupBuilder::ProcessGroupBuilder()
 {

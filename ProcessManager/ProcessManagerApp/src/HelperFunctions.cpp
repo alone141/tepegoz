@@ -117,21 +117,21 @@ Services:
 
 namespace
 {
-    // The manager on this machine: its health reports and its broker.
-    status_client::Endpoints LocalManager()
-    {
-        status_client::Endpoints endpoints{};
-        endpoints.reports = process_manager::comm::health_listen_port_detailed;
-        endpoints.commands = process_manager::comm::command_server_port;
-        return endpoints;
-    }
+// The manager on this machine: its health reports and its broker.
+status_client::Endpoints LocalManager()
+{
+    status_client::Endpoints endpoints{};
+    endpoints.reports = process_manager::comm::health_listen_port_detailed;
+    endpoints.commands = process_manager::comm::command_server_port;
+    return endpoints;
+}
 
-    int SendCommand(command_watch::Command command, const std::string& serviceName, bool follow)
-    {
-        const status_client::CommandCode code = status_client::SendCommand(
-            command, serviceName, LocalManager(), follow, status_client::default_command_timeout);
-        return status_client::ExitCode(code);
-    }
+int SendCommand(command_watch::Command command, const std::string& serviceName, bool follow)
+{
+    const status_client::CommandCode code = status_client::SendCommand(
+        command, serviceName, LocalManager(), follow, status_client::default_command_timeout);
+    return status_client::ExitCode(code);
+}
 }
 
 int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
