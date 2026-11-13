@@ -1,12 +1,12 @@
-#pragma once 
+#pragma once
 namespace process_manager
 {
-	enum class RestartModeEnum
-	{
-		Never,
-		OnFailure,
-		Always,
-		UnlessStopped
-	};
+    enum class RestartModeEnum
+    {
+        Never,
+        OnFailure,
+        Always,
+        UnlessStopped
+    };
 
 }

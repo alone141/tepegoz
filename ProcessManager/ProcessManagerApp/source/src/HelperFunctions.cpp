@@ -117,157 +117,157 @@ Services:
 
 namespace
 {
-	// The manager on this machine: its health reports and its broker.
-	status_client::Endpoints LocalManager()
-	{
-		status_client::Endpoints endpoints{};
-		endpoints.reports = process_manager::comm::HEALTH_LISTEN_PORT_DETAILED;
-		endpoints.commands = process_manager::comm::COMMAND_SERVER_PORT;
-		return endpoints;
-	}
+    // The manager on this machine: its health reports and its broker.
+    status_client::Endpoints LocalManager()
+    {
+        status_client::Endpoints endpoints{};
+        endpoints.reports = process_manager::comm::HEALTH_LISTEN_PORT_DETAILED;
+        endpoints.commands = process_manager::comm::COMMAND_SERVER_PORT;
+        return endpoints;
+    }
 
-	int SendCommand(command_watch::Command command, const std::string& serviceName, bool follow)
-	{
-		const status_client::CommandCode code = status_client::SendCommand(
-			command, serviceName, LocalManager(), follow, status_client::default_command_timeout);
-		return status_client::ExitCode(code);
-	}
+    int SendCommand(command_watch::Command command, const std::string& serviceName, bool follow)
+    {
+        const status_client::CommandCode code = status_client::SendCommand(
+            command, serviceName, LocalManager(), follow, status_client::default_command_timeout);
+        return status_client::ExitCode(code);
+    }
 }
 
 int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 {
-	const std::string prog = (argc > 0 && argv && argv[0]) ? argv[0] : "netmgr";
+    const std::string prog = (argc > 0 && argv && argv[0]) ? argv[0] : "netmgr";
 
-	cxxopts::Options options(prog, "Process supervisor and message router");
+    cxxopts::Options options(prog, "Process supervisor and message router");
 
-	options.add_options("General")
-		("h,help", "Show help and exit")
-		("s,start", "Start a service", cxxopts::value<std::string>()->default_value(""))
-		("d,disable", "Disable a service", cxxopts::value<std::string>()->default_value(""))
-		("k,kill", "Kill a service", cxxopts::value<std::string>()->default_value(""))
-		("r,restart", "Restart a service", cxxopts::value<std::string>()->default_value(""))
-		("no-wait", "With --start, --kill, --restart or --disable: send the command and exit at once")
-		("once", "With status: print the table once and exit")
-		("c,config", "Path to the YAML config file", cxxopts::value<std::string>()->default_value(""));
-	//("ctl-endpoint", "ZMQ control endpoint (ipc://... or tcp://...)", cxxopts::value<std::string>()->default_value(""))
-	//("log-level", "trace|debug|info|warn|error", cxxopts::value<std::string>()->default_value("info"))
-	//("dry-run", "Parse config and print planned start order; do not spawn", cxxopts::value<bool>()->default_value("false"));
+    options.add_options("General")
+        ("h,help", "Show help and exit")
+        ("s,start", "Start a service", cxxopts::value<std::string>()->default_value(""))
+        ("d,disable", "Disable a service", cxxopts::value<std::string>()->default_value(""))
+        ("k,kill", "Kill a service", cxxopts::value<std::string>()->default_value(""))
+        ("r,restart", "Restart a service", cxxopts::value<std::string>()->default_value(""))
+        ("no-wait", "With --start, --kill, --restart or --disable: send the command and exit at once")
+        ("once", "With status: print the table once and exit")
+        ("c,config", "Path to the YAML config file", cxxopts::value<std::string>()->default_value(""));
+    //("ctl-endpoint", "ZMQ control endpoint (ipc://... or tcp://...)", cxxopts::value<std::string>()->default_value(""))
+    //("log-level", "trace|debug|info|warn|error", cxxopts::value<std::string>()->default_value("info"))
+    //("dry-run", "Parse config and print planned start order; do not spawn", cxxopts::value<bool>()->default_value("false"));
 
 // Positional: command + rest (e.g. start --only A B)
-	options.add_options("Commands")
-		("command", "Command: validate|graph|status|generate", cxxopts::value<std::string>()->default_value(""));
+    options.add_options("Commands")
+        ("command", "Command: validate|graph|status|generate", cxxopts::value<std::string>()->default_value(""));
 
-	options.parse_positional({ "command" }); // first non-option becomes command
-	options.positional_help("COMMAND [OPTIONS]");
+    options.parse_positional({ "command" }); // first non-option becomes command
+    options.positional_help("COMMAND [OPTIONS]");
 
-	// Allow unknown options
-	//options.allow_unrecognised_options();
+    // Allow unknown options
+    //options.allow_unrecognised_options();
 
-	// cxxopts throws for a command line it cannot parse, such as an unknown option or one without its value.
-	cxxopts::ParseResult result;
-	try
-	{
-		result = options.parse(argc, argv);
-	}
-	catch (const cxxopts::exceptions::exception& e)
-	{
-		std::cerr << e.what() << ". Use --help to list the options.\n";
-		return 1;
-	}
-	const std::string cmd = result["command"].as<std::string>();
-	const std::string startCmd = result["start"].as<std::string>();
-	const std::string disableCmd = result["disable"].as<std::string>();
-	const std::string killCmd = result["kill"].as<std::string>();
-	const std::string restartCmd = result["restart"].as<std::string>();
-	const std::string config = result["config"].as<std::string>();
+    // cxxopts throws for a command line it cannot parse, such as an unknown option or one without its value.
+    cxxopts::ParseResult result;
+    try
+    {
+        result = options.parse(argc, argv);
+    }
+    catch (const cxxopts::exceptions::exception& e)
+    {
+        std::cerr << e.what() << ". Use --help to list the options.\n";
+        return 1;
+    }
+    const std::string cmd = result["command"].as<std::string>();
+    const std::string startCmd = result["start"].as<std::string>();
+    const std::string disableCmd = result["disable"].as<std::string>();
+    const std::string killCmd = result["kill"].as<std::string>();
+    const std::string restartCmd = result["restart"].as<std::string>();
+    const std::string config = result["config"].as<std::string>();
 
-	if (result.count("help"))
-	{
-		std::cout << options.help({ "General", "Commands" }) << "\n";
-		std::cout
-			<< "Commands:\n"
-			<< "  validate   Validate config (keys, values, deps exist, no cycles)\n"
-			<< "  graph      Print dependency order\n"
-			<< "  status     Live table of every service, redrawn each second; --once prints it once\n"
-			<< "  generate   Generates an example config (ProcessManagerConfig.yaml)\n"
-			<< "\n"
-			<< "--start, --kill, --restart and --disable follow the reports for up to 10 s and print\n"
-			<< "what the command did. Exit code 0: done; 1: failed, unknown service or manager not\n"
-			<< "reachable; 2: not done within 10 s. With --no-wait the command is only sent.\n"
-			<< "\n";
+    if (result.count("help"))
+    {
+        std::cout << options.help({ "General", "Commands" }) << "\n";
+        std::cout
+            << "Commands:\n"
+            << "  validate   Validate config (keys, values, deps exist, no cycles)\n"
+            << "  graph      Print dependency order\n"
+            << "  status     Live table of every service, redrawn each second; --once prints it once\n"
+            << "  generate   Generates an example config (ProcessManagerConfig.yaml)\n"
+            << "\n"
+            << "--start, --kill, --restart and --disable follow the reports for up to 10 s and print\n"
+            << "what the command did. Exit code 0: done; 1: failed, unknown service or manager not\n"
+            << "reachable; 2: not done within 10 s. With --no-wait the command is only sent.\n"
+            << "\n";
 
-		return 0;
-	}
-
-
-	if ((cmd == "validate" || cmd == "graph"))
-	{
-		if (config.empty())
-		{
-			std::cerr << "Command '" << cmd << "' requires --config FILE.\n";
-			return 1;
-		}
-	}
+        return 0;
+    }
 
 
-	if (cmd == "status")
-	{
-		if (result.count("once"))
-		{
-			return status_client::PrintStatus(LocalManager()) == status_client::StatusCode::Ok ? 0 : 1;
-		}
-		status_client::WatchStatus(LocalManager());
-		return 0;
-	}
-	else if (cmd == "generate")
-	{
-		GenerateTemplateConfig();
-		return 0;
-	}
-	else if (cmd == "validate")
-	{
-		return process_manager::ProcessManagerApp::ValidateConfig(config) ? 0 : 1;
-	}
-	else if (cmd == "graph")
-	{
-		process_manager::ProcessManagerApp::PrintDependencyGraph(config);
-		return 0;
-	}
-	else if (!cmd.empty())
-	{
-		std::cerr << "Unknown command '" << cmd << "'. Use --help to list the commands.\n";
-		return 1;
-	}
-	const bool follow = result.count("no-wait") == 0;
-	if (!startCmd.empty())
-	{
-		return SendCommand(command_watch::Command::Start, startCmd, follow);
-	}
-	else if (!disableCmd.empty())
-	{
-		return SendCommand(command_watch::Command::Disable, disableCmd, follow);
-	}
-	else if (!killCmd.empty())
-	{
-		return SendCommand(command_watch::Command::Stop, killCmd, follow);
-	}
-	else if (!restartCmd.empty())
-	{
-		return SendCommand(command_watch::Command::Restart, restartCmd, follow);
-	}
-	configPath = config;
-	return -1;
+    if ((cmd == "validate" || cmd == "graph"))
+    {
+        if (config.empty())
+        {
+            std::cerr << "Command '" << cmd << "' requires --config FILE.\n";
+            return 1;
+        }
+    }
+
+
+    if (cmd == "status")
+    {
+        if (result.count("once"))
+        {
+            return status_client::PrintStatus(LocalManager()) == status_client::StatusCode::Ok ? 0 : 1;
+        }
+        status_client::WatchStatus(LocalManager());
+        return 0;
+    }
+    else if (cmd == "generate")
+    {
+        GenerateTemplateConfig();
+        return 0;
+    }
+    else if (cmd == "validate")
+    {
+        return process_manager::ProcessManagerApp::ValidateConfig(config) ? 0 : 1;
+    }
+    else if (cmd == "graph")
+    {
+        process_manager::ProcessManagerApp::PrintDependencyGraph(config);
+        return 0;
+    }
+    else if (!cmd.empty())
+    {
+        std::cerr << "Unknown command '" << cmd << "'. Use --help to list the commands.\n";
+        return 1;
+    }
+    const bool follow = result.count("no-wait") == 0;
+    if (!startCmd.empty())
+    {
+        return SendCommand(command_watch::Command::Start, startCmd, follow);
+    }
+    else if (!disableCmd.empty())
+    {
+        return SendCommand(command_watch::Command::Disable, disableCmd, follow);
+    }
+    else if (!killCmd.empty())
+    {
+        return SendCommand(command_watch::Command::Stop, killCmd, follow);
+    }
+    else if (!restartCmd.empty())
+    {
+        return SendCommand(command_watch::Command::Restart, restartCmd, follow);
+    }
+    configPath = config;
+    return -1;
 }
 void GenerateTemplateConfig()
 {
-	std::ofstream fout;
+    std::ofstream fout;
 
-	fout = std::ofstream("ProcessManagerConfig.yaml");
+    fout = std::ofstream("ProcessManagerConfig.yaml");
 
-	if (fout.is_open())
-	{
-		fout << ConfigTemplate;
-	}
+    if (fout.is_open())
+    {
+        fout << ConfigTemplate;
+    }
 
-	fout.close();
+    fout.close();
 }
