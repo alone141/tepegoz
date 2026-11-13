@@ -57,12 +57,13 @@ The manager is a single process that runs the services as its children. All comm
 | `ProcessManagerGui/` | The monitor GUI (Python 3, PyQt6, pyzmq). |
 | `docs/` | These documents. |
 
-There are two code styles:
-- **Original modules** (`ProcessManagerApp`, `ProcessManager`, `Process`): 4-space indentation, `.hpp` headers in `include/`, `src/` and `tests/` folders, namespace
-  `process_manager`.
-- **Newer modules** (`NetworkManager`, `ConfigSection`, `Logger`, `GpuMonitor`, `JournalServer`,
-  `TestServices`, `StatusTable`, `CommandWatch`, `StatusClient`): one concept per module, `include/`, `src/` and `tests/` folders, a snake_case namespace,
-  Doxygen on every public function, and `enum class` result codes instead of exceptions.
+Every module has the same layout and naming: `.hpp` headers in `include/`, sources in `src/`, tests in
+`tests/`, 4-space indentation, PascalCase types and functions, camelCase members. Two things still set
+the original modules (`ProcessManagerApp`, `ProcessManager`, `Process`) apart from the newer ones:
+- **Namespace:** they share `process_manager`, where each newer module has a snake_case namespace of
+  its own.
+- **Public API:** their functions have no Doxygen blocks yet, and they report a failure as a `bool` or
+  an `int` code, where the newer modules return `enum class` codes.
 
 ## The manager process
 
