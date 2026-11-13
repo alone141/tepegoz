@@ -15,5 +15,12 @@ target_sources(ProcessManager
 )
 
 target_include_directories(ProcessManager PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
+# GetVersionInfo answers with the project's version.
+target_compile_definitions(ProcessManager
+	PRIVATE
+		PROCESSMANAGER_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+		PROCESSMANAGER_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+		PROCESSMANAGER_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+)
 target_link_libraries(ProcessManager PUBLIC Process cppzmq-static config_section logger)
 target_link_libraries(ProcessManager PRIVATE gpu_monitor journal_server)

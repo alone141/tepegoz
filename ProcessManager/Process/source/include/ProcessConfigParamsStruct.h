@@ -35,23 +35,16 @@ namespace process_manager
 		std::string Display = ":1";
 		std::string XAuthority = "/home/user/.Xauthority";
 
-		//meliksahs TODO
-		//std::unordered_map<std::string, std::string> env_overrides;
 		std::vector<std::string> EnviromentVariables;
 
 
 		std::chrono::milliseconds ForceKillTimeoutMs{ 10'000 };
 
-		//meliksahs TODO
-		//int StopSignal = SIGTERM;
 		bool CreateProcessGroup = true;
 		//bool Detach = false;
 
 		std::vector<std::string> DependsOn;
 
-		//meliksahs TODO
-		//StdioPolicyStruct stdin{};
-		//StdioPolicyStruct stderr{};
 		StdioPolicyStruct StdioPolicy{};
 		RestartPolicyStruct RestartPolicy{};
 		HealthPolicyStruct HealthPolicy{};

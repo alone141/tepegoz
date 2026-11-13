@@ -474,7 +474,6 @@ python3 ProcessManagerGui/process_monitor_gui.py
 |---|---|---|---|
 | 5557 | Clients connect to the manager | Services (heartbeats), the command line, the GUI | Message broker (ZeroMQ ROUTER) |
 | 6667 | Clients subscribe | GUI, `status`, `pmt_watch` | Detailed health reports, every 500 ms and at once when a service's state changes |
-| 6668 | Clients subscribe | Other systems | Short 4-byte status of the services named GGM, GGMO, YAM and TIM |
 | 6669 | Clients subscribe | GUI | Broker status every second, and broker events (JSON) |
 | 6670 | Clients connect to the manager | GUI | Journal server |
 

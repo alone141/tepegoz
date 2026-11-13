@@ -2,7 +2,7 @@
 
 Each scenario starts the manager with one of the scenario configs, follows its health reports through pmt_watch,
 sends commands through the manager's own command line, and checks the states, restart counts and output that
-follow. It needs Python 3.7 or newer and nothing else, and the manager's ports (5557, 6667, 6668, 6669) free.
+follow. It needs Python 3.7 or newer and nothing else, and the manager's ports (5557, 6667, 6669) free.
 
   PASS / FAIL  behaviour the scenario checks
   NOTE         behaviour worth knowing, reported without a verdict
@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
-MANAGER_PORTS = (5557, 6667, 6668, 6669)
+MANAGER_PORTS = (5557, 6667, 6669)
 INSTALLED_MANAGER = "iltaren-ProcessManager"
 STOP_LIMIT_S = 30.0
 FIRST_REPORT_LIMIT_S = 10.0

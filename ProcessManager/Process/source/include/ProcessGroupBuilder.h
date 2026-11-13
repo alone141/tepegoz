@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <sys/types.h>
 
-//meliksahs bu buraya olmadi sanki
 namespace process_manager
 {
     class ProcessGroupBuilder

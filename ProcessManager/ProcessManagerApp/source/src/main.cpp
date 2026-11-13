@@ -11,7 +11,6 @@
 #include "Logger.hpp"
 #include "NetworkManager.hpp"
 
-//meliksahs TODO
 process_manager::ProcessManagerApp* manager;
 //process_manager::NetworkManager* networkMaster;
 network_manager::NetworkManager* gNetworkManager = nullptr;

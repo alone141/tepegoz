@@ -81,11 +81,4 @@ namespace process_manager
 	};
 	static_assert(sizeof(DetailedHealthReportStruct) == 144, "the GUI parses 144-byte health reports");
 
-	struct SimpleHealthReportStruct
-	{
-		process_manager::RuntimeStateEnum SDR = process_manager::RuntimeStateEnum::Unknown;
-		process_manager::RuntimeStateEnum GGM = process_manager::RuntimeStateEnum::Unknown;
-		process_manager::RuntimeStateEnum YAM = process_manager::RuntimeStateEnum::Unknown;
-		process_manager::RuntimeStateEnum TIM = process_manager::RuntimeStateEnum::Unknown;
-	};
 }

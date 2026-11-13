@@ -20,8 +20,6 @@ namespace process_manager
 		ProcessManager(const ProcessManager&) = delete;
 		ProcessManager& operator=(const ProcessManager&) = delete;
 
-		process_manager::SimpleHealthReportStruct GetSimplifiedHealthReport();
-
 		void Run() override;
 		void RequestStop() override;
 		int TearDown() override;
@@ -40,7 +38,6 @@ namespace process_manager
 		void StartDependencies(const Process& process) const;
 		bool IsStopInProgress() const;
 		std::vector<Process>::iterator GetProcess(std::string_view processName) const;
-		process_manager::RuntimeStateEnum GetProcessRuntimeState(std::string_view processName) const;
 
 
 		std::unique_ptr<ProcessManagerParams> processParams;
@@ -51,6 +48,5 @@ namespace process_manager
 		zmq::context_t zmqContext;
 		zmq::socket_t listener;
 		zmq::socket_t statusPublisher;
-		zmq::socket_t simpleHealthPublisher;
 	};
 }

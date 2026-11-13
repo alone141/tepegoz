@@ -197,14 +197,12 @@ ProcessManager::ProcessManager(std::unique_ptr<ProcessManagerParams> args)
 	:
 	zmqContext(1),
 	listener(zmqContext, zmq::socket_type::dealer),
-	statusPublisher(zmqContext, zmq::socket_type::pub),
-	simpleHealthPublisher(zmqContext, zmq::socket_type::pub)
+	statusPublisher(zmqContext, zmq::socket_type::pub)
 {
 	listener.set(zmq::sockopt::routing_id, comm::PROCESS_MANAGER_ID);
 	listener.connect(comm::COMMAND_SERVER_PORT);
 
 	statusPublisher.bind(comm::HEALTH_PUBLISH_PORT_DETAILED);
-	simpleHealthPublisher.bind(comm::HEALTH_PUBLISH_PORT_SIMPLE);
 
 	processParams = std::move(args);
 }
@@ -213,28 +211,11 @@ ProcessManager::~ProcessManager()
 	//shutdown
 	listener.close();
 	statusPublisher.close();
-	simpleHealthPublisher.close();
 	zmqContext.close();
 }
-process_manager::SimpleHealthReportStruct process_manager::ProcessManager::GetSimplifiedHealthReport()
-{
-	//meliksahs beray spesifik olmasi cokkotu
-	process_manager::SimpleHealthReportStruct report;
-	report.SDR = GetProcessRuntimeState("GGM"); //TODO @meliksahs
-	report.GGM = GetProcessRuntimeState("GGMO");
-	if (report.SDR == process_manager::RuntimeStateEnum::Running)
-	{
-		report.GGM = process_manager::RuntimeStateEnum::Running;
-	}
-	report.YAM = GetProcessRuntimeState("YAM");
-	report.TIM = GetProcessRuntimeState("TIM");
-	return report;
-}
-
 void process_manager::ProcessManager::Run()
 {
 	logger::Info("Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_DETAILED);
-	logger::Info("Simplified Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_SIMPLE);
 	logger::Info("Heartbeats will be listened from %s as %s", comm::COMMAND_SERVER_PORT, comm::PROCESS_MANAGER_ID.c_str());
 	// The broker learns a dealer's name from what it sends, and this socket otherwise only receives:
 	// a message to itself names it in the broker's log. It comes back here and is ignored.
@@ -289,11 +270,6 @@ void process_manager::ProcessManager::Run()
 		{
 			zmq::message_t detailedReport(status.data(), sizeof(process_manager::DetailedHealthReportStruct) * status.size());
 			statusPublisher.send(detailedReport, zmq::send_flags::none);
-
-			auto report = GetSimplifiedHealthReport();
-			zmq::message_t simplifiedReport(reinterpret_cast<char*>(&report), sizeof(report));
-			//listener.send(zmq::buffer(comm::GUI_ID), zmq::send_flags::sndmore);
-			simpleHealthPublisher.send(simplifiedReport, zmq::send_flags::none);
 
 			published = std::move(status);
 			nextReport = now + report_period;
@@ -676,39 +652,11 @@ bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::mess
 		{
 			VersionReportStruct version{};
 			version.command = ProcessManagerCommandEnum::GetVersionInfo;
-#ifdef GITV_PROJECT_VERSION_MAJOR
-			version.reserved[0] = GITV_PROJECT_VERSION_GUI;
-			version.syy.major = GITV_PROJECT_VERSION_MAJOR;
-			version.syy.minor = GITV_PROJECT_VERSION_MINOR;
-			version.syy.patch = GITV_PROJECT_VERSION_PATCH;
-			version.dam.major = GITV_PROJECT_VERSION_MAJOR;
-			version.dam.minor = GITV_PROJECT_VERSION_MINOR;
-			version.dam.patch = GITV_PROJECT_VERSION_PATCH;
-			version.dam2.major = GITV_PROJECT_VERSION_MAJOR;
-			version.dam2.minor = GITV_PROJECT_VERSION_MINOR;
-			version.dam2.patch = GITV_PROJECT_VERSION_PATCH;
-			version.bpm.major = GITV_PROJECT_VERSION_MAJOR;
-			version.bpm.minor = GITV_PROJECT_VERSION_MINOR;
-			version.bpm.patch = GITV_PROJECT_VERSION_PATCH;
-			version.tim.major = GITV_PROJECT_VERSION_MAJOR;
-			version.tim.minor = GITV_PROJECT_VERSION_MINOR;
-			version.tim.patch = GITV_PROJECT_VERSION_PATCH;
-#endif // GITV_PROJECT_VERSION_MAJOR
-
-#ifdef GITV_YAM_VERSION_MAJOR
-			version.yam.major = GITV_YAM_VERSION_MAJOR;
-			version.yam.minor = GITV_YAM_VERSION_MINOR;
-			version.yam.patch = GITV_YAM_VERSION_PATCH;
-#endif // GITV_YAM_VERSION_MAJOR
-
-#ifdef GITV_GSMGGM_VERSION_MAJOR
-			version.ggm.major = GITV_GSMGGM_VERSION_MAJOR;
-			version.ggm.minor = GITV_GSMGGM_VERSION_MINOR;
-			version.ggm.patch = GITV_GSMGGM_VERSION_PATCH;
-			version.gsm.major = GITV_GSMGGM_VERSION_MAJOR;
-			version.gsm.minor = GITV_GSMGGM_VERSION_MINOR;
-			version.gsm.patch = GITV_GSMGGM_VERSION_PATCH;
-#endif // GITV_GSMGGM_VERSION_MAJOR
+#ifdef PROCESSMANAGER_VERSION_MAJOR
+			version.manager.major = PROCESSMANAGER_VERSION_MAJOR;
+			version.manager.minor = PROCESSMANAGER_VERSION_MINOR;
+			version.manager.patch = PROCESSMANAGER_VERSION_PATCH;
+#endif // PROCESSMANAGER_VERSION_MAJOR
 
 
 			auto result = reinterpret_cast<char*>(&version);
@@ -795,11 +743,3 @@ std::vector<Process>::iterator process_manager::ProcessManager::GetProcess(std::
 	return it;
 }
 
-process_manager::RuntimeStateEnum process_manager::ProcessManager::GetProcessRuntimeState(std::string_view processName) const
-{
-	if (auto it = GetProcess(processName); it != processParams->processList.end())
-	{
-		return it->GetRuntimeState();
-	}
-	else return process_manager::RuntimeStateEnum::Unknown;
-}

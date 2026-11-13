@@ -10,7 +10,7 @@ namespace process_manager
 	{
 		void UpdateArgs(config_section::ConfigSection& section);
 
-		bool CheckHealth = false; //enable health checks //todo ENABLE HEARTBEAT meliksahs
+		bool CheckHealth = false; // enable health checks
 		std::chrono::milliseconds GracePeriodMs{ 5'000 }; //startup period
 
 		std::chrono::milliseconds HeartbeatPeriodMs{ 1'000 };

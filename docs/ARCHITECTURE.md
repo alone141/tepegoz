@@ -15,7 +15,6 @@ How the process manager and its monitor GUI are built, and how they talk to each
  │    │                                                                 │   │                  │
  │  supervision ── DEALER "BPM" (to the broker)                         │   │                  │
  │    │            PUB *:6667 ─────────────── health reports ───────────┼──►│                  │
- │    │            PUB *:6668 ─────────────── short status (4 bytes)    │   │                  │
  │    │                                                                 │   │                  │
  │  journal server ─ ROUTER *:6670 ◄─── journal reads, cgroup PIDs ─────┼───┤                  │
  │  GPU monitor (NVML)                                                  │   └──────────────────┘
@@ -74,7 +73,7 @@ There are two code styles:
 | main | Start-up, then waits for the supervision thread and shuts down | — |
 | signal | `sigwait` for SIGINT and SIGTERM. The first asks the supervision loop to stop; the second ends the process at once. | — |
 | broker | `NetworkManager::Run`: relays messages between connected sockets | ROUTER `*:5557`, PUB `*:6669` |
-| supervision | `ProcessManager::Run`: the loop below | DEALER `BPM` → 5557, PUB `*:6667`, PUB `*:6668` |
+| supervision | `ProcessManager::Run`: the loop below | DEALER `BPM` → 5557, PUB `*:6667` |
 | GPU monitor | Samples NVML every second; a call stuck for 2 s is left behind | — |
 | journal server | Answers journal reads, running `journalctl` or `systemctl` for each, and lists the services' cgroups | ROUTER `*:6670` |
 
@@ -90,7 +89,7 @@ receives them; services start with no signal blocked.
    services from it.
 4. **Services:** `ProcessManager::GenerateConfig` turns the document into a list of `Process` objects. Unknown
    keys and bad values are logged.
-5. **Sockets and cgroups:** the `ProcessManager` constructor binds 6667 and 6668 and connects its DEALER to the
+5. **Sockets and cgroups:** the `ProcessManager` constructor binds 6667 and connects its DEALER to the
    broker's address (the broker itself is bound in step 7; ZeroMQ connects once it is). Then `ProcessGroupBuilder` creates `task_pm`, moves the manager into it, and enables the `cpu` and
    `memory` controllers for the service cgroups.
 6. **Order and checks:** the services are sorted by `DependsOn` (Kahn's algorithm), and each one's paths are
@@ -111,7 +110,7 @@ for each service:  check heartbeats → advance a stop in progress → reap an e
                    → read piped output → build its health report (with its GPU use)
 for each service being retired (--disable, --start all): advance its stop, reap it
 if 500 ms have passed since the last report, or a service's state, pid or restart count changed:
-                   publish the detailed reports on 6667 and the short status on 6668
+                   publish the detailed reports on 6667
 wait for messages on the DEALER, until the next report is due (at most 50 ms while a stop is in progress)
 handle up to 64 messages: commands from PMC or GUI, heartbeats from services
 ```
@@ -133,7 +132,7 @@ Each service is reaped with
 
 1. **Stopping the services:** a signal (or a broker failure) asks the loop to stop, and the loop ends.
 2. **Waiting for them:** the supervision thread then sends every service SIGTERM at once and waits for all of
-   them, escalating as usual. Nothing is published on 6667 and 6668, and no command is taken, during this wait.
+   them, escalating as usual. Nothing is published on 6667, and no command is taken, during this wait.
 3. **Ending the process:** the supervision thread returns. Main closes the manager, logs, and ends the process
    with `_Exit(0)`, without unwinding the broker and signal threads, which have no way to stop. The exit code is
    0 after a broker failure too.
@@ -225,12 +224,6 @@ The C++ layout is `DetailedHealthReportStruct` in `Process/source/include/Runtim
 layout is `DetailedHealthReport` in `ProcessManagerGui/health_structs.py`. A `static_assert` and a Python
 `assert` keep both at 144 bytes.
 
-The short status on 6668 is 4 bytes, one state each, kept for an older consumer:
-- byte 0: the service named GGM;
-- byte 1: GGMO, but Running whenever GGM is running;
-- byte 2: YAM;
-- byte 3: TIM.
-
 ### Journal reads and cgroup PIDs (port 6670)
 
 A REQ or DEALER client sends one of the requests below, and gets `["ok", output]` or `["error", text]` back:
@@ -246,8 +239,8 @@ A REQ or DEALER client sends one of the requests below, and gets `["ok", output]
 
 The `members` answer has one line per cgroup and one per process in it, with tab-separated fields:
 ```
-cgroup	GGM
-pid	GGM	1234	52428800	python3	python3 /home/user/main.py
+cgroup	sensor_fusion
+pid	sensor_fusion	1234	52428800	python3	python3 /home/user/main.py
 ```
 - **Process fields:** the service name, the pid, the resident memory in bytes (`VmRSS`), `comm`, and the command
   line with its arguments separated by spaces, cut after 4096 bytes. Control characters in `comm` and the command

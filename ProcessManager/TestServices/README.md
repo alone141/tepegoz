@@ -54,7 +54,7 @@ build/ProcessManagerApp/source/ProcessManagerApp --kill second
 
 `scripts/run_scenarios.py` runs the scenarios one after another. For each, it starts the manager, follows its
 reports through `pmt_watch`, sends commands, and checks states, restart counts, timings and output. It needs only
-Python 3.7 or newer, and the manager's ports (5557, 6667, 6668, 6669) free, so stop any running manager first.
+Python 3.7 or newer, and the manager's ports (5557, 6667, 6669) free, so stop any running manager first.
 
 ```bash
 python3 TestServices/scripts/run_scenarios.py --build-dir build

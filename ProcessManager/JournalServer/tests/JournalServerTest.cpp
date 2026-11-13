@@ -22,10 +22,10 @@ namespace
 constexpr std::chrono::milliseconds reply_wait{10000};
 const std::string unit_parent = "/system.slice/processmanager.service";
 const journal_server::ManagerIdentity unit_identity = journal_server::IdentityFromCgroup(unit_parent, 4242);
-const std::string fake_members = "cgroup\tGGM\n"
-                                 "pid\tGGM\t10\t2097152\tpython3\tpython3 /opt/main.py\n"
-                                 "pid\tGGM\t20\t0\t\t\n"
-                                 "cgroup\tYAM\n";
+const std::string fake_members = "cgroup\talpha\n"
+                                 "pid\talpha\t10\t2097152\tpython3\tpython3 /opt/main.py\n"
+                                 "pid\talpha\t20\t0\t\t\n"
+                                 "cgroup\tbeta\n";
 
 std::vector<std::string> Tail(std::vector<std::string> args)
 {
@@ -140,13 +140,13 @@ journal_server::JournalServer Started(const std::string& journalctl, const std::
     return server;
 }
 
-// The cgroups and /proc of a manager in processmanager.service, inside the test's folder: GGM runs pid 10 and
-// pid 20, which has gone; YAM's cgroup is empty.
+// The cgroups and /proc of a manager in processmanager.service, inside the test's folder: alpha runs pid 10 and
+// pid 20, which has gone; beta's cgroup is empty.
 journal_server::SystemPaths FakeSystem(const ScriptFolder& folder, const std::string& parent = unit_parent)
 {
     folder.Write("cgroup" + parent + "/task_pm/cgroup.procs", "4242\n");
-    folder.Write("cgroup" + parent + "/task_GGM/cgroup.procs", "20\n10\n");
-    folder.Write("cgroup" + parent + "/task_YAM/cgroup.procs", "");
+    folder.Write("cgroup" + parent + "/task_alpha/cgroup.procs", "20\n10\n");
+    folder.Write("cgroup" + parent + "/task_beta/cgroup.procs", "");
     folder.Write("cgroup" + parent + "/other/cgroup.procs", "30\n");
     folder.Write("cgroup" + parent + "/task_file", "");
     folder.Write("proc/10/comm", "python3\n");
@@ -203,10 +203,10 @@ TEST(JournalServerTest, IdentityNormalizesSlashes)
 TEST(JournalServerTest, ParseReadsEveryFrame)
 {
     journal_server::JournalRequest request{};
-    ASSERT_EQ(journal_server::ParseJournalRequest({"journal", "service", "GGM", "20", "s=1"}, request),
+    ASSERT_EQ(journal_server::ParseJournalRequest({"journal", "service", "alpha", "20", "s=1"}, request),
               journal_server::RequestCode::Ok);
     EXPECT_EQ(request.kind, journal_server::TargetKind::Service);
-    EXPECT_EQ(request.value, "GGM");
+    EXPECT_EQ(request.value, "alpha");
     EXPECT_EQ(request.lines, 20);
     EXPECT_EQ(request.afterCursor, "s=1");
 }
@@ -260,18 +260,18 @@ TEST(JournalServerTest, ManagerJournalWithoutUnitUsesPid)
 TEST(JournalServerTest, ServiceJournalUsesTaskCgroup)
 {
     std::vector<std::string> args{};
-    ASSERT_EQ(journal_server::BuildJournalArgs(Request(journal_server::TargetKind::Service, "GGM"), unit_identity, args),
+    ASSERT_EQ(journal_server::BuildJournalArgs(Request(journal_server::TargetKind::Service, "alpha"), unit_identity, args),
               journal_server::RequestCode::Ok);
-    EXPECT_EQ(args, Tail({"_SYSTEMD_CGROUP=/system.slice/processmanager.service/task_GGM", "-n", "50"}));
+    EXPECT_EQ(args, Tail({"_SYSTEMD_CGROUP=/system.slice/processmanager.service/task_alpha", "-n", "50"}));
 }
 
 TEST(JournalServerTest, ServiceJournalAtCgroupRoot)
 {
     std::vector<std::string> args{};
-    ASSERT_EQ(journal_server::BuildJournalArgs(Request(journal_server::TargetKind::Service, "GGM"),
+    ASSERT_EQ(journal_server::BuildJournalArgs(Request(journal_server::TargetKind::Service, "alpha"),
                                                journal_server::IdentityFromCgroup("/", 1), args),
               journal_server::RequestCode::Ok);
-    EXPECT_EQ(args.front(), "_SYSTEMD_CGROUP=/task_GGM");
+    EXPECT_EQ(args.front(), "_SYSTEMD_CGROUP=/task_alpha");
 }
 
 TEST(JournalServerTest, BadServiceNamesAreRefused)
@@ -368,13 +368,13 @@ TEST(JournalServerTest, ReadsServiceCgroupsAndTheirProcesses)
     ASSERT_EQ(journal_server::ReadServiceCgroups(paths.cgroupRoot / unit_parent.substr(1), paths.procRoot, cgroups),
               journal_server::MembersCode::Ok);
     ASSERT_EQ(cgroups.size(), 2U);
-    EXPECT_EQ(cgroups[0].name, "GGM");
+    EXPECT_EQ(cgroups[0].name, "alpha");
     ASSERT_EQ(cgroups[0].members.size(), 2U);
     EXPECT_EQ(cgroups[0].members[0].pid, 10);
     EXPECT_EQ(cgroups[0].members[0].comm, "python3");
     EXPECT_EQ(cgroups[0].members[0].rssBytes, 2048U * 1024U);
     EXPECT_EQ(cgroups[0].members[0].cmdline, "python3 /opt/main.py");
-    EXPECT_EQ(cgroups[1].name, "YAM");
+    EXPECT_EQ(cgroups[1].name, "beta");
     EXPECT_TRUE(cgroups[1].members.empty());
 }
 
@@ -438,12 +438,12 @@ TEST(JournalServerTest, FormatWritesOneLinePerCgroupAndProcess)
     member.rssBytes = 4096;
     member.cmdline = "x\ny";
     journal_server::ServiceCgroup running{};
-    running.name = "GGM";
+    running.name = "alpha";
     running.members.push_back(member);
     journal_server::ServiceCgroup empty{};
-    empty.name = "YAM";
+    empty.name = "beta";
     EXPECT_EQ(journal_server::FormatServiceCgroups({running, empty}),
-              "cgroup\tGGM\npid\tGGM\t10\t4096\ta b\tx y\ncgroup\tYAM\n");
+              "cgroup\talpha\npid\talpha\t10\t4096\ta b\tx y\ncgroup\tbeta\n");
 }
 
 TEST(JournalServerTest, ServerAnswersVersion)
@@ -478,12 +478,12 @@ TEST(JournalServerTest, ServerRunsJournalctlWithBuiltArguments)
     journal_server::JournalServer server = Started(journalctl, "systemctl");
     Client client{server.BoundEndpoint()};
 
-    const std::vector<std::string> reply = client.Ask({"journal", "service", "GGM", "20", "c0"});
+    const std::vector<std::string> reply = client.Ask({"journal", "service", "alpha", "20", "c0"});
     ASSERT_EQ(reply.size(), 2U);
     EXPECT_EQ(reply[0], "ok");
     EXPECT_EQ(Lines(reply[1]).size(), 2U);
     EXPECT_EQ(Lines(folder.Read("args.txt")),
-              (std::vector<std::string>{"_SYSTEMD_CGROUP=/system.slice/processmanager.service/task_GGM", "-n", "20",
+              (std::vector<std::string>{"_SYSTEMD_CGROUP=/system.slice/processmanager.service/task_alpha", "-n", "20",
                                         "--no-pager", "--all", "--quiet", "-o", "json", "--after-cursor=c0"}));
 }
 

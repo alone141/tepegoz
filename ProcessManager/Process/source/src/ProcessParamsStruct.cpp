@@ -34,9 +34,6 @@ int process_manager::ProcessConfigParams::UpdateArgs(config_section::ConfigSecti
 
 	CreateProcessGroup = section.ReadBool("CreateProcessGroup", true);
 
-	//meliksahs TODO implement later
-	//env_unset
-
 
 	ForceKillTimeoutMs = std::chrono::milliseconds(section.ReadInt("ForceKillTimeoutMs", 10000, 1000, INT_MAX));
 

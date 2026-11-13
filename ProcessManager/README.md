@@ -105,7 +105,7 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   so the GUI's cgroup PIDs tab shows them when the GUI runs on another machine; it used to read the GUI's
   own machine and stayed empty there. A line above the table says why it is empty: the service is not
   running, it runs without a cgroup, or the journal server does not answer.
-- The health reports on 6667, and the short status on 6668, go out every 500 ms, and at once when a service
+- The health reports on 6667 go out every 500 ms, and at once when a service
   starts, stops, restarts, or is added or removed. They used to go out on every pass of the supervision loop,
   and every heartbeat starts a pass, so each subscriber's traffic grew with the square of the number of
   services: 50 services beating every 100 ms sent 186 reports, 1.3 MiB, a second to each GUI, and now send 2
@@ -131,6 +131,9 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   - the log directory;
   - the systemd unit `processmanager.service`, enabled when installing as root;
   - the monitor GUI with its `process-monitor` launcher.
+- The 4-byte short status on port 6668 and the version reply with one slot per sibling system are gone:
+  both served one earlier consumer. `GetVersionInfo` answers with the manager's own version, and the
+  manager binds 6667 only.
 
 ### 0.1.0 
 - First release

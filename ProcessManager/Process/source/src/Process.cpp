@@ -262,7 +262,7 @@ void Process::RequestStop(const ProcessHandleStruct& pHandle, int sig) const
 	if (pHandle.pid <= 0) return;
 	if (pHandle.pgid > 0)
 	{
-		::kill(-pHandle.pgid, sig); //@meliksahs TODO prefer CreateProcessGroup
+		::kill(-pHandle.pgid, sig);
 	}
 	else
 	{
@@ -685,8 +685,7 @@ pid_t Process::ReapExit()
 	while (true)
 	{
 		int status = 0;
-		//meliksahs this might occasionally hang 
-		//even with WNOHANG
+		// This has been seen to hang now and then, even with WNOHANG.
 		pid_t pid = ::waitpid(curentPid, &status, WNOHANG);
 
 		if (pid < 0 && errno == ECHILD)
@@ -869,15 +868,6 @@ bool process_manager::Process::SetupEnviromentVariables()
 	{
 		::putenv(arg.data());
 	}
-	////meliksahs FIX
-	//if (config.ProcessName == "GGM" || config.ProcessName == "GGMO")
-	//{
-	//	if (setenv("PYTHONPATH", "/usr/local/lib/python3.10/site-packages", 1) != 0)
-	//	{
-	//		logger::Debug("[%s] setenv failed with %s", config.ProcessName.c_str(), std::strerror(errno));
-	//	}
-	//}
-
 	return true;
 }
 bool process_manager::Process::SetupDisplay() const
