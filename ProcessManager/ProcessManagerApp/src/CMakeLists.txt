@@ -13,15 +13,15 @@ target_compile_definitions(ProcessManagerApp
 
 target_sources(ProcessManagerApp 
 	PUBLIC
-		${CMAKE_CURRENT_LIST_DIR}/include/ProcessManagerApp.h
-		${CMAKE_CURRENT_LIST_DIR}/include/HelperFunctions.h
+		${CMAKE_CURRENT_LIST_DIR}/../include/ProcessManagerApp.hpp
+		${CMAKE_CURRENT_LIST_DIR}/../include/HelperFunctions.hpp
 	PRIVATE
-		${CMAKE_CURRENT_LIST_DIR}/src/ProcessManagerApp.cpp
-		${CMAKE_CURRENT_LIST_DIR}/src/HelperFunctions.cpp
-		${CMAKE_CURRENT_LIST_DIR}/src/main.cpp
+		${CMAKE_CURRENT_LIST_DIR}/ProcessManagerApp.cpp
+		${CMAKE_CURRENT_LIST_DIR}/HelperFunctions.cpp
+		${CMAKE_CURRENT_LIST_DIR}/main.cpp
 )
 
-target_include_directories(ProcessManagerApp PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
+target_include_directories(ProcessManagerApp PUBLIC "${CMAKE_CURRENT_LIST_DIR}/../include")
 target_link_libraries(ProcessManagerApp PUBLIC ProcessManager network_manager cxxopts::cxxopts config_section logger)
 # status and the commands: the live table, and following what a command does.
 target_link_libraries(ProcessManagerApp PRIVATE status_client command_watch)

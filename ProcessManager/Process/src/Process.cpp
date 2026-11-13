@@ -1,11 +1,11 @@
-#include <Process.h>
+#include "Process.hpp"
 #include <unistd.h>
 #include <signal.h>
 #include <thread>
 #include <sys/wait.h>
 #include <fstream>
 #include <fcntl.h>
-#include <ProcessGroupBuilder.h>
+#include "ProcessGroupBuilder.hpp"
 #include "ConfigSection.hpp"
 #include "Logger.hpp"
 

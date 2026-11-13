@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 
-#include "Process.h"
+#include "Process.hpp"
 
 #include "ConfigSection.hpp"
 #include "Logger.hpp"
-#include "ProcessGroupBuilder.h"
+#include "ProcessGroupBuilder.hpp"
 
 #include <chrono>
 #include <cstdio>

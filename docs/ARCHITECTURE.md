@@ -40,12 +40,12 @@ The manager is a single process that runs the services as its children. All comm
 | Path | What it is |
 |---|---|
 | `ProcessManager/` | The C++20 CMake project: the manager, its modules and tests. |
-| `ProcessManager/ProcessManagerApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `--start` …). `test/keepalive.cpp` is a heartbeat example. |
+| `ProcessManager/ProcessManagerApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `--start` …). `tests/keepalive.cpp` is a heartbeat example. |
 | `ProcessManager/StatusTable/` | The `status` table, drawn from the health reports. |
 | `ProcessManager/CommandWatch/` | Follows a command in the health reports: where each service stands. |
 | `ProcessManager/StatusClient/` | The command line's ZeroMQ side: reads the reports for `status`, and sends a command and follows it. |
-| `ProcessManager/ProcessManager/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `ProcessManagerCommands.h` holds the command format and the endpoints. |
-| `ProcessManager/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealthStruct.h`). |
+| `ProcessManager/ProcessManager/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `ProcessManagerCommands.hpp` holds the command format and the endpoints. |
+| `ProcessManager/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealth.hpp`). |
 | `ProcessManager/NetworkManager/` | The ZeroMQ message broker. |
 | `ProcessManager/ConfigSection/` | Reads the YAML configuration (the only code that uses fkYAML) and reports problems. |
 | `ProcessManager/Logger/` | Logging to the console, the journal and rotating files. |
@@ -58,7 +58,7 @@ The manager is a single process that runs the services as its children. All comm
 | `docs/` | These documents. |
 
 There are two code styles:
-- **Original modules** (`ProcessManagerApp`, `ProcessManager`, `Process`): tabs, `.h` headers, namespace
+- **Original modules** (`ProcessManagerApp`, `ProcessManager`, `Process`): 4-space indentation, `.hpp` headers in `include/`, `src/` and `tests/` folders, namespace
   `process_manager`.
 - **Newer modules** (`NetworkManager`, `ConfigSection`, `Logger`, `GpuMonitor`, `JournalServer`,
   `TestServices`, `StatusTable`, `CommandWatch`, `StatusClient`): one concept per module, `include/`, `src/` and `tests/` folders, a snake_case namespace,
@@ -220,7 +220,7 @@ Sampled. The GUI shows a frame that fails these checks as a parse error in its s
 | 140 | `gpu.state` | `uint8` | 0 not sampled, 1 sampled, 2 no driver, 3 no device, 4 failed, 5 stalled |
 | 141 | reserved | `uint8[3]` | Zero |
 
-The C++ layout is `DetailedHealthReportStruct` in `Process/source/include/RuntimeHealthStruct.h`. The Python
+The C++ layout is `DetailedHealthReportStruct` in `Process/include/RuntimeHealth.hpp`. The Python
 layout is `DetailedHealthReport` in `ProcessManagerGui/health_structs.py`. A `static_assert` and a Python
 `assert` keep both at 144 bytes.
 

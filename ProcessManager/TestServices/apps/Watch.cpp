@@ -2,7 +2,7 @@
 
 #include "TestService.hpp"
 
-#include "RuntimeHealthStruct.h"
+#include "RuntimeHealth.hpp"
 
 #include <chrono>
 #include <cstdio>

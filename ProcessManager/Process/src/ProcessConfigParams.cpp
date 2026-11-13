@@ -1,4 +1,4 @@
-#include <ProcessConfigParamsStruct.h>
+#include "ProcessConfigParams.hpp"
 #include "ConfigSection.hpp"
 #include <climits>
 using namespace process_manager;

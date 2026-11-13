@@ -1,5 +1,5 @@
 #pragma once
-#include <RestartModeEnum.h>
+#include "RestartMode.hpp"
 #include <chrono>
 namespace config_section
 {

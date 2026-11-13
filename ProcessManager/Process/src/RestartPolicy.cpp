@@ -1,4 +1,4 @@
-#include <RestartPolicyStruct.h>
+#include "RestartPolicy.hpp"
 #include "ConfigSection.hpp"
 #include <climits>
 using namespace process_manager;

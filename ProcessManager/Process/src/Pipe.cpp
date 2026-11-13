@@ -1,4 +1,4 @@
-#include <PipeStruct.h>
+#include "Pipe.hpp"
 #include <fcntl.h>
 #include <unistd.h>
 void process_manager::PipeStruct::ConstructPipe()

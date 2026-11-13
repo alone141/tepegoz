@@ -1,4 +1,4 @@
-#include <HealthPolicyStruct.h>
+#include "HealthPolicy.hpp"
 #include "ConfigSection.hpp"
 #include <climits>
 using namespace process_manager;

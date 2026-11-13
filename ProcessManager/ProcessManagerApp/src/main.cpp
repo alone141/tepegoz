@@ -1,12 +1,12 @@
 #include <cxxopts.hpp>
-#include <ProcessManagerApp.h>
+#include "ProcessManagerApp.hpp"
 #include <thread>
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <pthread.h>
 #include <string>
-#include <HelperFunctions.h>
+#include "HelperFunctions.hpp"
 
 #include "Logger.hpp"
 #include "NetworkManager.hpp"

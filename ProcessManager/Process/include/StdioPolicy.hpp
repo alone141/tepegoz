@@ -1,5 +1,5 @@
 #pragma once
-#include <StdioModeEnum.h>
+#include "StdioMode.hpp"
 #include <filesystem>
 namespace config_section
 {

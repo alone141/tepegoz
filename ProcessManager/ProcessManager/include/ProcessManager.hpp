@@ -1,9 +1,9 @@
 #pragma once
-#include <IProcessManager.h>
-#include <Process.h>
-#include <ProcessManagerParams.h>
+#include "IProcessManager.hpp"
+#include "Process.hpp"
+#include "ProcessManagerParams.hpp"
 #include <zmq.hpp>
-#include <ProcessManagerCommands.h>
+#include "ProcessManagerCommands.hpp"
 
 #include <atomic>
 

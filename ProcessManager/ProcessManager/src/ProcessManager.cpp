@@ -3,8 +3,8 @@
 #include <unordered_map>
 #include <queue>
 
-#include <ProcessManager.h>
-#include <PipeStruct.h>
+#include "ProcessManager.hpp"
+#include "Pipe.hpp"
 
 #include <zmq_addon.hpp>
 
@@ -17,7 +17,7 @@
 #include <unistd.h>
 #include <vector>
 
-#include <ProcessGroupBuilder.h>
+#include "ProcessGroupBuilder.hpp"
 #include "ConfigSection.hpp"
 #include "GpuMonitor.hpp"
 #include "JournalServer.hpp"

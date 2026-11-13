@@ -638,7 +638,7 @@ def ports_in_use() -> List[int]:
 def resolve_paths(args: argparse.Namespace) -> Paths:
     if args.build_dir:
         build = os.path.abspath(args.build_dir)
-        paths = Paths(os.path.join(build, "ProcessManagerApp", "source", "ProcessManagerApp"),
+        paths = Paths(os.path.join(build, "ProcessManagerApp", "src", "ProcessManagerApp"),
                       os.path.join(build, "TestServices", "apps"), os.path.join(build, "TestServices", "configs"))
     elif args.prefix:
         prefix = os.path.abspath(args.prefix)

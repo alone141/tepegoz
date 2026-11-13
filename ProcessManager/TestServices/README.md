@@ -45,9 +45,9 @@ exist, to show that the service still starts.
 Run one by hand and watch it:
 
 ```bash
-build/ProcessManagerApp/source/ProcessManagerApp --config build/TestServices/configs/basic.yaml
+build/ProcessManagerApp/src/ProcessManagerApp --config build/TestServices/configs/basic.yaml
 build/TestServices/apps/pmt_watch
-build/ProcessManagerApp/source/ProcessManagerApp --kill second
+build/ProcessManagerApp/src/ProcessManagerApp --kill second
 ```
 
 ## The driver

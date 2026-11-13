@@ -1,5 +1,1 @@
-add_subdirectory(source)
-
-if(ENABLE_TEST)
-	add_subdirectory(test)
-endif()
+add_subdirectory(src)

@@ -1,4 +1,4 @@
-#include <StdioConfigStruct.h>
+#include "StdioPolicy.hpp"
 #include "ConfigSection.hpp"
 #include <string>
 using namespace process_manager;

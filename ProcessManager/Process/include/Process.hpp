@@ -1,5 +1,5 @@
 #pragma once
-#include <ProcessConfigParamsStruct.h>
+#include "ProcessConfigParams.hpp"
 
 #include <cstdint>
 #include <string>

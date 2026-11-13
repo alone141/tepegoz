@@ -1,6 +1,6 @@
 #pragma once
-#include <IProcessManager.h>
-#include <ProcessManagerCommands.h>
+#include "IProcessManager.hpp"
+#include "ProcessManagerCommands.hpp"
 
 #include <memory>
 #include <string>

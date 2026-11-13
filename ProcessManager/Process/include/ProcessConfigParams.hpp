@@ -6,15 +6,15 @@
 #include <sys/types.h>
 #include <vector>
 
-#include <StdioConfigStruct.h>
-#include <RestartPolicyStruct.h>
-#include <HealthPolicyStruct.h>
-#include <ExitStatusStruct.h>
-#include <ProcessHandle.h>
-#include <PipeStruct.h>
-#include <RuntimeHealthStruct.h>
-#include <StopPhaseEnum.h>
-#include <WorkModeEnum.h>
+#include "StdioPolicy.hpp"
+#include "RestartPolicy.hpp"
+#include "HealthPolicy.hpp"
+#include "ExitStatus.hpp"
+#include "ProcessHandle.hpp"
+#include "Pipe.hpp"
+#include "RuntimeHealth.hpp"
+#include "StopPhase.hpp"
+#include "WorkMode.hpp"
 namespace process_manager
 {
 

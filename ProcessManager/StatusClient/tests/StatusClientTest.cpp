@@ -2,8 +2,8 @@
 
 #include "StatusClient.hpp"
 #include "CommandWatch.hpp"
-#include "ProcessManagerCommands.h"
-#include "RuntimeHealthStruct.h"
+#include "ProcessManagerCommands.hpp"
+#include "RuntimeHealth.hpp"
 #include "StatusTable.hpp"
 
 #include <algorithm>

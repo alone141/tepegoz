@@ -1,9 +1,9 @@
-#include <HelperFunctions.h>
+#include "HelperFunctions.hpp"
 #include <fstream>
 #include <iostream>
 #include <string_view>
 #include <cxxopts.hpp>
-#include <ProcessManagerApp.h>
+#include "ProcessManagerApp.hpp"
 #include "CommandWatch.hpp"
 #include "StatusClient.hpp"
 

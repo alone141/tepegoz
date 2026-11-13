@@ -1,7 +1,7 @@
 #pragma once
-#include <Process.h>
+#include "Process.hpp"
 #include <vector>
-#include <WorkModeEnum.h>
+#include "WorkMode.hpp"
 #include "ConfigSection.hpp"
 #include "Logger.hpp"
 namespace process_manager {
