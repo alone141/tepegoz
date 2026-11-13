@@ -3,10 +3,13 @@
 #include <chrono>
 namespace config_section
 {
+
 class ConfigSection;
-}
+
+} // namespace config_section
 namespace process_manager
 {
+
 struct RestartPolicy
 {
     void UpdateArgs(config_section::ConfigSection& section);
@@ -16,4 +19,5 @@ struct RestartPolicy
     std::chrono::milliseconds restartDelayMs{ 1'000 };
     std::chrono::milliseconds restartResetMs{ 60'000 };
 };
-}
+
+} // namespace process_manager

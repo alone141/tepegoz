@@ -9,6 +9,7 @@
 
 namespace process_manager
 {
+
 class ProcessManager : public IProcessManager
 {
 public:
@@ -24,7 +25,7 @@ public:
     void RequestStop() override;
     int TearDown() override;
 
-    static bool SortByDependencies(std::vector<std::string>& err, std::vector<process_manager::Process>& pList);
+    static bool SortByDependencies(std::vector<std::string>& err, std::vector<Process>& pList);
     // Problems in the configuration go to errors when given, else to the log.
     static std::unique_ptr<ProcessManagerParams> GenerateConfig(const config_section::ConfigValue& document, std::vector<std::string>* errors = nullptr);
 private:
@@ -49,4 +50,5 @@ private:
     zmq::socket_t listener;
     zmq::socket_t statusPublisher;
 };
-}
+
+} // namespace process_manager

@@ -5,6 +5,7 @@
 #include <sys/types.h>
 namespace process_manager
 {
+
 enum class RuntimeState : uint8_t
 {
     Unknown,
@@ -18,19 +19,19 @@ static const char* RuntimeStateToString(RuntimeState e)
 {
     switch (e)
     {
-    case process_manager::RuntimeState::Unknown:
+    case RuntimeState::Unknown:
         return "Unknown";
         break;
-    case process_manager::RuntimeState::Starting:
+    case RuntimeState::Starting:
         return "Starting";
         break;
-    case process_manager::RuntimeState::Running:
+    case RuntimeState::Running:
         return "Running";
         break;
-    case process_manager::RuntimeState::Stopped:
+    case RuntimeState::Stopped:
         return "Stopped";
         break;
-    case process_manager::RuntimeState::Unhealthy:
+    case RuntimeState::Unhealthy:
         return "Unhealthy";
         break;
     default:
@@ -81,4 +82,4 @@ struct DetailedHealthReport
 };
 static_assert(sizeof(DetailedHealthReport) == 144, "the GUI parses 144-byte health reports");
 
-}
+} // namespace process_manager

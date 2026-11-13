@@ -22,10 +22,13 @@
 #include "GpuMonitor.hpp"
 #include "JournalServer.hpp"
 #include "Logger.hpp"
-using namespace process_manager;
+
+namespace process_manager
+{
 
 namespace
 {
+
 constexpr int max_messages_per_cycle = 64;
 // A GPU sample this old means the sampling thread is stuck in a driver call.
 constexpr std::chrono::milliseconds gpu_sample_stale_after{ 5'000 };
@@ -35,10 +38,10 @@ constexpr std::chrono::milliseconds report_period{ 500 };
 
 // Whether two reports show the same services in the same states. A change goes out at once instead of at the
 // next scheduled report, so a start, stop or restart is seen even when it is over within one period.
-bool SameStates(const std::vector<process_manager::DetailedHealthReport>& a, const std::vector<process_manager::DetailedHealthReport>& b)
+bool SameStates(const std::vector<DetailedHealthReport>& a, const std::vector<DetailedHealthReport>& b)
 {
     return std::equal(a.begin(), a.end(), b.begin(), b.end(),
-        [](const process_manager::DetailedHealthReport& x, const process_manager::DetailedHealthReport& y)
+        [](const DetailedHealthReport& x, const DetailedHealthReport& y)
         {
             return x.pid == y.pid && x.runtimeHealth.state == y.runtimeHealth.state
                 && x.runtimeHealth.restartCount == y.runtimeHealth.restartCount
@@ -90,11 +93,11 @@ public:
         }
     }
 
-    process_manager::GpuUsage GetUsage(const Process& process) const
+    GpuUsage GetUsage(const Process& process) const
     {
-        process_manager::GpuUsage usage{};
+        GpuUsage usage{};
         usage.state = state;
-        if (state != process_manager::GpuUsageState::Sampled) return usage;
+        if (state != GpuUsageState::Sampled) return usage;
 
         bool utilizationKnown = false;
         bool utilizationMissing = false;
@@ -117,20 +120,20 @@ public:
     }
 
 private:
-    static process_manager::GpuUsageState GetState(const gpu_monitor::GpuSnapshot& gpu)
+    static GpuUsageState GetState(const gpu_monitor::GpuSnapshot& gpu)
     {
-        if (gpu.status == gpu_monitor::GpuStatus::NotSampled) return process_manager::GpuUsageState::NotSampled;
-        if (std::chrono::steady_clock::now() - gpu.takenAt > gpu_sample_stale_after) return process_manager::GpuUsageState::Stalled;
+        if (gpu.status == gpu_monitor::GpuStatus::NotSampled) return GpuUsageState::NotSampled;
+        if (std::chrono::steady_clock::now() - gpu.takenAt > gpu_sample_stale_after) return GpuUsageState::Stalled;
         switch (gpu.status)
         {
         case gpu_monitor::GpuStatus::Ok:
-            return process_manager::GpuUsageState::Sampled;
+            return GpuUsageState::Sampled;
         case gpu_monitor::GpuStatus::LibraryMissing:
-            return process_manager::GpuUsageState::NoDriver;
+            return GpuUsageState::NoDriver;
         case gpu_monitor::GpuStatus::NoDevice:
-            return process_manager::GpuUsageState::NoDevice;
+            return GpuUsageState::NoDevice;
         default:
-            return process_manager::GpuUsageState::Failed; // InitFailed or QueryFailed
+            return GpuUsageState::Failed; // InitFailed or QueryFailed
         }
     }
 
@@ -138,19 +141,19 @@ private:
     {
         switch (state)
         {
-        case process_manager::GpuUsageState::Sampled:
+        case GpuUsageState::Sampled:
             logger::Info("GPU use is sampled through %s", gpu_monitor::nvml_library);
             break;
-        case process_manager::GpuUsageState::NoDriver:
+        case GpuUsageState::NoDriver:
             logger::Info("GPU use is not reported: %s could not be loaded (no NVIDIA driver)", gpu_monitor::nvml_library);
             break;
-        case process_manager::GpuUsageState::NoDevice:
+        case GpuUsageState::NoDevice:
             logger::Info("GPU use is not reported: NVML finds no GPU");
             break;
-        case process_manager::GpuUsageState::Failed:
+        case GpuUsageState::Failed:
             logger::Error("GPU use is not reported: NVML failed with error %d", gpu.nvmlError);
             break;
-        case process_manager::GpuUsageState::Stalled:
+        case GpuUsageState::Stalled:
             logger::Error("GPU use is not reported: no GPU sample for %lld ms, a driver call is not returning",
                 static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - gpu.takenAt).count()));
             break;
@@ -159,16 +162,17 @@ private:
         }
     }
 
-    process_manager::GpuUsageState state = process_manager::GpuUsageState::NotSampled;
-    process_manager::GpuUsageState loggedState = process_manager::GpuUsageState::NotSampled;
+    GpuUsageState state = GpuUsageState::NotSampled;
+    GpuUsageState loggedState = GpuUsageState::NotSampled;
     std::chrono::steady_clock::time_point takenAt{};
     std::vector<GpuProcess> processes;
 };
-}
+
+} // namespace
 
 int ProcessManager::StartUp()
 {
-    process_manager::ProcessGroupBuilder::GetInstance().GenerateGroups();
+    ProcessGroupBuilder::GetInstance().GenerateGroups();
 
     auto cycleDetected = !SortByDependencies(errorList, processParams->processList);
     CheckProcessConfig(errorList);
@@ -213,7 +217,7 @@ ProcessManager::~ProcessManager()
     statusPublisher.close();
     zmqContext.close();
 }
-void process_manager::ProcessManager::Run()
+void ProcessManager::Run()
 {
     logger::Info("Health status will be published from %s", comm::health_publish_port_detailed);
     logger::Info("Heartbeats will be listened from %s as %s", comm::command_server_port, comm::process_manager_id.c_str());
@@ -239,14 +243,14 @@ void process_manager::ProcessManager::Run()
     {
         logger::Error("Journal server could not bind %s: %s; a GUI on another machine will show no logs", comm::journal_server_port, journalError.c_str());
     }
-    std::vector<process_manager::DetailedHealthReport> published;
+    std::vector<DetailedHealthReport> published;
     auto nextReport = std::chrono::steady_clock::now();
     while (enabled)
     {
         StartSequentialAsync();
 
         gpuUsage.Update(gpuMonitor.Latest());
-        std::vector<process_manager::DetailedHealthReport> status;
+        std::vector<DetailedHealthReport> status;
         for (auto& process : processParams->processList)
         {
             process.CheckHeartbeat();
@@ -268,7 +272,7 @@ void process_manager::ProcessManager::Run()
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextReport || !SameStates(status, published))
         {
-            zmq::message_t detailedReport(status.data(), sizeof(process_manager::DetailedHealthReport) * status.size());
+            zmq::message_t detailedReport(status.data(), sizeof(DetailedHealthReport) * status.size());
             statusPublisher.send(detailedReport, zmq::send_flags::none);
 
             published = std::move(status);
@@ -310,11 +314,11 @@ void process_manager::ProcessManager::Run()
 
     return;
 }
-void process_manager::ProcessManager::RequestStop()
+void ProcessManager::RequestStop()
 {
     enabled = false;
 }
-int process_manager::ProcessManager::TearDown()
+int ProcessManager::TearDown()
 {
     enabled = false;
     logger::Debug("TearDown");
@@ -322,7 +326,7 @@ int process_manager::ProcessManager::TearDown()
     return 0;
 }
 // Blocking, for shutdown: every process gets SIGTERM at once, then all are waited for together.
-void process_manager::ProcessManager::StopAll()
+void ProcessManager::StopAll()
 {
     for (auto& process : processParams->processList)
     {
@@ -340,13 +344,13 @@ void process_manager::ProcessManager::StopAll()
         for (auto& process : retiring) process.AdvanceStop();
     }
 }
-void process_manager::ProcessManager::RetireProcess(Process& process)
+void ProcessManager::RetireProcess(Process& process)
 {
     process.SuspendHealthCheck();
     process.Stop();
     if (process.HasPid()) retiring.push_back(std::move(process));
 }
-bool process_manager::ProcessManager::IsStopInProgress() const
+bool ProcessManager::IsStopInProgress() const
 {
     for (const auto& process : processParams->processList)
     {
@@ -358,7 +362,7 @@ bool process_manager::ProcessManager::IsStopInProgress() const
     }
     return false;
 }
-std::unique_ptr<ProcessManagerParams> process_manager::ProcessManager::GenerateConfig(const config_section::ConfigValue& document, std::vector<std::string>* errors)
+std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const config_section::ConfigValue& document, std::vector<std::string>* errors)
 {
     auto processManagerParams = std::make_unique<ProcessManagerParams>();
     processManagerParams->document = document;
@@ -418,7 +422,7 @@ std::unique_ptr<ProcessManagerParams> process_manager::ProcessManager::GenerateC
 
     return processManagerParams;
 }
-bool process_manager::ProcessManager::SortByDependencies(std::vector<std::string>& errors, std::vector<process_manager::Process>& pList)
+bool ProcessManager::SortByDependencies(std::vector<std::string>& errors, std::vector<Process>& pList)
 {
     std::unordered_map<std::string, size_t> idx;
 
@@ -506,7 +510,7 @@ bool process_manager::ProcessManager::SortByDependencies(std::vector<std::string
 
 }
 
-bool process_manager::ProcessManager::CheckProcessConfig(std::vector<std::string>& err) const
+bool ProcessManager::CheckProcessConfig(std::vector<std::string>& err) const
 {
     for (const auto& process : processParams->processList)
     {
@@ -515,7 +519,7 @@ bool process_manager::ProcessManager::CheckProcessConfig(std::vector<std::string
     return false;
 }
 
-bool process_manager::ProcessManager::ApplyToAll(CommandCode command)
+bool ProcessManager::ApplyToAll(CommandCode command)
 {
     if (command == CommandCode::StopService)
     {
@@ -551,7 +555,7 @@ bool process_manager::ProcessManager::ApplyToAll(CommandCode command)
     return false;
 }
 
-void process_manager::ProcessManager::StartDependencies(const Process& process) const
+void ProcessManager::StartDependencies(const Process& process) const
 {
     for (const auto& dependsOn : process.GetDependencyList())
     {
@@ -565,7 +569,7 @@ void process_manager::ProcessManager::StartDependencies(const Process& process) 
     }
 }
 
-bool process_manager::ProcessManager::ApplyCommandServerMessage(const CommandMessage& message)
+bool ProcessManager::ApplyCommandServerMessage(const CommandMessage& message)
 {
     logger::Debug("Command received");
     const auto& command = message.command;
@@ -637,7 +641,7 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const CommandMes
     return true;
 }
 
-bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::message_t>& messages)
+bool ProcessManager::ProcessMessage(const std::vector<zmq::message_t>& messages)
 {
     if (messages.size() < 2) return false;
 
@@ -691,7 +695,7 @@ bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::mess
     }
 }
 
-bool process_manager::ProcessManager::StartSequentialAsync() const
+bool ProcessManager::StartSequentialAsync() const
 {
     for (const auto& process : retiring)
     {
@@ -729,7 +733,7 @@ bool process_manager::ProcessManager::StartSequentialAsync() const
     return true;
 }
 
-std::vector<Process>::iterator process_manager::ProcessManager::GetProcess(std::string_view processName) const
+std::vector<Process>::iterator ProcessManager::GetProcess(std::string_view processName) const
 {
     const auto& listStart = processParams->processList.begin();
     const auto& listEnd = processParams->processList.end();
@@ -743,3 +747,4 @@ std::vector<Process>::iterator process_manager::ProcessManager::GetProcess(std::
     return it;
 }
 
+} // namespace process_manager

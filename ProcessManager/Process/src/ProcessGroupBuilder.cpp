@@ -4,9 +4,13 @@
 #include <unistd.h>
 #include <stdio.h>
 namespace fs = std::filesystem;
-using namespace process_manager;
+
+namespace process_manager
+{
+
 namespace
 {
+
 // The cgroup v2 directory a /proc/<pid>/cgroup file names; empty when it names none.
 fs::path ReadCgroupPath(const fs::path& cgroupFile)
 {
@@ -25,7 +29,9 @@ fs::path ReadCgroupPath(const fs::path& cgroupFile)
     }
     return {};
 }
-}
+
+} // namespace
+
 ProcessGroupBuilder::ProcessGroupBuilder()
 {
     this->parentPath = GetProcessGroupPath();
@@ -91,3 +97,5 @@ void ProcessGroupBuilder::GenerateGroups() const
     }
     parentControlFile.close();
 }
+
+} // namespace process_manager

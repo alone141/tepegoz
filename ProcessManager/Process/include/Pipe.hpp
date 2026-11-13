@@ -1,6 +1,7 @@
 #pragma once
 namespace process_manager
 {
+
 struct Pipe
 {
     int readFd = -1;
@@ -17,4 +18,5 @@ struct Pipe
     void CloseRead();
     void CloseWrite();
 };
-}
+
+} // namespace process_manager

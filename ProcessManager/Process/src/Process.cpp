@@ -24,11 +24,14 @@
 #define JOURNAL_STDOUT_SOCKET "/run/systemd/journal/stdout"
 #endif
 
-using namespace process_manager;
 namespace fs = std::filesystem;
+
+namespace process_manager
+{
 
 namespace
 {
+
 constexpr size_t max_stdio_line = 1024;
 constexpr int max_stdio_reads = 16;
 constexpr std::chrono::minutes max_restart_delay{ 5 };
@@ -96,7 +99,8 @@ bool ConnectJournalStream(const std::string& header)
     ::close(fd);
     return redirected;
 }
-}
+
+} // namespace
 
 int Process::UpdateArgs(config_section::ConfigSection& section)
 {
@@ -374,7 +378,7 @@ void Process::OverrideStartupArgs(std::vector<std::string> args)
     config.args = args;
 }
 
-void process_manager::Process::SetWorkMode(WorkMode workMode)
+void Process::SetWorkMode(WorkMode workMode)
 {
     config.workMode = workMode;
 }
@@ -430,7 +434,7 @@ RuntimeState Process::GetRuntimeState() const
     return runtime.runtimeHealth.state;
 }
 
-uint64_t process_manager::Process::GetMemoryUsageInBytes() const
+uint64_t Process::GetMemoryUsageInBytes() const
 {
     std::ifstream memoryFile(runtime.cgroupPath / "memory.current");
     uint64_t memUsage = 0;
@@ -441,7 +445,7 @@ uint64_t process_manager::Process::GetMemoryUsageInBytes() const
     return 0; //error?
 }
 
-uint64_t process_manager::Process::GetCpuUsageInUsec() const
+uint64_t Process::GetCpuUsageInUsec() const
 {
     std::ifstream file(runtime.cgroupPath / "cpu.stat");
     std::string line;
@@ -568,7 +572,7 @@ bool Process::NeedsStart() const
     return false;
 }
 
-bool process_manager::Process::IsWorkingManually() const
+bool Process::IsWorkingManually() const
 {
     return WorkMode::Manual == config.workMode;
 }
@@ -862,7 +866,7 @@ bool Process::SetupWorkingDirectory() const
 
     return true;
 }
-bool process_manager::Process::SetupEnvironmentVariables()
+bool Process::SetupEnvironmentVariables()
 {
     for (auto& arg : config.environmentVariables)
     {
@@ -870,7 +874,7 @@ bool process_manager::Process::SetupEnvironmentVariables()
     }
     return true;
 }
-bool process_manager::Process::SetupDisplay() const
+bool Process::SetupDisplay() const
 {
     if (!config.useDisplay) return true;
 
@@ -987,3 +991,5 @@ bool Process::StartChildProcess() const
     ChildError(config.processName.c_str(), "exec failed");
     ::_exit(127);
 }
+
+} // namespace process_manager

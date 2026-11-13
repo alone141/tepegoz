@@ -7,6 +7,9 @@
 #include "CommandWatch.hpp"
 #include "StatusClient.hpp"
 
+namespace process_manager
+{
+
 const char* config_template = R"yaml(# Process manager configuration (YAML)
 
 # Settings of the manager itself.
@@ -117,12 +120,13 @@ Services:
 
 namespace
 {
+
 // The manager on this machine: its health reports and its broker.
 status_client::Endpoints LocalManager()
 {
     status_client::Endpoints endpoints{};
-    endpoints.reports = process_manager::comm::health_listen_port_detailed;
-    endpoints.commands = process_manager::comm::command_server_port;
+    endpoints.reports = comm::health_listen_port_detailed;
+    endpoints.commands = comm::command_server_port;
     return endpoints;
 }
 
@@ -132,7 +136,8 @@ int SendCommand(command_watch::Command command, const std::string& serviceName, 
         command, serviceName, LocalManager(), follow, status_client::default_command_timeout);
     return status_client::ExitCode(code);
 }
-}
+
+} // namespace
 
 int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 {
@@ -226,11 +231,11 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
     }
     else if (cmd == "validate")
     {
-        return process_manager::ProcessManagerApp::ValidateConfig(config) ? 0 : 1;
+        return ProcessManagerApp::ValidateConfig(config) ? 0 : 1;
     }
     else if (cmd == "graph")
     {
-        process_manager::ProcessManagerApp::PrintDependencyGraph(config);
+        ProcessManagerApp::PrintDependencyGraph(config);
         return 0;
     }
     else if (!cmd.empty())
@@ -271,3 +276,5 @@ void GenerateTemplateConfig()
 
     fout.close();
 }
+
+} // namespace process_manager

@@ -1,6 +1,7 @@
 #pragma once
 namespace process_manager
 {
+
 enum class StdioMode
 {
     Inherit,
@@ -8,4 +9,5 @@ enum class StdioMode
     File,
     NullDevice
 };
-}
+
+} // namespace process_manager

@@ -1,6 +1,7 @@
 #pragma once
 namespace process_manager
 {
+
 enum class RestartMode
 {
     Never,
@@ -9,4 +10,4 @@ enum class RestartMode
     UnlessStopped
 };
 
-}
+} // namespace process_manager

@@ -5,6 +5,7 @@
 
 namespace process_manager
 {
+
 enum class CommandCode : char
 {
     Unknown = -1,
@@ -37,6 +38,7 @@ struct __attribute__((packed)) VersionReport
 };
 namespace comm
 {
+
 constexpr std::string_view command_server_id = "PMC";
 constexpr std::string_view gui_id = "GUI";
 inline const std::string process_manager_id = "BPM"; // std::string so that it can be logged
@@ -45,5 +47,7 @@ inline const char* health_publish_port_detailed = "tcp://*:6667";
 inline const char* health_listen_port_detailed = "tcp://localhost:6667";
 // Journal reads for a monitor GUI on another machine (JournalServer).
 inline const char* journal_server_port = "tcp://*:6670";
-}
-}
+
+} // namespace comm
+
+} // namespace process_manager

@@ -4,9 +4,9 @@
 #include "Logger.hpp"
 #include <iostream>
 #include <zmq.hpp>
-using namespace process_manager;
-using namespace std;
 
+namespace process_manager
+{
 
 bool ProcessManagerApp::StartUp(const std::string& configPath)
 {
@@ -36,7 +36,7 @@ void ProcessManagerApp::Run()
 }
 
 // Called from main's signal thread: only asks the supervision thread to stop; Run() returns after.
-void process_manager::ProcessManagerApp::ShutdownSignalReceived(int signum)
+void ProcessManagerApp::ShutdownSignalReceived(int signum)
 {
     logger::Warning(" ==== SHUTDOWN SIGNAL RECEIVED signum: %d  ==== ", signum);
     if (processManager) processManager->RequestStop();
@@ -76,7 +76,7 @@ bool ProcessManagerApp::InitializeProcessManager(const config_section::ConfigVal
     logger::Logger::Instance().SetMinimum(config->logLevel);
     try
     {
-        processManager = make_unique<ProcessManager>(move(config));
+        processManager = std::make_unique<ProcessManager>(std::move(config));
     }
     catch (const zmq::error_t& e)
     {
@@ -109,9 +109,9 @@ void ProcessManagerApp::TearDown()
     logger::Logger::Instance().Close();
 }
 
-bool ProcessManagerApp::ValidateConfig(string config)
+bool ProcessManagerApp::ValidateConfig(std::string config)
 {
-    vector<string> err;
+    std::vector<std::string> err;
     config_section::ConfigValue document;
     if (!LoadConfig(config, false, document)) { return false; }
     auto params = ProcessManager::GenerateConfig(document, &err); // keys, values and service names
@@ -124,9 +124,9 @@ bool ProcessManagerApp::ValidateConfig(string config)
     return err.empty();
 }
 
-void ProcessManagerApp::PrintDependencyGraph(string config)
+void ProcessManagerApp::PrintDependencyGraph(std::string config)
 {
-    vector<string> err;
+    std::vector<std::string> err;
     config_section::ConfigValue document;
     if (!LoadConfig(config, false, document)) return;
 
@@ -134,29 +134,31 @@ void ProcessManagerApp::PrintDependencyGraph(string config)
     ProcessManager::SortByDependencies(err, params->processList);
 
     PrintErrors(err);
-    cout << "Start Order:" << endl;
+    std::cout << "Start Order:" << std::endl;
 
     for (const auto& process : params->processList)
     {
-        cout << process.GetProcessName() << endl;
+        std::cout << process.GetProcessName() << std::endl;
     }
 }
 
-void ProcessManagerApp::PrintErrors(const vector<string>& errList)
+void ProcessManagerApp::PrintErrors(const std::vector<std::string>& errList)
 {
     if (!errList.empty())
     {
-        cout << "================================================" << endl;
-        cout << "PLEASE FIX MENTIONED WARNINGS IN THE CONFIG FILE" << endl;
+        std::cout << "================================================" << std::endl;
+        std::cout << "PLEASE FIX MENTIONED WARNINGS IN THE CONFIG FILE" << std::endl;
         for (const auto& error : errList)
         {
-            cout << error << endl;
+            std::cout << error << std::endl;
         }
-        cout << "================================================" << endl;
+        std::cout << "================================================" << std::endl;
 
     }
     else
     {
-        cout << "NO ERRORS WERE DETECTED" << endl;
+        std::cout << "NO ERRORS WERE DETECTED" << std::endl;
     }
 }
+
+} // namespace process_manager

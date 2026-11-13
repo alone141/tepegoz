@@ -1,7 +1,11 @@
 #include "Pipe.hpp"
 #include <fcntl.h>
 #include <unistd.h>
-void process_manager::Pipe::ConstructPipe()
+
+namespace process_manager
+{
+
+void Pipe::ConstructPipe()
 {
     CloseRead();
     CloseWrite();
@@ -16,24 +20,24 @@ void process_manager::Pipe::ConstructPipe()
     this->writeFd = pipeFd[1];
 }
 
-void process_manager::Pipe::CloseRead()
+void Pipe::CloseRead()
 {
     if (readFd >= 0) { ::close(readFd); readFd = -1; }
 }
 
-void process_manager::Pipe::CloseWrite()
+void Pipe::CloseWrite()
 {
     if (writeFd >= 0) { ::close(writeFd); writeFd = -1; }
 }
 
-process_manager::Pipe::Pipe(Pipe&& other) noexcept
+Pipe::Pipe(Pipe&& other) noexcept
     : readFd(other.readFd), writeFd(other.writeFd)
 {
     other.readFd = -1;
     other.writeFd = -1;
 }
 
-process_manager::Pipe& process_manager::Pipe::operator=(Pipe&& other) noexcept
+Pipe& Pipe::operator=(Pipe&& other) noexcept
 {
     if (this != &other)
     {
@@ -47,8 +51,10 @@ process_manager::Pipe& process_manager::Pipe::operator=(Pipe&& other) noexcept
     return *this;
 }
 
-process_manager::Pipe::~Pipe()
+Pipe::~Pipe()
 {
     CloseRead();
     CloseWrite();
 }
+
+} // namespace process_manager

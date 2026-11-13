@@ -5,6 +5,7 @@
 
 namespace process_manager
 {
+
 class ProcessGroupBuilder
 {
 public:
@@ -25,4 +26,5 @@ private:
     std::filesystem::path parentControlPath;
     std::filesystem::path managerProcPath;
 };
-}
+
+} // namespace process_manager

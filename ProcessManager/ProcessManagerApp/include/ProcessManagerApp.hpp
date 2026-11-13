@@ -8,12 +8,16 @@
 
 namespace config_section
 {
+
 struct ConfigValue;
-}
 
-namespace process_manager {
+} // namespace config_section
 
-class ProcessManagerApp {
+namespace process_manager
+{
+
+class ProcessManagerApp
+{
 public:
     ProcessManagerApp() = default;
     ~ProcessManagerApp() = default;
@@ -37,4 +41,4 @@ private:
     std::unique_ptr<IProcessManager> processManager;
 };
 
-}
+} // namespace process_manager

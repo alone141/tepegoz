@@ -9,11 +9,14 @@
 
 namespace config_section
 {
+
 class ConfigSection;
-}
+
+} // namespace config_section
 
 namespace process_manager
 {
+
 // Owns its child process: a destroyed or overwritten Process stops the child it still holds,
 // so copies are forbidden and a move hands the child over.
 class Process
@@ -35,9 +38,9 @@ public:
     pid_t GetPid() const;
     std::string GetProcessName() const;
     std::vector<std::string> GetDependencyList() const;
-    process_manager::DetailedHealthReport GetHealthReport() const;
-    process_manager::RuntimeHealth GetRuntimeStats() const noexcept;
-    process_manager::RuntimeState GetRuntimeState() const;
+    DetailedHealthReport GetHealthReport() const;
+    RuntimeHealth GetRuntimeStats() const noexcept;
+    RuntimeState GetRuntimeState() const;
     uint64_t GetMemoryUsageInBytes() const;
     uint64_t GetCpuUsageInUsec() const;
     bool HasPid() const;
@@ -112,5 +115,4 @@ private:
     ProcessConfigParams config;
 };
 
-
-}
+} // namespace process_manager

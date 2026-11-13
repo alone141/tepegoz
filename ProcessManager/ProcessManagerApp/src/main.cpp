@@ -18,7 +18,7 @@ network_manager::NetworkManager* gNetworkManager = nullptr;
 int main(int argc, char** argv)
 {
     std::string configPath;
-    const int exitCode = ParseInputFlags(argc, argv, configPath);
+    const int exitCode = process_manager::ParseInputFlags(argc, argv, configPath);
     if (exitCode >= 0)
     {
         return exitCode;

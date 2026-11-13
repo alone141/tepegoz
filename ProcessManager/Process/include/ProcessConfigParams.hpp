@@ -73,4 +73,5 @@ struct ProcessRuntimeParams
     std::chrono::high_resolution_clock::time_point exitTime{};
     int consecutiveRestarts = 0;
 };
-}
+
+} // namespace process_manager

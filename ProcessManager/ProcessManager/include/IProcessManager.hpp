@@ -1,7 +1,9 @@
 #pragma once
-namespace process_manager {
+namespace process_manager
+{
 
-class IProcessManager {
+class IProcessManager
+{
 public:
     virtual int StartUp() = 0;
     virtual int TearDown() = 0;
@@ -10,4 +12,5 @@ public:
 
     virtual ~IProcessManager() = default;
 };
-}
+
+} // namespace process_manager

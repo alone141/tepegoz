@@ -1,11 +1,13 @@
 #include "ProcessConfigParams.hpp"
 #include "ConfigSection.hpp"
 #include <climits>
-using namespace process_manager;
+
+namespace process_manager
+{
 
 // "pm" is the manager's own cgroup (task_pm), BPM/PMC/GUI are broker identities, "all" is the
 // command target for every service, and a '/' would put task_<name> outside the cgroup directory.
-bool process_manager::ProcessConfigParams::IsReservedName(const std::string& name)
+bool ProcessConfigParams::IsReservedName(const std::string& name)
 {
     for (const char* reserved : { "pm", "all", "BPM", "PMC", "GUI" })
     {
@@ -14,7 +16,7 @@ bool process_manager::ProcessConfigParams::IsReservedName(const std::string& nam
     return name.empty() || name.find('/') != std::string::npos;
 }
 
-int process_manager::ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
+int ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
 {
     this->processName = section.ReadString("ProcessName", "");
     if (processName.empty()) return -1;
@@ -49,3 +51,5 @@ int process_manager::ProcessConfigParams::UpdateArgs(config_section::ConfigSecti
 
     return 1;
 }
+
+} // namespace process_manager
