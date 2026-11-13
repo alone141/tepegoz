@@ -7,13 +7,13 @@ namespace config_section
 }
 namespace process_manager
 {
-    struct StdioPolicyStruct
+    struct StdioPolicy
     {
         void UpdateArgs(config_section::ConfigSection& section);
 
 
-        StdioModeEnum StdioMode = StdioModeEnum::Inherit;
-        std::filesystem::path StdioFilePath{};
-        bool StdioAppend = true;
+        StdioMode stdioMode = StdioMode::Inherit;
+        std::filesystem::path stdioFilePath{};
+        bool stdioAppend = true;
     };
 }

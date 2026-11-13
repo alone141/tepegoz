@@ -1,7 +1,7 @@
 #pragma once
 namespace process_manager
 {
-    enum class StdioModeEnum
+    enum class StdioMode
     {
         Inherit,
         Pipe,

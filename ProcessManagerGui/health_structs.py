@@ -53,7 +53,7 @@ class RuntimeState(IntEnum):
 
 
 class GpuState(IntEnum):
-    """Wire values must match the C++ GpuUsageStateEnum."""
+    """Wire values must match the C++ GpuUsageState."""
     NOT_SAMPLED = 0  # the manager has not sampled the GPUs yet
     SAMPLED     = 1
     NO_DRIVER   = 2  # libnvidia-ml.so.1 could not be loaded

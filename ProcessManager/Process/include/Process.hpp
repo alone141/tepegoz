@@ -35,9 +35,9 @@ namespace process_manager
         pid_t GetPid() const;
         std::string GetProcessName() const;
         std::vector<std::string> GetDependencyList() const;
-        process_manager::DetailedHealthReportStruct GetHealthReport() const;
-        process_manager::RuntimeHealthStruct GetRuntimeStats() const noexcept;
-        process_manager::RuntimeStateEnum GetRuntimeState() const;
+        process_manager::DetailedHealthReport GetHealthReport() const;
+        process_manager::RuntimeHealth GetRuntimeStats() const noexcept;
+        process_manager::RuntimeState GetRuntimeState() const;
         uint64_t GetMemoryUsageInBytes() const;
         uint64_t GetCpuUsageInUsec() const;
         bool HasPid() const;
@@ -64,7 +64,7 @@ namespace process_manager
         void RequestStopAndEscalate(std::chrono::milliseconds poll = std::chrono::milliseconds(50));
 
         void OverrideStartupArgs(std::vector<std::string> args);
-        void SetWorkMode(WorkModeEnum workMode);
+        void SetWorkMode(WorkMode workMode);
 
     private:
         static auto Now()
@@ -76,7 +76,7 @@ namespace process_manager
             return timepoint == std::chrono::high_resolution_clock::time_point{};
         }
 
-        RuntimeHealthStruct& GetRuntimeStatus();
+        RuntimeHealth& GetRuntimeStatus();
         bool ExitedWithFailure() const;
         bool IsHealthCheckActive() const;
         bool IsUnresponsive() const;
@@ -93,7 +93,7 @@ namespace process_manager
         bool SetupStdioPipe() const;
         bool SetupStdioFile(const char* path) const;
         bool SetupWorkingDirectory() const;
-        bool SetupEnviromentVariables();
+        bool SetupEnvironmentVariables();
         bool SetupDisplay() const;
         bool SetupStdioSettings() const;
         bool StartChildProcess() const;
@@ -103,8 +103,8 @@ namespace process_manager
         bool TerminateProcessGroup() const;
         bool RemoveProcessGroup() const;
 
-        void RequestStop(const ProcessHandleStruct& pHandle, int sig) const;
-        void ForceStop(const ProcessHandleStruct& pHandle) const;
+        void RequestStop(const ProcessHandle& pHandle, int sig) const;
+        void ForceStop(const ProcessHandle& pHandle) const;
         std::vector<char*> SetupExecParams() const;
 
 

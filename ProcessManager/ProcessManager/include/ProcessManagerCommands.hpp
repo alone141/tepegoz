@@ -29,7 +29,7 @@ namespace process_manager
         uint16_t patch = 0;
     };
     // The answer to GetVersionInfo: the manager's own version, from the CMake project.
-    struct __attribute__((packed)) VersionReportStruct
+    struct __attribute__((packed)) VersionReport
     {
         ProcessManagerCommandEnum command; // 1 byte
         VersionInfo manager;

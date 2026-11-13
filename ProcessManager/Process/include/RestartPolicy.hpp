@@ -7,13 +7,13 @@ namespace config_section
 }
 namespace process_manager
 {
-    struct RestartPolicyStruct
+    struct RestartPolicy
     {
         void UpdateArgs(config_section::ConfigSection& section);
-        RestartModeEnum RestartMode = RestartModeEnum::OnFailure;
-        int MaxRestarts = 10; // in a row; a run of RestartResetMs or longer starts the count again
-        double BackoffMultiplier = 2.0;
-        std::chrono::milliseconds RestartDelayMs{ 1'000 };
-        std::chrono::milliseconds RestartResetMs{ 60'000 };
+        RestartMode restartMode = RestartMode::OnFailure;
+        int maxRestarts = 10; // in a row; a run of RestartResetMs or longer starts the count again
+        double backoffMultiplier = 2.0;
+        std::chrono::milliseconds restartDelayMs{ 1'000 };
+        std::chrono::milliseconds restartResetMs{ 60'000 };
     };
 }

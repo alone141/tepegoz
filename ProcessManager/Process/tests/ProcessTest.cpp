@@ -351,7 +351,7 @@ TEST(ProcessTest, DefaultConstructedProcessHasNoPidAndNeedsStart)
     EXPECT_FALSE(process.HasPid());
     EXPECT_TRUE(process.NeedsStart());
     EXPECT_FALSE(process.NeedsRestart());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Unknown);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Unknown);
     EXPECT_FALSE(process.IsRunning());
     EXPECT_FALSE(process.IsStarting());
     EXPECT_FALSE(process.IsStopping());
@@ -359,7 +359,7 @@ TEST(ProcessTest, DefaultConstructedProcessHasNoPidAndNeedsStart)
     EXPECT_FALSE(process.IsGracePeriod());
     EXPECT_TRUE(process.IsWorkingManually());
     EXPECT_EQ(process.ReapExit(), 0);
-    EXPECT_EQ(process.GetRuntimeStats().restatCount, 0);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 0);
     EXPECT_FALSE(process.IsMember(1, 1, "/sys/fs/cgroup/task_"));
 }
 
@@ -368,9 +368,9 @@ TEST(ProcessTest, WorkModeDefaultsToManualAndFollowsConfigAndSetWorkMode)
     process_manager::Process unset{};
     ASSERT_EQ(Configure(unset, Service("unset", "pmt_steady", "")), 1);
     EXPECT_TRUE(unset.IsWorkingManually());
-    unset.SetWorkMode(process_manager::WorkModeEnum::Auto);
+    unset.SetWorkMode(process_manager::WorkMode::Auto);
     EXPECT_FALSE(unset.IsWorkingManually());
-    unset.SetWorkMode(process_manager::WorkModeEnum::Manual);
+    unset.SetWorkMode(process_manager::WorkMode::Manual);
     EXPECT_TRUE(unset.IsWorkingManually());
 
     process_manager::Process automatic{};
@@ -464,18 +464,18 @@ TEST(ProcessTest, HealthReportTruncatesNameAndCarriesPidAndState)
     process_manager::Process process{};
     ASSERT_EQ(Configure(process, Service(longName, "pmt_steady", "")), 1);
 
-    const process_manager::DetailedHealthReportStruct idle = process.GetHealthReport();
+    const process_manager::DetailedHealthReport idle = process.GetHealthReport();
     EXPECT_EQ(std::string{idle.processName}, std::string(63, 'n'));
     EXPECT_EQ(idle.pid, -1);
-    EXPECT_EQ(idle.runtimeHealth.state, process_manager::RuntimeStateEnum::Unknown);
-    EXPECT_EQ(idle.gpuUsage.state, process_manager::GpuUsageStateEnum::NotSampled);
+    EXPECT_EQ(idle.runtimeHealth.state, process_manager::RuntimeState::Unknown);
+    EXPECT_EQ(idle.gpuUsage.state, process_manager::GpuUsageState::NotSampled);
 
     process.StartProcess();
     ASSERT_TRUE(process.HasPid());
-    const process_manager::DetailedHealthReportStruct running = process.GetHealthReport();
+    const process_manager::DetailedHealthReport running = process.GetHealthReport();
     EXPECT_EQ(running.pid, process.GetPid());
-    EXPECT_EQ(running.runtimeHealth.state, process_manager::RuntimeStateEnum::Running);
-    EXPECT_EQ(running.runtimeHealth.restatCount, 0);
+    EXPECT_EQ(running.runtimeHealth.state, process_manager::RuntimeState::Running);
+    EXPECT_EQ(running.runtimeHealth.restartCount, 0);
     EXPECT_EQ(running.runtimeHealth.missedBeats, 0);
     EXPECT_EQ(running.runtimeHealth.startTime, process.GetRuntimeStats().startTime);
     EXPECT_GE(running.snapshotTime, running.runtimeHealth.startTime);
@@ -495,7 +495,7 @@ TEST(ProcessTest, StartGivesRunningProcessWithPidInItsOwnProcessGroup)
     EXPECT_EQ(::getpgid(pid), pid);
     EXPECT_TRUE(process.IsRunning());
     EXPECT_FALSE(process.IsStarting());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Running);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Running);
     EXPECT_FALSE(process.NeedsStart());
     EXPECT_FALSE(process.NeedsRestart());
     EXPECT_EQ(process.ReapExit(), -1);
@@ -518,7 +518,7 @@ TEST(ProcessTest, StartAndAutoRestartWhileRunningKeepTheSamePid)
     EXPECT_EQ(process.GetPid(), pid);
     process.AutoRestart();
     EXPECT_EQ(process.GetPid(), pid);
-    EXPECT_EQ(process.GetRuntimeStats().restatCount, 0);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 0);
 }
 
 TEST(ProcessTest, CleanExitIsReapedAndShownAsStopped)
@@ -539,7 +539,7 @@ TEST(ProcessTest, CleanExitIsReapedAndShownAsStopped)
     EXPECT_EQ(reaped, pid);
     EXPECT_FALSE(process.HasPid());
     EXPECT_EQ(process.GetPid(), -1);
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
     EXPECT_FALSE(process.IsRunning());
     EXPECT_EQ(process.ReapExit(), 0);
     EXPECT_FALSE(process.NeedsStart());
@@ -553,14 +553,14 @@ TEST(ProcessTest, RestartCountCountsEveryLaunchAfterTheFirst)
     process_manager::Process process{};
     ASSERT_EQ(Configure(process, Service("counted", "pmt_exit", "Args: [--code, 0, --after-ms, 0]\n")), 1);
     process.StartProcess();
-    EXPECT_EQ(process.GetRuntimeStats().restatCount, 0);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 0);
     ASSERT_TRUE(WaitForExit(process));
     process.StartProcess();
-    EXPECT_EQ(process.GetRuntimeStats().restatCount, 1);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 1);
     ASSERT_TRUE(WaitForExit(process));
     process.AutoRestart();
-    EXPECT_EQ(process.GetRuntimeStats().restatCount, 2);
-    EXPECT_EQ(process.GetHealthReport().runtimeHealth.restatCount, 2);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 2);
+    EXPECT_EQ(process.GetHealthReport().runtimeHealth.restartCount, 2);
 }
 
 TEST(ProcessTest, MissingExecutableStartsAsRunningThenExitsAsFailure)
@@ -649,7 +649,7 @@ TEST(ProcessTest, ExitReapedElsewhereCountsAsFailureEvenAfterCleanExit)
 
     EXPECT_EQ(process.ReapExit(), pid);
     EXPECT_FALSE(process.HasPid());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
     EXPECT_TRUE(process.NeedsRestart());
 }
 
@@ -679,7 +679,7 @@ TEST(ProcessTest, RestartDelayGrowsByBackoffMultiplierOnEachRestartInARow)
         EXPECT_LT(waited[i], expected[i] * 2) << "restart " << i;
     }
 
-    EXPECT_EQ(process.GetRuntimeStats().restatCount, 3);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 3);
 }
 
 TEST(ProcessTest, RestartLimitStopsAutomaticRestarts)
@@ -699,7 +699,7 @@ TEST(ProcessTest, RestartLimitStopsAutomaticRestarts)
     ASSERT_TRUE(WaitForExit(process));
     std::this_thread::sleep_for(std::chrono::milliseconds{100});
     EXPECT_FALSE(process.NeedsRestart());
-    EXPECT_EQ(process.GetRuntimeStats().restatCount, 2);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 2);
 }
 
 TEST(ProcessTest, ManualStartRearmsRestartLimit)
@@ -746,7 +746,7 @@ TEST(ProcessTest, RunAsLongAsRestartResetMsStartsANewRestartSeries)
         process.AutoRestart();
     }
 
-    EXPECT_EQ(process.GetRuntimeStats().restatCount, 3);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 3);
 }
 
 // ---- Stopping
@@ -760,7 +760,7 @@ TEST(ProcessTest, StopWithoutPidDoesNothing)
     process.RequestStopAndEscalate();
     EXPECT_FALSE(process.IsStopping());
     process.AdvanceStop();
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Unknown);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Unknown);
 }
 
 TEST(ProcessTest, StopEndsServiceThatHonoursSigtermWithoutForceKill)
@@ -783,7 +783,7 @@ TEST(ProcessTest, StopEndsServiceThatHonoursSigtermWithoutForceKill)
     EXPECT_LT(took, std::chrono::milliseconds{4000});
     EXPECT_FALSE(process.HasPid());
     EXPECT_FALSE(IsAlive(pid));
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
     EXPECT_FALSE(process.NeedsRestart());
 }
 
@@ -950,7 +950,7 @@ TEST(ProcessTest, RequestStopAndEscalateBlocksUntilStopped)
     EXPECT_FALSE(process.IsStopping());
     EXPECT_FALSE(process.HasPid());
     EXPECT_FALSE(IsAlive(pid));
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
 }
 
 TEST(ProcessTest, DestructorStopsTheRunningChild)
@@ -1211,7 +1211,7 @@ TEST(ProcessTest, HealthCheckStartsInStartingStateUntilFirstHeartbeat)
     process.StartProcess();
     EXPECT_TRUE(process.IsStarting());
     EXPECT_FALSE(process.IsRunning());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Starting);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Starting);
 
     process.HeartbeatReceived();
     EXPECT_TRUE(process.IsRunning());
@@ -1224,11 +1224,11 @@ TEST(ProcessTest, HeartbeatWithoutHealthCheckChangesNothing)
     process_manager::Process process{};
     ASSERT_EQ(Configure(process, Service("nohealth", "pmt_steady", "GracePeriodMs: 0\nHeartbeatPeriodMs: 1\n")), 1);
     process.StartProcess();
-    const process_manager::RuntimeHealthStruct before = process.GetRuntimeStats();
+    const process_manager::RuntimeHealth before = process.GetRuntimeStats();
     std::this_thread::sleep_for(std::chrono::milliseconds{20});
     process.HeartbeatReceived();
     process.CheckHeartbeat();
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Running);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Running);
     EXPECT_EQ(process.GetRuntimeStats().lastSeen, before.lastSeen);
     EXPECT_EQ(process.GetRuntimeStats().missedBeats, 0);
 }
@@ -1283,7 +1283,7 @@ TEST(ProcessTest, MissedHeartbeatsAfterGracePeriodMakeServiceUnhealthy)
         [&process]()
         {
             process.CheckHeartbeat();
-            return process.GetRuntimeState() == process_manager::RuntimeStateEnum::Unhealthy;
+            return process.GetRuntimeState() == process_manager::RuntimeState::Unhealthy;
         }));
     EXPECT_GE(Clock::now() - begin, std::chrono::milliseconds{60});
     EXPECT_GE(process.GetRuntimeStats().missedBeats, 3);
@@ -1304,7 +1304,7 @@ TEST(ProcessTest, HeartbeatBringsUnhealthyServiceBackToRunning)
         [&process]()
         {
             process.CheckHeartbeat();
-            return process.GetRuntimeState() == process_manager::RuntimeStateEnum::Unhealthy;
+            return process.GetRuntimeState() == process_manager::RuntimeState::Unhealthy;
         }));
     const Clock::time_point lastSeenBefore = process.GetRuntimeStats().lastSeen;
 
@@ -1327,7 +1327,7 @@ TEST(ProcessTest, UnhealthyServiceNeedsRestartAndItsStopCountsAsFailureDespiteCl
         [&process]()
         {
             process.CheckHeartbeat();
-            return process.GetRuntimeState() == process_manager::RuntimeStateEnum::Unhealthy;
+            return process.GetRuntimeState() == process_manager::RuntimeState::Unhealthy;
         }));
     EXPECT_TRUE(process.NeedsRestart());
 
@@ -1335,7 +1335,7 @@ TEST(ProcessTest, UnhealthyServiceNeedsRestartAndItsStopCountsAsFailureDespiteCl
     EXPECT_TRUE(process.IsStopping());
     EXPECT_FALSE(process.IsRestartRequested());
     ASSERT_TRUE(WaitForStop(process));
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
     EXPECT_TRUE(process.NeedsRestart());
 
     process.AutoRestart();
@@ -1356,7 +1356,7 @@ TEST(ProcessTest, NeverModeDoesNotRestartUnhealthyService)
         [&process]()
         {
             process.CheckHeartbeat();
-            return process.GetRuntimeState() == process_manager::RuntimeStateEnum::Unhealthy;
+            return process.GetRuntimeState() == process_manager::RuntimeState::Unhealthy;
         }));
     EXPECT_FALSE(process.NeedsRestart());
 }
@@ -1395,9 +1395,9 @@ TEST(ProcessTest, HeartbeatsAfterExitLeaveServiceStopped)
     ASSERT_TRUE(StopAndWait(process));
     std::this_thread::sleep_for(std::chrono::milliseconds{10});
     process.HeartbeatReceived();
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
     process.CheckHeartbeat();
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeStateEnum::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
     EXPECT_EQ(process.GetRuntimeStats().missedBeats, 0);
 }
 

@@ -2,11 +2,11 @@
 #include <sys/types.h>
 namespace process_manager
 {
-    struct ExitStatusStruct
+    struct ExitStatus
     {
-        pid_t Pid = -1;
-        bool IsTerminatedBySignal = true;
-        int ExitCode = -1;
-        int TermSignal = -1;
+        pid_t pid = -1;
+        bool isTerminatedBySignal = true;
+        int exitCode = -1;
+        int termSignal = -1;
     };
 }

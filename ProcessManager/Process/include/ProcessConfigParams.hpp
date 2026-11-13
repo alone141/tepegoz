@@ -25,30 +25,30 @@ namespace process_manager
         int UpdateArgs(config_section::ConfigSection& section);
         static bool IsReservedName(const std::string& name);
 
-        std::string ProcessName;
-        std::filesystem::path ExecutablePath;
-        std::vector<std::string> Args;
+        std::string processName;
+        std::filesystem::path executablePath;
+        std::vector<std::string> args;
 
-        std::filesystem::path Cwd;
-        bool InheritParentEnviroment = true;
-        bool UseDisplay = false;
-        std::string Display = ":1";
-        std::string XAuthority = "/home/user/.Xauthority";
+        std::filesystem::path cwd;
+        bool inheritParentEnvironment = true;
+        bool useDisplay = false;
+        std::string display = ":1";
+        std::string xAuthority = "/home/user/.Xauthority";
 
-        std::vector<std::string> EnviromentVariables;
+        std::vector<std::string> environmentVariables;
 
 
-        std::chrono::milliseconds ForceKillTimeoutMs{ 10'000 };
+        std::chrono::milliseconds forceKillTimeoutMs{ 10'000 };
 
-        bool CreateProcessGroup = true;
+        bool createProcessGroup = true;
         //bool Detach = false;
 
-        std::vector<std::string> DependsOn;
+        std::vector<std::string> dependsOn;
 
-        StdioPolicyStruct StdioPolicy{};
-        RestartPolicyStruct RestartPolicy{};
-        HealthPolicyStruct HealthPolicy{};
-        WorkModeEnum WorkMode = WorkModeEnum::Manual;
+        StdioPolicy stdioPolicy{};
+        RestartPolicy restartPolicy{};
+        HealthPolicy healthPolicy{};
+        WorkMode workMode = WorkMode::Manual;
 
         //std::unordered_map<std::string, std::string> metadata;
 
@@ -56,13 +56,13 @@ namespace process_manager
     };
     struct ProcessRuntimeParams
     {
-        ProcessHandleStruct processHandle{};
-        ExitStatusStruct exitStatus{};
-        PipeStruct pipeFd{};
-        RuntimeHealthStruct runtimeHealth{};
-        std::filesystem::path cgroup_path;
+        ProcessHandle processHandle{};
+        ExitStatus exitStatus{};
+        Pipe pipeFd{};
+        RuntimeHealth runtimeHealth{};
+        std::filesystem::path cgroupPath;
 
-        StopPhaseEnum stopPhase = StopPhaseEnum::None;
+        StopPhase stopPhase = StopPhase::None;
         std::chrono::high_resolution_clock::time_point stopDeadline{};
         pid_t stopGroup = -1; // process group being stopped; outlives the reaped leader
         bool restartRequested = false;

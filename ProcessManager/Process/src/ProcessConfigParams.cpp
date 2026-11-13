@@ -16,36 +16,36 @@ bool process_manager::ProcessConfigParams::IsReservedName(const std::string& nam
 
 int process_manager::ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
 {
-    this->ProcessName = section.ReadString("ProcessName", "");
-    if (ProcessName.empty()) return -1;
-    if (IsReservedName(ProcessName)) return -2;
+    this->processName = section.ReadString("ProcessName", "");
+    if (processName.empty()) return -1;
+    if (IsReservedName(processName)) return -2;
 
-    this->ExecutablePath = std::filesystem::path(section.ReadString("ExecutablePath", ""));
-    if (ExecutablePath.empty()) return -1;
+    this->executablePath = std::filesystem::path(section.ReadString("ExecutablePath", ""));
+    if (executablePath.empty()) return -1;
 
     // A list keeps an argument with spaces in one piece; a text is split at spaces.
-    Args = section.ReadList("Args", ' ');
-    this->Cwd = std::filesystem::path(section.ReadString("Cwd", ""));
+    args = section.ReadList("Args", ' ');
+    this->cwd = std::filesystem::path(section.ReadString("Cwd", ""));
 
-    InheritParentEnviroment = section.ReadBool("InheritParentEnviroment", true);
-    UseDisplay = section.ReadBool("UseDisplay", false);
-    this->Display = section.ReadString("Display", ":1");
-    this->XAuthority = section.ReadString("XAuthority", "/home/user/.Xauthority");
+    inheritParentEnvironment = section.ReadBool("InheritParentEnviroment", true);
+    useDisplay = section.ReadBool("UseDisplay", false);
+    this->display = section.ReadString("Display", ":1");
+    this->xAuthority = section.ReadString("XAuthority", "/home/user/.Xauthority");
 
-    CreateProcessGroup = section.ReadBool("CreateProcessGroup", true);
+    createProcessGroup = section.ReadBool("CreateProcessGroup", true);
 
 
-    ForceKillTimeoutMs = std::chrono::milliseconds(section.ReadInt("ForceKillTimeoutMs", 10000, 1000, INT_MAX));
+    forceKillTimeoutMs = std::chrono::milliseconds(section.ReadInt("ForceKillTimeoutMs", 10000, 1000, INT_MAX));
 
-    DependsOn = section.ReadList("DependsOn", ' ');
-    EnviromentVariables = section.ReadAssignments("EnviromentVariables", ';');
+    dependsOn = section.ReadList("DependsOn", ' ');
+    environmentVariables = section.ReadAssignments("EnviromentVariables", ';');
 
-    // The choices in WorkModeEnum order; without one, [ProcessManager] Mode may apply (GenerateConfig).
-    this->WorkMode = static_cast<WorkModeEnum>(section.ReadChoice("WorkMode", { "Auto", "Manual" }, 1));
+    // The choices in WorkMode order; without one, [ProcessManager] Mode may apply (GenerateConfig).
+    this->workMode = static_cast<WorkMode>(section.ReadChoice("WorkMode", { "Auto", "Manual" }, 1));
 
-    StdioPolicy.UpdateArgs(section);
-    RestartPolicy.UpdateArgs(section);
-    HealthPolicy.UpdateArgs(section);
+    stdioPolicy.UpdateArgs(section);
+    restartPolicy.UpdateArgs(section);
+    healthPolicy.UpdateArgs(section);
 
     return 1;
 }

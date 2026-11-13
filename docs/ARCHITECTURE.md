@@ -179,7 +179,7 @@ Each service is reaped with
 | 79 | Stop |
 | 80 | Disable |
 | 81 | Restart |
-| 82 | Version information (answered with a `VersionReportStruct`) |
+| 82 | Version information (answered with a `VersionReport`) |
 
 The manager answers the `GUI` identity only, with one frame: `1` for accepted, `0` for refused. The command line
 gets no answer.
@@ -220,7 +220,7 @@ Sampled. The GUI shows a frame that fails these checks as a parse error in its s
 | 140 | `gpu.state` | `uint8` | 0 not sampled, 1 sampled, 2 no driver, 3 no device, 4 failed, 5 stalled |
 | 141 | reserved | `uint8[3]` | Zero |
 
-The C++ layout is `DetailedHealthReportStruct` in `Process/include/RuntimeHealth.hpp`. The Python
+The C++ layout is `DetailedHealthReport` in `Process/include/RuntimeHealth.hpp`. The Python
 layout is `DetailedHealthReport` in `ProcessManagerGui/health_structs.py`. A `static_assert` and a Python
 `assert` keep both at 144 bytes.
 
@@ -349,7 +349,7 @@ The configuration is read in four steps:
 1. **YAML:** `ConfigSection` reads the file with fkYAML into a `ConfigValue` tree. Syntax errors carry their line
    and column.
 2. **Keys:** each part of the program reads its own keys through a `ConfigSection`. `ProcessConfigParams`,
-   `RestartPolicyStruct`, `HealthPolicyStruct` and `StdioPolicyStruct` give the defaults and the limits.
+   `RestartPolicy`, `HealthPolicy` and `StdioPolicy` give the defaults and the limits.
 3. **Problems:** the `ConfigSection` records what it found: unknown keys, values of the wrong kind, and clamped
    numbers.
 4. **Reporting:** `validate` prints the problems, and the manager logs them at start-up.

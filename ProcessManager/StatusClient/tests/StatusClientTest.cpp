@@ -27,10 +27,10 @@ namespace
 constexpr std::chrono::milliseconds report_period{100};
 constexpr std::chrono::seconds short_timeout{2};
 
-process_manager::DetailedHealthReportStruct Record(const std::string& name, process_manager::RuntimeStateEnum state,
+process_manager::DetailedHealthReport Record(const std::string& name, process_manager::RuntimeState state,
                                                    int pid)
 {
-    process_manager::DetailedHealthReportStruct record{};
+    process_manager::DetailedHealthReport record{};
     std::strncpy(record.processName, name.c_str(), sizeof(record.processName) - 1);
     record.pid = pid;
     record.runtimeHealth.state = state;
@@ -41,9 +41,9 @@ process_manager::DetailedHealthReportStruct Record(const std::string& name, proc
     return record;
 }
 
-std::string Bytes(const std::vector<process_manager::DetailedHealthReportStruct>& records)
+std::string Bytes(const std::vector<process_manager::DetailedHealthReport>& records)
 {
-    std::string bytes(records.size() * sizeof(process_manager::DetailedHealthReportStruct), '\0');
+    std::string bytes(records.size() * sizeof(process_manager::DetailedHealthReport), '\0');
     std::memcpy(bytes.data(), records.data(), bytes.size());
     return bytes;
 }
@@ -53,7 +53,7 @@ std::string Bytes(const std::vector<process_manager::DetailedHealthReportStruct>
 class FakeManager
 {
 public:
-    explicit FakeManager(std::vector<process_manager::DetailedHealthReportStruct> services)
+    explicit FakeManager(std::vector<process_manager::DetailedHealthReport> services)
         : services{std::move(services)}
         , publisher{context, zmq::socket_type::pub}
         , broker{context, zmq::socket_type::router}
@@ -102,7 +102,7 @@ private:
                 const std::lock_guard<std::mutex> lock{mutex};
                 received.push_back(frames.front().to_string() + " " + std::to_string(command.command) + " " +
                                    command.ServiceName);
-                for (process_manager::DetailedHealthReportStruct& service : services)
+                for (process_manager::DetailedHealthReport& service : services)
                 {
                     if (ignoreCommands || std::string_view{service.processName} != command.ServiceName)
                     {
@@ -111,18 +111,18 @@ private:
                     if (command.command == process_manager::ProcessManagerCommandEnum::StopService)
                     {
                         service.pid = -1;
-                        service.runtimeHealth.state = process_manager::RuntimeStateEnum::Stopped;
+                        service.runtimeHealth.state = process_manager::RuntimeState::Stopped;
                     }
                     else
                     {
                         service.pid = nextPid++;
-                        service.runtimeHealth.state = process_manager::RuntimeStateEnum::Running;
+                        service.runtimeHealth.state = process_manager::RuntimeState::Running;
                     }
                 }
             }
 
             const std::lock_guard<std::mutex> lock{mutex};
-            for (process_manager::DetailedHealthReportStruct& service : services)
+            for (process_manager::DetailedHealthReport& service : services)
             {
                 service.snapshotTime = std::chrono::high_resolution_clock::now();
                 service.cpuUsageInUsec += 20000;
@@ -133,7 +133,7 @@ private:
     }
 
     mutable std::mutex mutex;
-    std::vector<process_manager::DetailedHealthReportStruct> services;
+    std::vector<process_manager::DetailedHealthReport> services;
     std::vector<std::string> received;
     zmq::context_t context{1};
     zmq::socket_t publisher;
@@ -146,8 +146,8 @@ private:
 
 TEST(StatusClientTest, ParsesEveryRecord)
 {
-    const std::string bytes = Bytes({Record("a", process_manager::RuntimeStateEnum::Running, 10),
-                                     Record("b", process_manager::RuntimeStateEnum::Unhealthy, 11)});
+    const std::string bytes = Bytes({Record("a", process_manager::RuntimeState::Running, 10),
+                                     Record("b", process_manager::RuntimeState::Unhealthy, 11)});
     std::vector<status_table::ServiceSample> samples{};
     ASSERT_EQ(status_client::ParseReport(bytes, samples), status_client::ParseCode::Ok);
     ASSERT_EQ(samples.size(), 2u);
@@ -159,7 +159,7 @@ TEST(StatusClientTest, ParsesEveryRecord)
 
 TEST(StatusClientTest, PartialRecordIsBadSize)
 {
-    const std::string bytes = Bytes({Record("a", process_manager::RuntimeStateEnum::Running, 10)});
+    const std::string bytes = Bytes({Record("a", process_manager::RuntimeState::Running, 10)});
     std::vector<status_table::ServiceSample> samples{};
     EXPECT_EQ(status_client::ParseReport(bytes.substr(1), samples), status_client::ParseCode::BadSize);
     EXPECT_TRUE(samples.empty());
@@ -167,8 +167,8 @@ TEST(StatusClientTest, PartialRecordIsBadSize)
 
 TEST(StatusClientTest, PrintStatusShowsEveryService)
 {
-    FakeManager manager{{Record("control_loop", process_manager::RuntimeStateEnum::Running, 10),
-                         Record("telemetry_bridge", process_manager::RuntimeStateEnum::Stopped, -1)}};
+    FakeManager manager{{Record("control_loop", process_manager::RuntimeState::Running, 10),
+                         Record("telemetry_bridge", process_manager::RuntimeState::Stopped, -1)}};
     testing::internal::CaptureStdout();
     const status_client::StatusCode code = status_client::PrintStatus(manager.endpoints);
     const std::string out = testing::internal::GetCapturedStdout();
@@ -203,7 +203,7 @@ TEST(StatusClientTest, PrintStatusWithoutManagerSaysSo)
 
 TEST(StatusClientTest, StopIsFollowedUntilStopped)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeStateEnum::Running, 10)}};
+    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
     testing::internal::CaptureStdout();
     const status_client::CommandCode code =
         status_client::SendCommand(command_watch::Command::Stop, "a", manager.endpoints, true, short_timeout);
@@ -214,7 +214,7 @@ TEST(StatusClientTest, StopIsFollowedUntilStopped)
 
 TEST(StatusClientTest, RestartShowsTheNewProcess)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeStateEnum::Running, 10)}};
+    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
     testing::internal::CaptureStdout();
     const status_client::CommandCode code =
         status_client::SendCommand(command_watch::Command::Restart, "a", manager.endpoints, true, short_timeout);
@@ -224,7 +224,7 @@ TEST(StatusClientTest, RestartShowsTheNewProcess)
 
 TEST(StatusClientTest, UnknownServiceIsNotSent)
 {
-    FakeManager manager{{Record("viewer", process_manager::RuntimeStateEnum::Running, 10)}};
+    FakeManager manager{{Record("viewer", process_manager::RuntimeState::Running, 10)}};
     testing::internal::CaptureStderr();
     const status_client::CommandCode code =
         status_client::SendCommand(command_watch::Command::Stop, "viewr", manager.endpoints, true, short_timeout);
@@ -236,7 +236,7 @@ TEST(StatusClientTest, UnknownServiceIsNotSent)
 
 TEST(StatusClientTest, IgnoredCommandTimesOut)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeStateEnum::Running, 10)}};
+    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
     manager.ignoreCommands = true;
     testing::internal::CaptureStdout();
     const status_client::CommandCode code =
@@ -249,7 +249,7 @@ TEST(StatusClientTest, IgnoredCommandTimesOut)
 
 TEST(StatusClientTest, WithoutFollowingNothingIsPrinted)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeStateEnum::Running, 10)}};
+    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
     testing::internal::CaptureStdout();
     const status_client::CommandCode code =
         status_client::SendCommand(command_watch::Command::Stop, "a", manager.endpoints, false, short_timeout);
@@ -265,7 +265,7 @@ TEST(StatusClientTest, WithoutFollowingNothingIsPrinted)
 
 TEST(StatusClientTest, UnreachableBrokerIsReported)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeStateEnum::Running, 10)}};
+    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
     status_client::Endpoints endpoints = manager.endpoints;
     endpoints.commands = "tcp://127.0.0.1:1";
     testing::internal::CaptureStderr();

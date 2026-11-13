@@ -35,13 +35,13 @@ namespace
 
     // Whether two reports show the same services in the same states. A change goes out at once instead of at the
     // next scheduled report, so a start, stop or restart is seen even when it is over within one period.
-    bool SameStates(const std::vector<process_manager::DetailedHealthReportStruct>& a, const std::vector<process_manager::DetailedHealthReportStruct>& b)
+    bool SameStates(const std::vector<process_manager::DetailedHealthReport>& a, const std::vector<process_manager::DetailedHealthReport>& b)
     {
         return std::equal(a.begin(), a.end(), b.begin(), b.end(),
-            [](const process_manager::DetailedHealthReportStruct& x, const process_manager::DetailedHealthReportStruct& y)
+            [](const process_manager::DetailedHealthReport& x, const process_manager::DetailedHealthReport& y)
             {
                 return x.pid == y.pid && x.runtimeHealth.state == y.runtimeHealth.state
-                    && x.runtimeHealth.restatCount == y.runtimeHealth.restatCount
+                    && x.runtimeHealth.restartCount == y.runtimeHealth.restartCount
                     && std::strncmp(x.processName, y.processName, sizeof(x.processName)) == 0;
             });
     }
@@ -90,11 +90,11 @@ namespace
             }
         }
 
-        process_manager::GpuUsageStruct GetUsage(const Process& process) const
+        process_manager::GpuUsage GetUsage(const Process& process) const
         {
-            process_manager::GpuUsageStruct usage{};
+            process_manager::GpuUsage usage{};
             usage.state = state;
-            if (state != process_manager::GpuUsageStateEnum::Sampled) return usage;
+            if (state != process_manager::GpuUsageState::Sampled) return usage;
 
             bool utilizationKnown = false;
             bool utilizationMissing = false;
@@ -117,20 +117,20 @@ namespace
         }
 
     private:
-        static process_manager::GpuUsageStateEnum GetState(const gpu_monitor::GpuSnapshot& gpu)
+        static process_manager::GpuUsageState GetState(const gpu_monitor::GpuSnapshot& gpu)
         {
-            if (gpu.status == gpu_monitor::GpuStatus::NotSampled) return process_manager::GpuUsageStateEnum::NotSampled;
-            if (std::chrono::steady_clock::now() - gpu.takenAt > gpu_sample_stale_after) return process_manager::GpuUsageStateEnum::Stalled;
+            if (gpu.status == gpu_monitor::GpuStatus::NotSampled) return process_manager::GpuUsageState::NotSampled;
+            if (std::chrono::steady_clock::now() - gpu.takenAt > gpu_sample_stale_after) return process_manager::GpuUsageState::Stalled;
             switch (gpu.status)
             {
             case gpu_monitor::GpuStatus::Ok:
-                return process_manager::GpuUsageStateEnum::Sampled;
+                return process_manager::GpuUsageState::Sampled;
             case gpu_monitor::GpuStatus::LibraryMissing:
-                return process_manager::GpuUsageStateEnum::NoDriver;
+                return process_manager::GpuUsageState::NoDriver;
             case gpu_monitor::GpuStatus::NoDevice:
-                return process_manager::GpuUsageStateEnum::NoDevice;
+                return process_manager::GpuUsageState::NoDevice;
             default:
-                return process_manager::GpuUsageStateEnum::Failed; // InitFailed or QueryFailed
+                return process_manager::GpuUsageState::Failed; // InitFailed or QueryFailed
             }
         }
 
@@ -138,19 +138,19 @@ namespace
         {
             switch (state)
             {
-            case process_manager::GpuUsageStateEnum::Sampled:
+            case process_manager::GpuUsageState::Sampled:
                 logger::Info("GPU use is sampled through %s", gpu_monitor::nvml_library);
                 break;
-            case process_manager::GpuUsageStateEnum::NoDriver:
+            case process_manager::GpuUsageState::NoDriver:
                 logger::Info("GPU use is not reported: %s could not be loaded (no NVIDIA driver)", gpu_monitor::nvml_library);
                 break;
-            case process_manager::GpuUsageStateEnum::NoDevice:
+            case process_manager::GpuUsageState::NoDevice:
                 logger::Info("GPU use is not reported: NVML finds no GPU");
                 break;
-            case process_manager::GpuUsageStateEnum::Failed:
+            case process_manager::GpuUsageState::Failed:
                 logger::Error("GPU use is not reported: NVML failed with error %d", gpu.nvmlError);
                 break;
-            case process_manager::GpuUsageStateEnum::Stalled:
+            case process_manager::GpuUsageState::Stalled:
                 logger::Error("GPU use is not reported: no GPU sample for %lld ms, a driver call is not returning",
                     static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - gpu.takenAt).count()));
                 break;
@@ -159,8 +159,8 @@ namespace
             }
         }
 
-        process_manager::GpuUsageStateEnum state = process_manager::GpuUsageStateEnum::NotSampled;
-        process_manager::GpuUsageStateEnum loggedState = process_manager::GpuUsageStateEnum::NotSampled;
+        process_manager::GpuUsageState state = process_manager::GpuUsageState::NotSampled;
+        process_manager::GpuUsageState loggedState = process_manager::GpuUsageState::NotSampled;
         std::chrono::steady_clock::time_point takenAt{};
         std::vector<GpuProcess> processes;
     };
@@ -239,14 +239,14 @@ void process_manager::ProcessManager::Run()
     {
         logger::Error("Journal server could not bind %s: %s; a GUI on another machine will show no logs", comm::JOURNAL_SERVER_PORT, journalError.c_str());
     }
-    std::vector<process_manager::DetailedHealthReportStruct> published;
+    std::vector<process_manager::DetailedHealthReport> published;
     auto nextReport = std::chrono::steady_clock::now();
     while (enabled)
     {
         StartSequentialAsync();
 
         gpuUsage.Update(gpuMonitor.Latest());
-        std::vector<process_manager::DetailedHealthReportStruct> status;
+        std::vector<process_manager::DetailedHealthReport> status;
         for (auto& process : processParams->processList)
         {
             process.CheckHeartbeat();
@@ -268,7 +268,7 @@ void process_manager::ProcessManager::Run()
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextReport || !SameStates(status, published))
         {
-            zmq::message_t detailedReport(status.data(), sizeof(process_manager::DetailedHealthReportStruct) * status.size());
+            zmq::message_t detailedReport(status.data(), sizeof(process_manager::DetailedHealthReport) * status.size());
             statusPublisher.send(detailedReport, zmq::send_flags::none);
 
             published = std::move(status);
@@ -373,7 +373,7 @@ std::unique_ptr<ProcessManagerParams> process_manager::ProcessManager::GenerateC
         // Inherit: no default, so a service without a WorkMode of its own is Manual.
         const int mode = manager.ReadChoice("Mode", { "Inherit", "Manual", "Auto" }, 0);
         hasDefaultWorkMode = mode != 0;
-        processManagerParams->workMode = mode == 2 ? WorkModeEnum::Auto : WorkModeEnum::Manual;
+        processManagerParams->workMode = mode == 2 ? WorkMode::Auto : WorkMode::Manual;
         // The choices in logger::Level order.
         processManagerParams->logLevel = static_cast<logger::Level>(manager.ReadChoice("LogLevel", { "Verbose", "Debug", "Info", "Warning", "Error" }, 1));
         addProblems(manager.Problems());
@@ -521,7 +521,7 @@ bool process_manager::ProcessManager::ApplyToAll(ProcessManagerCommandEnum comma
     {
         for (auto& process : processParams->processList)
         {
-            process.SetWorkMode(WorkModeEnum::Manual);
+            process.SetWorkMode(WorkMode::Manual);
             process.SuspendHealthCheck();
             process.Stop();
         }
@@ -544,7 +544,7 @@ bool process_manager::ProcessManager::ApplyToAll(ProcessManagerCommandEnum comma
         }
         for (auto& process : processParams->processList)
         {
-            process.SetWorkMode(WorkModeEnum::Auto);
+            process.SetWorkMode(WorkMode::Auto);
         }
         return true;
     }
@@ -583,7 +583,7 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
     else if (command == ProcessManagerCommandEnum::StartService)
     {
         StartDependencies(*it);
-        it->SetWorkMode(WorkModeEnum::Auto);
+        it->SetWorkMode(WorkMode::Auto);
         if (it->IsStopping())
         {
             it->Restart(); // starts again once the stop in progress finishes
@@ -604,18 +604,18 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
         it->OverrideStartupArgs(config_section::SplitList(argsText, ' '));
 
         it->StartProcess();
-        it->SetWorkMode(WorkModeEnum::Auto);
+        it->SetWorkMode(WorkMode::Auto);
     }
     else if (command == ProcessManagerCommandEnum::StopService)
     {
-        it->SetWorkMode(WorkModeEnum::Manual);
+        it->SetWorkMode(WorkMode::Manual);
         it->SuspendHealthCheck();
         it->Stop();
     }
     else if (command == ProcessManagerCommandEnum::RestartService)
     {
         StartDependencies(*it);
-        it->SetWorkMode(WorkModeEnum::Auto);
+        it->SetWorkMode(WorkMode::Auto);
         if (it->HasPid())
         {
             it->Restart();
@@ -650,7 +650,7 @@ bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::mess
         const auto command = static_cast<ProcessManagerCommandEnum>(*static_cast<const char*>(payload.data()));
         if (command == ProcessManagerCommandEnum::GetVersionInfo)
         {
-            VersionReportStruct version{};
+            VersionReport version{};
             version.command = ProcessManagerCommandEnum::GetVersionInfo;
 #ifdef PROCESSMANAGER_VERSION_MAJOR
             version.manager.major = PROCESSMANAGER_VERSION_MAJOR;
@@ -661,7 +661,7 @@ bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::mess
 
             auto result = reinterpret_cast<char*>(&version);
             listener.send(zmq::buffer(comm::GUI_ID), zmq::send_flags::sndmore);
-            listener.send(zmq::buffer(result, sizeof(VersionReportStruct)), zmq::send_flags::none);
+            listener.send(zmq::buffer(result, sizeof(VersionReport)), zmq::send_flags::none);
             return true;
         }
         else

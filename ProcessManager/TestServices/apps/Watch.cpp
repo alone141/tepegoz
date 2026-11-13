@@ -24,7 +24,7 @@ long long EpochMs(std::chrono::high_resolution_clock::time_point time)
 
 void PrintReports(const zmq::message_t& message)
 {
-    const std::size_t size = sizeof(process_manager::DetailedHealthReportStruct);
+    const std::size_t size = sizeof(process_manager::DetailedHealthReport);
     if (message.size() % size != 0)
     {
         std::printf("bad report of %zu bytes\n", message.size());
@@ -37,12 +37,12 @@ void PrintReports(const zmq::message_t& message)
     std::printf("report %lld %zu\n", now, count);
     for (std::size_t i = 0; i < count; ++i)
     {
-        process_manager::DetailedHealthReportStruct report{};
+        process_manager::DetailedHealthReport report{};
         std::memcpy(&report, static_cast<const char*>(message.data()) + i * size, size);
         report.processName[sizeof(report.processName) - 1] = '\0';
-        const process_manager::RuntimeHealthStruct& health = report.runtimeHealth;
+        const process_manager::RuntimeHealth& health = report.runtimeHealth;
         std::printf("service pid=%d state=%s restarts=%d missed=%d cpu_us=%llu mem=%llu started_ms=%lld name=%s\n",
-                    static_cast<int>(report.pid), process_manager::RuntimeStateToString(health.state), health.restatCount,
+                    static_cast<int>(report.pid), process_manager::RuntimeStateToString(health.state), health.restartCount,
                     health.missedBeats, static_cast<unsigned long long>(report.cpuUsageInUsec),
                     static_cast<unsigned long long>(report.memoryUsageInBytes), EpochMs(health.startTime),
                     report.processName);

@@ -6,14 +6,14 @@ namespace config_section
 }
 namespace process_manager
 {
-    struct HealthPolicyStruct
+    struct HealthPolicy
     {
         void UpdateArgs(config_section::ConfigSection& section);
 
-        bool CheckHealth = false; // enable health checks
-        std::chrono::milliseconds GracePeriodMs{ 5'000 }; //startup period
+        bool checkHealth = false; // enable health checks
+        std::chrono::milliseconds gracePeriodMs{ 5'000 }; //startup period
 
-        std::chrono::milliseconds HeartbeatPeriodMs{ 1'000 };
-        int MissedHeartbeatThreshold = 5; //take action after threshold
+        std::chrono::milliseconds heartbeatPeriodMs{ 1'000 };
+        int missedHeartbeatThreshold = 5; //take action after threshold
     };
 }

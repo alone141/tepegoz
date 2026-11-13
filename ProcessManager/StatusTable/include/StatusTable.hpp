@@ -18,7 +18,7 @@ constexpr std::chrono::milliseconds heartbeat_after_start{1};
 constexpr int gpu_percent_unknown = -1;
 constexpr std::string_view no_value = "-";
 
-// The manager's RuntimeStateEnum, value for value.
+// The manager's RuntimeState, value for value.
 enum class ServiceState
 {
     Unknown,
@@ -28,7 +28,7 @@ enum class ServiceState
     Unhealthy,
 };
 
-// The manager's GpuUsageStateEnum, value for value.
+// The manager's GpuUsageState, value for value.
 enum class GpuState
 {
     NotSampled,

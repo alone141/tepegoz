@@ -115,7 +115,7 @@ Process::Process(Process&& other) noexcept
     : runtime(std::move(other.runtime)),
     config(std::move(other.config))
 {
-    other.runtime.processHandle = ProcessHandleStruct{};
+    other.runtime.processHandle = ProcessHandle{};
 }
 
 Process& Process::operator=(Process&& other) noexcept
@@ -128,7 +128,7 @@ Process& Process::operator=(Process&& other) noexcept
         }
         runtime = std::move(other.runtime);
         config = std::move(other.config);
-        other.runtime.processHandle = ProcessHandleStruct{};
+        other.runtime.processHandle = ProcessHandle{};
     }
     return *this;
 }
@@ -137,7 +137,7 @@ void Process::StartProcess()
 {
     if (HasPid())
     {
-        logger::Debug("[%s] Already running as pid %d, not starting another instance", config.ProcessName.c_str(), runtime.processHandle.pid);
+        logger::Debug("[%s] Already running as pid %d, not starting another instance", config.processName.c_str(), runtime.processHandle.pid);
         return;
     }
     runtime.consecutiveRestarts = 0;
@@ -148,28 +148,28 @@ void Process::AutoRestart()
 {
     if (HasPid()) return;
     ++runtime.consecutiveRestarts;
-    logger::Info("[%s] Restart %d of at most %d in a row", config.ProcessName.c_str(), runtime.consecutiveRestarts, config.RestartPolicy.MaxRestarts);
+    logger::Info("[%s] Restart %d of at most %d in a row", config.processName.c_str(), runtime.consecutiveRestarts, config.restartPolicy.maxRestarts);
     Launch();
 }
 
 void Process::Launch()
 {
-    logger::Debug("[%s] Starting service...", config.ProcessName.c_str());
-    if (config.UseDisplay)
+    logger::Debug("[%s] Starting service...", config.processName.c_str());
+    if (config.useDisplay)
     {
-        logger::Debug("[%s] Will use Display", config.ProcessName.c_str());
+        logger::Debug("[%s] Will use Display", config.processName.c_str());
     }
-    if (!config.StdioPolicy.StdioFilePath.empty())
+    if (!config.stdioPolicy.stdioFilePath.empty())
     {
-        logger::Debug("[%s] Logs will be stored in %s", config.ProcessName.c_str(), config.StdioPolicy.StdioFilePath.c_str());
+        logger::Debug("[%s] Logs will be stored in %s", config.processName.c_str(), config.stdioPolicy.stdioFilePath.c_str());
     }
 
-    ProcessHandleStruct pHandle;
+    ProcessHandle pHandle;
 
 
     SetupProcessGroupSettings();
 
-    if (config.StdioPolicy.StdioMode == StdioModeEnum::Pipe)
+    if (config.stdioPolicy.stdioMode == StdioMode::Pipe)
     {
         DrainStdioPipe(); // keep what the previous instance wrote
         FlushStdioLine();
@@ -177,8 +177,8 @@ void Process::Launch()
     }
 
     // Prepared before fork: the child must not allocate.
-    const bool useJournalStream = config.StdioPolicy.StdioMode == StdioModeEnum::Inherit && IsStdoutJournal();
-    const std::string journalHeader = useJournalStream ? JournalStreamHeader(config.ProcessName) : std::string();
+    const bool useJournalStream = config.stdioPolicy.stdioMode == StdioMode::Inherit && IsStdoutJournal();
+    const std::string journalHeader = useJournalStream ? JournalStreamHeader(config.processName) : std::string();
 
     pid_t pid = ::fork();
     if (pid < 0)
@@ -186,7 +186,7 @@ void Process::Launch()
         RemoveProcessGroup();
         runtime.pipeFd.CloseRead();
         runtime.pipeFd.CloseWrite();
-        logger::Error("[%s] fork() failed with : %s", config.ProcessName.c_str(), std::strerror(errno));
+        logger::Error("[%s] fork() failed with : %s", config.processName.c_str(), std::strerror(errno));
     }
     if (pid == 0) //CHILD
     {
@@ -208,12 +208,12 @@ void Process::Launch()
         if (useJournalStream) ConnectJournalStream(journalHeader); // else it keeps the manager's output
         if (!SetupStdioSettings())
         {
-            ChildError(config.ProcessName.c_str(), "Redirecting stdout and stderr failed");
+            ChildError(config.processName.c_str(), "Redirecting stdout and stderr failed");
             ::_exit(EXIT_FAILURE);
         }
-        if (!config.InheritParentEnviroment) ::clearenv();
+        if (!config.inheritParentEnvironment) ::clearenv();
         SetupDisplay();
-        SetupEnviromentVariables();
+        SetupEnvironmentVariables();
         StartChildProcess(); //exec
     }
     if (pid > 0) //PARENT
@@ -222,7 +222,7 @@ void Process::Launch()
         ::setpgid(pid, pid); // as in the child: whichever runs first, the group exists before any stop
         pHandle.pgid = pid;
 
-        if (config.StdioPolicy.StdioMode == StdioModeEnum::Pipe)
+        if (config.stdioPolicy.stdioMode == StdioMode::Pipe)
         {
             runtime.pipeFd.CloseWrite();
             if (runtime.pipeFd.readFd >= 0)
@@ -231,33 +231,33 @@ void Process::Launch()
             }
         }
 
-        runtime.stopPhase = StopPhaseEnum::None;
+        runtime.stopPhase = StopPhase::None;
         runtime.restartRequested = false;
         runtime.healthCheckSuspended = false;
         runtime.unresponsiveStop = false;
 
-        if (config.HealthPolicy.CheckHealth)
+        if (config.healthPolicy.checkHealth)
         {
-            GetRuntimeStatus().state = RuntimeStateEnum::Starting;
+            GetRuntimeStatus().state = RuntimeState::Starting;
         }
         else
         {
-            GetRuntimeStatus().state = RuntimeStateEnum::Running;
+            GetRuntimeStatus().state = RuntimeState::Running;
         }
         if (!IsUndefined(GetRuntimeStatus().startTime))
         {
-            GetRuntimeStatus().restatCount++; // restarts: the first start is not one
+            GetRuntimeStatus().restartCount++; // restarts: the first start is not one
         }
         GetRuntimeStatus().startTime = Now();
         GetRuntimeStatus().lastSeen = Now();
         GetRuntimeStatus().missedBeats = 0;
-        runtime.exitStatus = ExitStatusStruct{};
+        runtime.exitStatus = ExitStatus{};
     }
 
     runtime.processHandle = pHandle;
 }
 
-void Process::RequestStop(const ProcessHandleStruct& pHandle, int sig) const
+void Process::RequestStop(const ProcessHandle& pHandle, int sig) const
 {
     if (pHandle.pid <= 0) return;
     if (pHandle.pgid > 0)
@@ -266,12 +266,12 @@ void Process::RequestStop(const ProcessHandleStruct& pHandle, int sig) const
     }
     else
     {
-        logger::Verbose("[%s] RequestStop pid %d with sig no %d", config.ProcessName.c_str(), pHandle.pid, sig);
+        logger::Verbose("[%s] RequestStop pid %d with sig no %d", config.processName.c_str(), pHandle.pid, sig);
         ::kill(pHandle.pid, sig);
     }
 }
 
-void Process::ForceStop(const ProcessHandleStruct& pHandle) const
+void Process::ForceStop(const ProcessHandle& pHandle) const
 {
     RequestStop(pHandle, SIGKILL);
 }
@@ -279,7 +279,7 @@ void Process::ForceStop(const ProcessHandleStruct& pHandle) const
 // Blocking: only for shutdown and destruction. The supervision loop uses Stop() and AdvanceStop().
 void Process::RequestStopAndEscalate(std::chrono::milliseconds poll)
 {
-    logger::Debug("[%s] RequestStopAndEscalate with polling period %ld ms and ForceKilTimeout %ld ms ", config.ProcessName.c_str(), static_cast<long>(poll.count()), static_cast<long>(config.ForceKillTimeoutMs.count()));
+    logger::Debug("[%s] RequestStopAndEscalate with polling period %ld ms and ForceKilTimeout %ld ms ", config.processName.c_str(), static_cast<long>(poll.count()), static_cast<long>(config.forceKillTimeoutMs.count()));
     if (runtime.processHandle.pid <= 0) return;
 
     poll = std::max(poll, std::chrono::milliseconds(1));
@@ -306,7 +306,7 @@ void Process::Restart()
 // Stopped for missed heartbeats: the exit counts as a failure, and the restart policy restarts it.
 void Process::StopUnresponsive()
 {
-    logger::Error("[%s] Unresponsive: %d heartbeat periods without a heartbeat, stopping it", config.ProcessName.c_str(), runtime.runtimeHealth.missedBeats);
+    logger::Error("[%s] Unresponsive: %d heartbeat periods without a heartbeat, stopping it", config.processName.c_str(), runtime.runtimeHealth.missedBeats);
     runtime.restartRequested = false;
     runtime.unresponsiveStop = true;
     BeginStop();
@@ -316,11 +316,11 @@ void Process::BeginStop()
 {
     if (!HasPid() || IsStopping()) return;
 
-    logger::Debug("[%s] Stopping pid %d, SIGKILL after %ld ms", config.ProcessName.c_str(), runtime.processHandle.pid, static_cast<long>(config.ForceKillTimeoutMs.count()));
+    logger::Debug("[%s] Stopping pid %d, SIGKILL after %ld ms", config.processName.c_str(), runtime.processHandle.pid, static_cast<long>(config.forceKillTimeoutMs.count()));
     runtime.stopGroup = runtime.processHandle.pgid;
     RequestStop(runtime.processHandle, SIGTERM);
-    runtime.stopPhase = StopPhaseEnum::Terminating;
-    runtime.stopDeadline = Now() + config.ForceKillTimeoutMs;
+    runtime.stopPhase = StopPhase::Terminating;
+    runtime.stopDeadline = Now() + config.forceKillTimeoutMs;
 }
 
 // A stop ends when the process and everything left in its process group are gone.
@@ -336,19 +336,19 @@ void Process::AdvanceStop()
     }
     if (Now() < runtime.stopDeadline) return;
 
-    if (runtime.stopPhase == StopPhaseEnum::Terminating)
+    if (runtime.stopPhase == StopPhase::Terminating)
     {
-        logger::Debug("[%s] Graceful shutdown failed ", config.ProcessName.c_str());
+        logger::Debug("[%s] Graceful shutdown failed ", config.processName.c_str());
         if (runtime.stopGroup > 0) ::kill(-runtime.stopGroup, SIGKILL);
         else ForceStop(runtime.processHandle);
-        if (config.CreateProcessGroup) TerminateProcessGroup();
-        runtime.stopPhase = StopPhaseEnum::Killing;
-        runtime.stopDeadline = Now() + config.ForceKillTimeoutMs;
+        if (config.createProcessGroup) TerminateProcessGroup();
+        runtime.stopPhase = StopPhase::Killing;
+        runtime.stopDeadline = Now() + config.forceKillTimeoutMs;
         return;
     }
 
-    logger::Error("[%s] Force shutdown failed", config.ProcessName.c_str());
-    runtime.stopPhase = StopPhaseEnum::None;
+    logger::Error("[%s] Force shutdown failed", config.processName.c_str());
+    runtime.stopPhase = StopPhase::None;
     runtime.stopGroup = -1;
 }
 
@@ -359,29 +359,29 @@ bool Process::IsGroupAlive() const
 
 void Process::FinishStop()
 {
-    runtime.stopPhase = StopPhaseEnum::None;
+    runtime.stopPhase = StopPhase::None;
     runtime.stopGroup = -1;
-    if (config.CreateProcessGroup)
+    if (config.createProcessGroup)
     {
         TerminateProcessGroup(); // whatever the main process left behind in its cgroup
         RemoveProcessGroup();
     }
-    logger::Debug("[%s] Reaped & stop successful ", config.ProcessName.c_str());
+    logger::Debug("[%s] Reaped & stop successful ", config.processName.c_str());
 }
 
 void Process::OverrideStartupArgs(std::vector<std::string> args)
 {
-    config.Args = args;
+    config.args = args;
 }
 
-void process_manager::Process::SetWorkMode(WorkModeEnum workMode)
+void process_manager::Process::SetWorkMode(WorkMode workMode)
 {
-    config.WorkMode = workMode;
+    config.workMode = workMode;
 }
 
 void Process::HeartbeatReceived()
 {
-    logger::Debug("[%s] Heartbeat received", config.ProcessName.c_str());
+    logger::Debug("[%s] Heartbeat received", config.processName.c_str());
 
     if (!IsHealthCheckActive()) return;
     if (!HasPid()) return; // late, from an instance that has exited
@@ -391,7 +391,7 @@ void Process::HeartbeatReceived()
         GetRuntimeStatus().startTime = Now();
     }
     GetRuntimeStatus().lastSeen = Now();
-    GetRuntimeStatus().state = RuntimeStateEnum::Running;
+    GetRuntimeStatus().state = RuntimeState::Running;
     GetRuntimeStatus().missedBeats = 0;
 }
 
@@ -401,38 +401,38 @@ void Process::CheckHeartbeat()
     if (IsGracePeriod()) return;
     if (!IsHealthCheckActive()) return;
     if (IsUndefined(GetRuntimeStatus().lastSeen)) return;
-    if (config.HealthPolicy.HeartbeatPeriodMs.count() <= 0) return;
+    if (config.healthPolicy.heartbeatPeriodMs.count() <= 0) return;
 
     // Whole heartbeat periods since the last heartbeat: 0 while it keeps up.
-    GetRuntimeStatus().missedBeats = (int)((Now() - GetRuntimeStatus().lastSeen) / config.HealthPolicy.HeartbeatPeriodMs);
+    GetRuntimeStatus().missedBeats = (int)((Now() - GetRuntimeStatus().lastSeen) / config.healthPolicy.heartbeatPeriodMs);
     if (GetRuntimeStatus().missedBeats > 0)
     {
-        logger::Debug("[%s] Heartbeat missed", config.ProcessName.c_str());
+        logger::Debug("[%s] Heartbeat missed", config.processName.c_str());
     }
-    if (GetRuntimeStatus().missedBeats >= config.HealthPolicy.MissedHeartbeatThreshold)
+    if (GetRuntimeStatus().missedBeats >= config.healthPolicy.missedHeartbeatThreshold)
     {
-        GetRuntimeStatus().state = RuntimeStateEnum::Unhealthy;
+        GetRuntimeStatus().state = RuntimeState::Unhealthy;
     }
 }
 
 std::string Process::GetProcessName() const
 {
-    return config.ProcessName;
+    return config.processName;
 }
 
 std::vector<std::string> Process::GetDependencyList() const
 {
-    return config.DependsOn;
+    return config.dependsOn;
 }
 
-RuntimeStateEnum Process::GetRuntimeState() const
+RuntimeState Process::GetRuntimeState() const
 {
     return runtime.runtimeHealth.state;
 }
 
 uint64_t process_manager::Process::GetMemoryUsageInBytes() const
 {
-    std::ifstream memoryFile(runtime.cgroup_path / "memory.current");
+    std::ifstream memoryFile(runtime.cgroupPath / "memory.current");
     uint64_t memUsage = 0;
     if (memoryFile >> memUsage)
     {
@@ -443,7 +443,7 @@ uint64_t process_manager::Process::GetMemoryUsageInBytes() const
 
 uint64_t process_manager::Process::GetCpuUsageInUsec() const
 {
-    std::ifstream file(runtime.cgroup_path / "cpu.stat");
+    std::ifstream file(runtime.cgroupPath / "cpu.stat");
     std::string line;
     while (std::getline(file, line))
     {
@@ -461,30 +461,30 @@ uint64_t process_manager::Process::GetCpuUsageInUsec() const
     return 0;
 }
 
-RuntimeHealthStruct& Process::GetRuntimeStatus()
+RuntimeHealth& Process::GetRuntimeStatus()
 {
     return runtime.runtimeHealth;
 }
 
 bool Process::IsGracePeriod() const
 {
-    const bool isGrace = (Now() - runtime.runtimeHealth.startTime) < config.HealthPolicy.GracePeriodMs;
+    const bool isGrace = (Now() - runtime.runtimeHealth.startTime) < config.healthPolicy.gracePeriodMs;
     return isGrace;
 }
 
 bool Process::IsRunning() const
 {
-    return runtime.runtimeHealth.state == RuntimeStateEnum::Running;
+    return runtime.runtimeHealth.state == RuntimeState::Running;
 }
 
 bool Process::IsStarting() const
 {
-    return runtime.runtimeHealth.state == RuntimeStateEnum::Starting;
+    return runtime.runtimeHealth.state == RuntimeState::Starting;
 }
 
 bool Process::IsStopping() const
 {
-    return runtime.stopPhase != StopPhaseEnum::None;
+    return runtime.stopPhase != StopPhase::None;
 }
 
 bool Process::IsRestartRequested() const
@@ -494,19 +494,19 @@ bool Process::IsRestartRequested() const
 
 bool Process::IsHealthCheckActive() const
 {
-    return config.HealthPolicy.CheckHealth && !runtime.healthCheckSuspended;
+    return config.healthPolicy.checkHealth && !runtime.healthCheckSuspended;
 }
 
 bool Process::ExitedWithFailure() const
 {
     const auto& exitStatus = runtime.exitStatus;
-    if (exitStatus.Pid <= 0) return false; // no exit recorded since the last start
+    if (exitStatus.pid <= 0) return false; // no exit recorded since the last start
     if (runtime.unresponsiveStop) return true; // we stopped it for missed heartbeats
 
-    if (!exitStatus.IsTerminatedBySignal) return exitStatus.ExitCode > 0;
+    if (!exitStatus.isTerminatedBySignal) return exitStatus.exitCode > 0;
 
     // The signals systemd's Restart=on-failure counts as a clean stop.
-    switch (exitStatus.TermSignal)
+    switch (exitStatus.termSignal)
     {
     case SIGHUP:
     case SIGINT:
@@ -520,19 +520,19 @@ bool Process::ExitedWithFailure() const
 
 bool Process::IsUnresponsive() const
 {
-    return IsHealthCheckActive() && runtime.runtimeHealth.state == RuntimeStateEnum::Unhealthy;
+    return IsHealthCheckActive() && runtime.runtimeHealth.state == RuntimeState::Unhealthy;
 }
 
 bool Process::RestartLimitReached() const
 {
-    return runtime.consecutiveRestarts >= config.RestartPolicy.MaxRestarts;
+    return runtime.consecutiveRestarts >= config.restartPolicy.maxRestarts;
 }
 
 // RestartDelayMs before the first restart in a row, BackoffMultiplier times longer for each one after.
 std::chrono::milliseconds Process::RestartDelay() const
 {
-    const auto& policy = config.RestartPolicy;
-    const double delayMs = static_cast<double>(policy.RestartDelayMs.count()) * std::pow(policy.BackoffMultiplier, runtime.consecutiveRestarts);
+    const auto& policy = config.restartPolicy;
+    const double delayMs = static_cast<double>(policy.restartDelayMs.count()) * std::pow(policy.backoffMultiplier, runtime.consecutiveRestarts);
     const double capMs = static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(max_restart_delay).count());
     return std::chrono::milliseconds(static_cast<long long>(std::min(delayMs, capMs)));
 }
@@ -542,8 +542,8 @@ std::chrono::milliseconds Process::RestartDelay() const
 bool Process::NeedsRestart() const
 {
     //Orumcek agina dondu burasi
-    const auto rMode = config.RestartPolicy.RestartMode;
-    if (rMode == RestartModeEnum::Never) return false;
+    const auto rMode = config.restartPolicy.restartMode;
+    if (rMode == RestartMode::Never) return false;
     if (RestartLimitReached()) return false;
 
     if (HasPid())
@@ -552,7 +552,7 @@ bool Process::NeedsRestart() const
     }
     if (IsUndefined(runtime.exitTime)) return false; // never ran: NeedsStart covers it
     if (Now() - runtime.exitTime < RestartDelay()) return false;
-    if (rMode == RestartModeEnum::OnFailure)
+    if (rMode == RestartMode::OnFailure)
     {
         return ExitedWithFailure();
     }
@@ -570,7 +570,7 @@ bool Process::NeedsStart() const
 
 bool process_manager::Process::IsWorkingManually() const
 {
-    return WorkModeEnum::Manual == config.WorkMode;
+    return WorkMode::Manual == config.workMode;
 }
 
 bool Process::HasPid() const
@@ -583,9 +583,9 @@ bool Process::HasPid() const
 bool Process::IsMember(pid_t pid, pid_t pgid, const fs::path& cgroup) const
 {
     if (HasPid() && (pid == runtime.processHandle.pid || (pgid > 0 && pgid == runtime.processHandle.pgid))) return true;
-    if (!config.CreateProcessGroup || runtime.cgroup_path.empty() || cgroup.empty()) return false;
+    if (!config.createProcessGroup || runtime.cgroupPath.empty() || cgroup.empty()) return false;
 
-    const auto& own = runtime.cgroup_path;
+    const auto& own = runtime.cgroupPath;
     return std::mismatch(own.begin(), own.end(), cgroup.begin(), cgroup.end()).first == own.end();
 }
 
@@ -600,29 +600,29 @@ void Process::CheckConfig(std::vector<std::string>& errorList) const noexcept
 
     //check executablepath
 
-    if (!fs::exists(config.ExecutablePath, erc))
+    if (!fs::exists(config.executablePath, erc))
     {
         errorList.push_back(GetProcessName() + " ExecutablePath does not exists");
     }
-    if (fs::is_directory(config.ExecutablePath, erc))
+    if (fs::is_directory(config.executablePath, erc))
     {
         errorList.push_back(GetProcessName() + " ExecutablePath is a directory");
     }
-    if (!fs::is_regular_file(config.ExecutablePath, erc))
+    if (!fs::is_regular_file(config.executablePath, erc))
     {
         errorList.push_back(GetProcessName() + " ExecutablePath is not a regular file");
     }
-    if (::access(config.ExecutablePath.c_str(), X_OK) != 0)
+    if (::access(config.executablePath.c_str(), X_OK) != 0)
     {
         errorList.push_back(GetProcessName() + " ExecutablePath access denied");
     }
 
-    const auto& resolvedPath = fs::weakly_canonical(config.ExecutablePath, erc);
-    if (!fs::exists(config.ExecutablePath, erc))
+    const auto& resolvedPath = fs::weakly_canonical(config.executablePath, erc);
+    if (!fs::exists(config.executablePath, erc))
     {
         errorList.push_back(GetProcessName() + " ResolvedPath does not exists");
     }
-    if (!fs::is_regular_file(config.ExecutablePath, erc))
+    if (!fs::is_regular_file(config.executablePath, erc))
     {
         errorList.push_back(GetProcessName() + " ResolvedPath is not a regular file");
     }
@@ -630,15 +630,15 @@ void Process::CheckConfig(std::vector<std::string>& errorList) const noexcept
 
     //check cwd
     // 1) Must exist
-    if (!config.Cwd.empty())
+    if (!config.cwd.empty())
     {
-        if (!fs::exists(config.Cwd, erc))
+        if (!fs::exists(config.cwd, erc))
         {
             errorList.push_back(GetProcessName() + " Cwd does not exists");
         }
 
         // 2) Must be a directory
-        if (!fs::is_directory(config.Cwd, erc))
+        if (!fs::is_directory(config.cwd, erc))
         {
             errorList.push_back(GetProcessName() + " Cwd is not a directory");
         }
@@ -647,15 +647,15 @@ void Process::CheckConfig(std::vector<std::string>& errorList) const noexcept
 
 
     //check StdioFilePath
-    if (config.StdioPolicy.StdioMode != StdioModeEnum::File) return;
-    if (config.StdioPolicy.StdioFilePath.empty())
+    if (config.stdioPolicy.stdioMode != StdioMode::File) return;
+    if (config.stdioPolicy.stdioFilePath.empty())
     {
         errorList.push_back(GetProcessName() + " StdioFilePath is empty logging will fail");
         return;
     }
 
     // The file itself is created on the first start; its directory has to be there.
-    const auto logDirectory = config.StdioPolicy.StdioFilePath.parent_path();
+    const auto logDirectory = config.stdioPolicy.stdioFilePath.parent_path();
     if (!logDirectory.empty() && !fs::is_directory(logDirectory, erc))
     {
         errorList.push_back(GetProcessName() + " StdioFilePath directory does not exists");
@@ -669,7 +669,7 @@ void Process::SuspendHealthCheck()
     runtime.healthCheckSuspended = true;
 }
 
-RuntimeHealthStruct Process::GetRuntimeStats() const noexcept
+RuntimeHealth Process::GetRuntimeStats() const noexcept
 {
     return runtime.runtimeHealth;
 }
@@ -677,22 +677,22 @@ RuntimeHealthStruct Process::GetRuntimeStats() const noexcept
 
 pid_t Process::ReapExit()
 {
-    const auto curentPid = runtime.processHandle.pid;
-    ExitStatusStruct exits;
+    const auto currentPid = runtime.processHandle.pid;
+    ExitStatus exits;
 
-    if (curentPid <= 0) return 0;
+    if (currentPid <= 0) return 0;
 
     while (true)
     {
         int status = 0;
         // This has been seen to hang now and then, even with WNOHANG.
-        pid_t pid = ::waitpid(curentPid, &status, WNOHANG);
+        pid_t pid = ::waitpid(currentPid, &status, WNOHANG);
 
         if (pid < 0 && errno == ECHILD)
         {
             // No longer our child. Drop the pid, which would otherwise signal whoever reuses it;
             // the exit status stays unknown (the defaults).
-            pid = curentPid;
+            pid = currentPid;
         }
         else if (pid <= 0)
         {
@@ -700,44 +700,44 @@ pid_t Process::ReapExit()
         }
         else if (WIFEXITED(status))
         {
-            exits.IsTerminatedBySignal = false;
-            exits.ExitCode = WEXITSTATUS(status);
+            exits.isTerminatedBySignal = false;
+            exits.exitCode = WEXITSTATUS(status);
         }
         else if (WIFSIGNALED(status))
         {
-            exits.IsTerminatedBySignal = true;
-            exits.TermSignal = WTERMSIG(status);
+            exits.isTerminatedBySignal = true;
+            exits.termSignal = WTERMSIG(status);
         }
 
-        exits.Pid = pid;
+        exits.pid = pid;
         runtime.processHandle.pid = -1;
         runtime.processHandle.pgid = -1;
         runtime.exitStatus = exits;
-        GetRuntimeStatus().state = RuntimeStateEnum::Stopped;
+        GetRuntimeStatus().state = RuntimeState::Stopped;
 
         runtime.exitTime = Now();
-        if (runtime.exitTime - GetRuntimeStatus().startTime >= config.RestartPolicy.RestartResetMs)
+        if (runtime.exitTime - GetRuntimeStatus().startTime >= config.restartPolicy.restartResetMs)
         {
             runtime.consecutiveRestarts = 0; // it ran long enough: a new failure starts a new series
         }
-        if (!exits.IsTerminatedBySignal)
+        if (!exits.isTerminatedBySignal)
         {
-            logger::Info("[%s] pid %d exited with code %d", config.ProcessName.c_str(), pid, exits.ExitCode);
+            logger::Info("[%s] pid %d exited with code %d", config.processName.c_str(), pid, exits.exitCode);
         }
-        else if (exits.TermSignal > 0)
+        else if (exits.termSignal > 0)
         {
-            logger::Info("[%s] pid %d terminated by signal %d", config.ProcessName.c_str(), pid, exits.TermSignal);
+            logger::Info("[%s] pid %d terminated by signal %d", config.processName.c_str(), pid, exits.termSignal);
         }
         else
         {
-            logger::Info("[%s] pid %d is gone, exit status unknown", config.ProcessName.c_str(), pid);
+            logger::Info("[%s] pid %d is gone, exit status unknown", config.processName.c_str(), pid);
         }
 
-        const auto rMode = config.RestartPolicy.RestartMode;
-        if (!IsWorkingManually() && rMode != RestartModeEnum::Never && RestartLimitReached() &&
-            (rMode != RestartModeEnum::OnFailure || ExitedWithFailure()))
+        const auto rMode = config.restartPolicy.restartMode;
+        if (!IsWorkingManually() && rMode != RestartMode::Never && RestartLimitReached() &&
+            (rMode != RestartMode::OnFailure || ExitedWithFailure()))
         {
-            logger::Error("[%s] Not restarting: %d restarts in a row (MaxRestarts)", config.ProcessName.c_str(), runtime.consecutiveRestarts);
+            logger::Error("[%s] Not restarting: %d restarts in a row (MaxRestarts)", config.processName.c_str(), runtime.consecutiveRestarts);
         }
         return pid;
 
@@ -745,20 +745,20 @@ pid_t Process::ReapExit()
     return -1;
 }
 
-DetailedHealthReportStruct Process::GetHealthReport() const
+DetailedHealthReport Process::GetHealthReport() const
 {
     // Sent as raw bytes: zero the padding too, and keep the name NUL-terminated.
-    DetailedHealthReportStruct healthReport;
+    DetailedHealthReport healthReport;
     std::memset(static_cast<void*>(&healthReport), 0, sizeof(healthReport));
-    const size_t nameLength = std::min(config.ProcessName.size(), sizeof(healthReport.processName) - 1);
-    std::memcpy(healthReport.processName, config.ProcessName.data(), nameLength);
+    const size_t nameLength = std::min(config.processName.size(), sizeof(healthReport.processName) - 1);
+    std::memcpy(healthReport.processName, config.processName.data(), nameLength);
 
     const auto& health = runtime.runtimeHealth;
     healthReport.runtimeHealth.state = health.state;
     healthReport.runtimeHealth.startTime = health.startTime;
     healthReport.runtimeHealth.lastSeen = health.lastSeen;
     healthReport.runtimeHealth.missedBeats = health.missedBeats;
-    healthReport.runtimeHealth.restatCount = health.restatCount;
+    healthReport.runtimeHealth.restartCount = health.restartCount;
     healthReport.pid = GetPid();
     healthReport.memoryUsageInBytes = GetMemoryUsageInBytes();
     healthReport.cpuUsageInUsec = GetCpuUsageInUsec();
@@ -795,7 +795,7 @@ void Process::AppendStdioOutput(std::string_view output)
     for (size_t newline = line.find('\n'); newline != std::string::npos; newline = line.find('\n', start))
     {
         const std::string text = line.substr(start, newline - start);
-        logger::Info("[%s] %s", config.ProcessName.c_str(), text.c_str());
+        logger::Info("[%s] %s", config.processName.c_str(), text.c_str());
         start = newline + 1;
     }
     line.erase(0, start);
@@ -806,7 +806,7 @@ void Process::AppendStdioOutput(std::string_view output)
 void Process::FlushStdioLine()
 {
     if (runtime.stdioLine.empty()) return;
-    logger::Info("[%s] %s", config.ProcessName.c_str(), runtime.stdioLine.c_str());
+    logger::Info("[%s] %s", config.processName.c_str(), runtime.stdioLine.c_str());
     runtime.stdioLine.clear();
 }
 
@@ -827,7 +827,7 @@ bool Process::SetupStdioPipe() const
 }
 bool Process::SetupStdioFile(const char* path) const
 {
-    const int flags = O_WRONLY | O_CREAT | O_CLOEXEC | (config.StdioPolicy.StdioAppend ? O_APPEND : O_TRUNC);
+    const int flags = O_WRONLY | O_CREAT | O_CLOEXEC | (config.stdioPolicy.stdioAppend ? O_APPEND : O_TRUNC);
     const int fd = ::open(path, flags, 0644);
     if (fd < 0) return false;
 
@@ -839,8 +839,8 @@ bool Process::SetupStdioFile(const char* path) const
 std::vector<char*> Process::SetupExecParams() const
 {
     std::vector<char*> argv_c;
-    argv_c.push_back(const_cast<char*>(config.ExecutablePath.c_str()));
-    for (const auto& arg : config.Args)
+    argv_c.push_back(const_cast<char*>(config.executablePath.c_str()));
+    for (const auto& arg : config.args)
     {
         argv_c.push_back(const_cast<char*>(arg.data()));
     }
@@ -850,21 +850,21 @@ std::vector<char*> Process::SetupExecParams() const
 }
 bool Process::SetupWorkingDirectory() const
 {
-    const auto& cwd = config.Cwd;
+    const auto& cwd = config.cwd;
 
     if (!cwd.empty())
     {
         if (::chdir(cwd.c_str()) != 0)
         {
-            ChildError(config.ProcessName.c_str(), "chdir failed"); // in the child: no logger, it takes a lock
+            ChildError(config.processName.c_str(), "chdir failed"); // in the child: no logger, it takes a lock
         }
     }
 
     return true;
 }
-bool process_manager::Process::SetupEnviromentVariables()
+bool process_manager::Process::SetupEnvironmentVariables()
 {
-    for (auto& arg : config.EnviromentVariables)
+    for (auto& arg : config.environmentVariables)
     {
         ::putenv(arg.data());
     }
@@ -872,39 +872,39 @@ bool process_manager::Process::SetupEnviromentVariables()
 }
 bool process_manager::Process::SetupDisplay() const
 {
-    if (!config.UseDisplay) return true;
+    if (!config.useDisplay) return true;
 
-    if (setenv("DISPLAY", config.Display.c_str(), 1) != 0)
+    if (setenv("DISPLAY", config.display.c_str(), 1) != 0)
     {
-        ChildError(config.ProcessName.c_str(), "Setting DISPLAY failed");
+        ChildError(config.processName.c_str(), "Setting DISPLAY failed");
     }
-    if (!config.XAuthority.empty() && setenv("XAUTHORITY", config.XAuthority.c_str(), 1) != 0)
+    if (!config.xAuthority.empty() && setenv("XAUTHORITY", config.xAuthority.c_str(), 1) != 0)
     {
-        ChildError(config.ProcessName.c_str(), "Setting XAUTHORITY failed");
+        ChildError(config.processName.c_str(), "Setting XAUTHORITY failed");
     }
     return true;
 }
 bool Process::SetupStdioSettings() const
 {
-    const auto& stdio = config.StdioPolicy;
+    const auto& stdio = config.stdioPolicy;
 
-    switch (stdio.StdioMode)
+    switch (stdio.stdioMode)
     {
-    case StdioModeEnum::Inherit:
+    case StdioMode::Inherit:
     {
         return true;
     }
-    case StdioModeEnum::Pipe:
+    case StdioMode::Pipe:
     {
         return SetupStdioPipe();
     }
-    case StdioModeEnum::NullDevice:
+    case StdioMode::NullDevice:
     {
         return SetupStdioFile("/dev/null");
     }
-    case StdioModeEnum::File:
+    case StdioMode::File:
     {
-        return SetupStdioFile(stdio.StdioFilePath.c_str());
+        return SetupStdioFile(stdio.stdioFilePath.c_str());
     }
     default:
         return true; // an unknown mode keeps the manager's output, as Inherit does
@@ -915,15 +915,15 @@ bool Process::SetupStdioSettings() const
 
 bool Process::SetupChildGroupSettings() const
 {
-    if (!config.CreateProcessGroup) return true;
+    if (!config.createProcessGroup) return true;
 
-    std::string procs_file = (runtime.cgroup_path / "cgroup.procs").string();
+    std::string procs_file = (runtime.cgroupPath / "cgroup.procs").string();
     std::string pid_str = std::to_string(getpid());
 
     int fd = ::open(procs_file.c_str(), O_WRONLY);
     if (fd < 0 || write(fd, pid_str.c_str(), pid_str.length()) < 0)
     {
-        ChildError(config.ProcessName.c_str(), "Joining the service's cgroup failed"); // in the child: no logger
+        ChildError(config.processName.c_str(), "Joining the service's cgroup failed"); // in the child: no logger
         _exit(EXIT_FAILURE); // Immediate exit, bypass C++ destructors
     }
     close(fd);
@@ -932,17 +932,17 @@ bool Process::SetupChildGroupSettings() const
 
 bool Process::SetupProcessGroupSettings()
 {
-    if (!config.CreateProcessGroup) return true;
+    if (!config.createProcessGroup) return true;
 
     fs::path managerRoot = ProcessGroupBuilder::GetInstance().GetParentGroupPath();
-    runtime.cgroup_path = managerRoot / ("task_" + config.ProcessName);
+    runtime.cgroupPath = managerRoot / ("task_" + config.processName);
 
     std::error_code ec;
-    if (!fs::create_directories(runtime.cgroup_path, ec) && ec)
+    if (!fs::create_directories(runtime.cgroupPath, ec) && ec)
     {
-        logger::Error("[%s] Failed to create cgroup directory:  %s ", config.ProcessName.c_str(), ec.message().c_str());
-        logger::Error("[%s] Starting directly... ", config.ProcessName.c_str());
-        config.CreateProcessGroup = false;
+        logger::Error("[%s] Failed to create cgroup directory:  %s ", config.processName.c_str(), ec.message().c_str());
+        logger::Error("[%s] Starting directly... ", config.processName.c_str());
+        config.createProcessGroup = false;
         return false;
     }
     return true;
@@ -950,9 +950,9 @@ bool Process::SetupProcessGroupSettings()
 
 bool Process::TerminateProcessGroup() const
 {
-    if (!config.CreateProcessGroup) return true;
+    if (!config.createProcessGroup) return true;
 
-    fs::path kill_file = runtime.cgroup_path / "cgroup.kill";
+    fs::path kill_file = runtime.cgroupPath / "cgroup.kill";
     std::ofstream kill_stream(kill_file);
     if (kill_stream.is_open())
     {
@@ -969,12 +969,12 @@ bool Process::TerminateProcessGroup() const
 
 bool Process::RemoveProcessGroup() const
 {
-    if (!config.CreateProcessGroup) return true;
+    if (!config.createProcessGroup) return true;
 
     std::error_code ec;
-    if (!fs::remove(runtime.cgroup_path, ec) && ec)
+    if (!fs::remove(runtime.cgroupPath, ec) && ec)
     {
-        logger::Error("[%s] Failed to delete cgroup directory:  %s", config.ProcessName.c_str(), std::strerror(errno));
+        logger::Error("[%s] Failed to delete cgroup directory:  %s", config.processName.c_str(), std::strerror(errno));
         return false;
     }
     return true;
@@ -982,8 +982,8 @@ bool Process::RemoveProcessGroup() const
 
 bool Process::StartChildProcess() const
 {
-    ::execvp(config.ExecutablePath.c_str(), SetupExecParams().data());
+    ::execvp(config.executablePath.c_str(), SetupExecParams().data());
     // exec failed. _exit: the parent's atexit handlers and static destructors must not run in this copy.
-    ChildError(config.ProcessName.c_str(), "exec failed");
+    ChildError(config.processName.c_str(), "exec failed");
     ::_exit(127);
 }

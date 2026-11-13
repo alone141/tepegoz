@@ -1,7 +1,7 @@
 #pragma once
 namespace process_manager
 {
-    enum class WorkModeEnum
+    enum class WorkMode
     {
         Auto,
         Manual

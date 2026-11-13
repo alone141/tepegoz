@@ -5,7 +5,7 @@
 #include <sys/types.h>
 namespace process_manager
 {
-    enum class RuntimeStateEnum : uint8_t
+    enum class RuntimeState : uint8_t
     {
         Unknown,
         Starting,
@@ -14,23 +14,23 @@ namespace process_manager
         Unhealthy
     };
     [[maybe_unused]]
-    static const char* RuntimeStateToString(RuntimeStateEnum e)
+    static const char* RuntimeStateToString(RuntimeState e)
     {
         switch (e)
         {
-        case process_manager::RuntimeStateEnum::Unknown:
+        case process_manager::RuntimeState::Unknown:
             return "Unknown";
             break;
-        case process_manager::RuntimeStateEnum::Starting:
+        case process_manager::RuntimeState::Starting:
             return "Starting";
             break;
-        case process_manager::RuntimeStateEnum::Running:
+        case process_manager::RuntimeState::Running:
             return "Running";
             break;
-        case process_manager::RuntimeStateEnum::Stopped:
+        case process_manager::RuntimeState::Stopped:
             return "Stopped";
             break;
-        case process_manager::RuntimeStateEnum::Unhealthy:
+        case process_manager::RuntimeState::Unhealthy:
             return "Unhealthy";
             break;
         default:
@@ -38,20 +38,20 @@ namespace process_manager
             break;
         }
     }
-    struct RuntimeHealthStruct
+    struct RuntimeHealth
     {
-        RuntimeStateEnum state = RuntimeStateEnum::Unknown;
+        RuntimeState state = RuntimeState::Unknown;
 
         std::chrono::high_resolution_clock::time_point startTime;
         std::chrono::high_resolution_clock::time_point lastSeen;
 
         int missedBeats = 0;
-        int restatCount = 0;
+        int restartCount = 0;
 
 
     };
     // Wire values: the GUI reads them.
-    enum class GpuUsageStateEnum : uint8_t
+    enum class GpuUsageState : uint8_t
     {
         NotSampled, // the manager has not sampled the GPUs yet
         Sampled,
@@ -60,25 +60,25 @@ namespace process_manager
         Failed,     // NVML failed; the manager's log has its error code
         Stalled     // no new sample for a while: a driver call is not returning
     };
-    struct GpuUsageStruct
+    struct GpuUsage
     {
         uint64_t memoryUsageInBytes = 0; // every process of the service, on every GPU; 0 unless Sampled (the GUI checks it)
         int32_t utilizationPercent = -1; // SM use summed over its processes and GPUs (200: two busy GPUs); -1 unknown
-        GpuUsageStateEnum state = GpuUsageStateEnum::NotSampled; // the other fields count only when Sampled
+        GpuUsageState state = GpuUsageState::NotSampled; // the other fields count only when Sampled
         uint8_t reserved[3] = {}; // sent as raw bytes: no padding left uninitialized
     };
-    struct DetailedHealthReportStruct
+    struct DetailedHealthReport
     {
         char processName[64];
         pid_t pid;
         uint64_t memoryUsageInBytes;
         uint64_t cpuUsageInUsec;
 
-        RuntimeHealthStruct runtimeHealth;
+        RuntimeHealth runtimeHealth;
 
         std::chrono::high_resolution_clock::time_point snapshotTime;
-        GpuUsageStruct gpuUsage;
+        GpuUsage gpuUsage;
     };
-    static_assert(sizeof(DetailedHealthReportStruct) == 144, "the GUI parses 144-byte health reports");
+    static_assert(sizeof(DetailedHealthReport) == 144, "the GUI parses 144-byte health reports");
 
 }

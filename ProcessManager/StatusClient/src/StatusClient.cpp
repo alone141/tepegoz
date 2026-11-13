@@ -28,10 +28,10 @@ using Clock = std::chrono::steady_clock;
 constexpr std::chrono::milliseconds poll_step{200};
 constexpr std::string_view clear_screen = "\033[H\033[2J";
 
-static_assert(static_cast<int>(process_manager::RuntimeStateEnum::Unhealthy) ==
+static_assert(static_cast<int>(process_manager::RuntimeState::Unhealthy) ==
                   static_cast<int>(status_table::ServiceState::Unhealthy),
               "ServiceState follows the manager's RuntimeStateEnum");
-static_assert(static_cast<int>(process_manager::GpuUsageStateEnum::Stalled) ==
+static_assert(static_cast<int>(process_manager::GpuUsageState::Stalled) ==
                   static_cast<int>(status_table::GpuState::Stalled),
               "GpuState follows the manager's GpuUsageStateEnum");
 
@@ -40,7 +40,7 @@ std::int64_t SinceEpochNs(std::chrono::high_resolution_clock::time_point when)
     return std::chrono::duration_cast<std::chrono::nanoseconds>(when.time_since_epoch()).count();
 }
 
-status_table::ServiceState StateOf(process_manager::RuntimeStateEnum state)
+status_table::ServiceState StateOf(process_manager::RuntimeState state)
 {
     const int value = static_cast<int>(state);
     if (value > static_cast<int>(status_table::ServiceState::Unhealthy))
@@ -51,7 +51,7 @@ status_table::ServiceState StateOf(process_manager::RuntimeStateEnum state)
     return static_cast<status_table::ServiceState>(value);
 }
 
-status_table::GpuState GpuStateOf(process_manager::GpuUsageStateEnum state)
+status_table::GpuState GpuStateOf(process_manager::GpuUsageState state)
 {
     const int value = static_cast<int>(state);
     if (value > static_cast<int>(status_table::GpuState::Stalled))
@@ -184,7 +184,7 @@ void PrintLines(const std::vector<std::string>& lines)
 
 ParseCode ParseReport(std::string_view bytes, std::vector<status_table::ServiceSample>& out)
 {
-    constexpr std::size_t record_size = sizeof(process_manager::DetailedHealthReportStruct);
+    constexpr std::size_t record_size = sizeof(process_manager::DetailedHealthReport);
     if (bytes.size() % record_size != 0)
     {
         return ParseCode::BadSize;
@@ -193,14 +193,14 @@ ParseCode ParseReport(std::string_view bytes, std::vector<status_table::ServiceS
     std::vector<status_table::ServiceSample> samples{};
     for (std::size_t offset = 0; offset < bytes.size(); offset += record_size)
     {
-        process_manager::DetailedHealthReportStruct report{};
+        process_manager::DetailedHealthReport report{};
         std::memcpy(static_cast<void*>(&report), bytes.data() + offset, record_size);
         status_table::ServiceSample sample{};
         sample.name = std::string{report.processName, ::strnlen(report.processName, sizeof(report.processName))};
         sample.pid = report.pid;
         sample.state = StateOf(report.runtimeHealth.state);
         sample.missedBeats = report.runtimeHealth.missedBeats;
-        sample.restarts = report.runtimeHealth.restatCount;
+        sample.restarts = report.runtimeHealth.restartCount;
         sample.cpuUsec = report.cpuUsageInUsec;
         sample.memoryBytes = report.memoryUsageInBytes;
         sample.startNs = SinceEpochNs(report.runtimeHealth.startTime);
