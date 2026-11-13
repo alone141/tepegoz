@@ -1,5 +1,5 @@
 add_subdirectory(source)
 
 if(ENABLE_TEST)
-	add_subdirectory(test)
+	add_subdirectory(tests)
 endif()
