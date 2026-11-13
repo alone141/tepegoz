@@ -30,10 +30,10 @@ constexpr std::string_view clear_screen = "\033[H\033[2J";
 
 static_assert(static_cast<int>(process_manager::RuntimeState::Unhealthy) ==
                   static_cast<int>(status_table::ServiceState::Unhealthy),
-              "ServiceState follows the manager's RuntimeStateEnum");
+              "ServiceState follows the manager's RuntimeState");
 static_assert(static_cast<int>(process_manager::GpuUsageState::Stalled) ==
                   static_cast<int>(status_table::GpuState::Stalled),
-              "GpuState follows the manager's GpuUsageStateEnum");
+              "GpuState follows the manager's GpuUsageState");
 
 std::int64_t SinceEpochNs(std::chrono::high_resolution_clock::time_point when)
 {
@@ -126,28 +126,28 @@ bool NextReport(zmq::socket_t& socket, std::chrono::milliseconds timeout, std::v
     }
 }
 
-process_manager::ProcessManagerCommandEnum WireCommand(command_watch::Command command)
+process_manager::CommandCode WireCommand(command_watch::Command command)
 {
     switch (command)
     {
     case command_watch::Command::Start:
-        return process_manager::ProcessManagerCommandEnum::StartService;
+        return process_manager::CommandCode::StartService;
     case command_watch::Command::Stop:
-        return process_manager::ProcessManagerCommandEnum::StopService;
+        return process_manager::CommandCode::StopService;
     case command_watch::Command::Restart:
-        return process_manager::ProcessManagerCommandEnum::RestartService;
+        return process_manager::CommandCode::RestartService;
     case command_watch::Command::Disable:
-        return process_manager::ProcessManagerCommandEnum::DisableService;
+        return process_manager::CommandCode::DisableService;
     }
-    return process_manager::ProcessManagerCommandEnum::Unknown;
+    return process_manager::CommandCode::Unknown;
 }
 
 bool Send(zmq::context_t& context, const std::string& endpoint, command_watch::Command command,
           std::string_view target)
 {
-    process_manager::ProcessManagerCommandStruct message{};
+    process_manager::CommandMessage message{};
     message.command = WireCommand(command);
-    std::memcpy(message.ServiceName, target.data(), target.size());
+    std::memcpy(message.serviceName, target.data(), target.size());
 
     zmq::socket_t socket{context, zmq::socket_type::dealer};
     socket.set(zmq::sockopt::routing_id, command_line_identity);
@@ -156,7 +156,7 @@ bool Send(zmq::context_t& context, const std::string& endpoint, command_watch::C
     socket.set(zmq::sockopt::sndtimeo, 2000);
     socket.set(zmq::sockopt::linger, 2000);
     socket.connect(endpoint);
-    const std::string& destination = process_manager::comm::PROCESS_MANAGER_ID;
+    const std::string& destination = process_manager::comm::process_manager_id;
     return socket.send(zmq::buffer(destination), zmq::send_flags::sndmore) &&
            socket.send(zmq::buffer(&message, sizeof(message)), zmq::send_flags::none);
 }
@@ -301,10 +301,10 @@ StatusCode PrintStatus(const Endpoints& endpoints)
 CommandCode SendCommand(command_watch::Command command, std::string_view target, const Endpoints& endpoints,
                         bool follow, std::chrono::seconds timeout)
 {
-    if (target.size() >= sizeof(process_manager::ProcessManagerCommandStruct::ServiceName))
+    if (target.size() >= sizeof(process_manager::CommandMessage::serviceName))
     {
         std::cerr << "Service name '" << target << "' is longer than "
-                  << sizeof(process_manager::ProcessManagerCommandStruct::ServiceName) - 1 << " bytes\n";
+                  << sizeof(process_manager::CommandMessage::serviceName) - 1 << " bytes\n";
         return CommandCode::BadTarget;
     }
     if (command == command_watch::Command::Disable && target == command_watch::all_services)

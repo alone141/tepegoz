@@ -541,7 +541,7 @@ std::chrono::milliseconds Process::RestartDelay() const
 // failure too). For an exited one: per RestartMode, once the backoff delay since the exit has passed.
 bool Process::NeedsRestart() const
 {
-    //Orumcek agina dondu burasi
+    // This has turned into a spider's web.
     const auto rMode = config.restartPolicy.restartMode;
     if (rMode == RestartMode::Never) return false;
     if (RestartLimitReached()) return false;

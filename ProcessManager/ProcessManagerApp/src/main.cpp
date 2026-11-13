@@ -86,7 +86,7 @@ int main(int argc, char** argv)
 
 
     //delete networkMaster;
-    //delete manager; //timer segfault veriyor ????
+    //delete manager; // the timer segfaults ????
     std::cout << "EXIT MAIN" << std::endl;
 
     // The broker and the signal thread have no way to be stopped; end the process without unwinding them.

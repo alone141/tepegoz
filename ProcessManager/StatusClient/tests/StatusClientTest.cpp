@@ -97,18 +97,18 @@ private:
             {
                 std::vector<zmq::message_t> frames{};
                 (void)zmq::recv_multipart(broker, std::back_inserter(frames));
-                process_manager::ProcessManagerCommandStruct command{};
+                process_manager::CommandMessage command{};
                 std::memcpy(&command, frames.back().data(), std::min(frames.back().size(), sizeof(command)));
                 const std::lock_guard<std::mutex> lock{mutex};
-                received.push_back(frames.front().to_string() + " " + std::to_string(command.command) + " " +
-                                   command.ServiceName);
+                received.push_back(frames.front().to_string() + " " + std::to_string(static_cast<int>(command.command)) + " " +
+                                   command.serviceName);
                 for (process_manager::DetailedHealthReport& service : services)
                 {
-                    if (ignoreCommands || std::string_view{service.processName} != command.ServiceName)
+                    if (ignoreCommands || std::string_view{service.processName} != command.serviceName)
                     {
                         continue;
                     }
-                    if (command.command == process_manager::ProcessManagerCommandEnum::StopService)
+                    if (command.command == process_manager::CommandCode::StopService)
                     {
                         service.pid = -1;
                         service.runtimeHealth.state = process_manager::RuntimeState::Stopped;

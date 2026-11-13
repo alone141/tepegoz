@@ -30,8 +30,8 @@ namespace process_manager
     private:
         void StopAll();
         void RetireProcess(Process& process);
-        bool ApplyToAll(ProcessManagerCommandEnum command);
-        bool ApplyCommandServerMessage(const ProcessManagerCommandStruct& message);
+        bool ApplyToAll(CommandCode command);
+        bool ApplyCommandServerMessage(const CommandMessage& message);
         bool ProcessMessage(const std::vector<zmq::message_t>& messages);
         bool CheckProcessConfig(std::vector<std::string>& err) const;
         bool StartSequentialAsync() const;

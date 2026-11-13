@@ -6,6 +6,6 @@ void process_manager::StdioPolicy::UpdateArgs(config_section::ConfigSection& sec
 {
     // The choices in StdioMode order.
     stdioMode = static_cast<StdioMode>(section.ReadChoice("StdioMode", { "Inherit", "Pipe", "File", "NullDevice" }, 0));
-    stdioFilePath = std::filesystem::path(section.ReadString("StdioFilePath", "/tmp/output.txt")); //todo isme gore
+    stdioFilePath = std::filesystem::path(section.ReadString("StdioFilePath", "/tmp/output.txt")); // todo: by name
     stdioAppend = section.ReadBool("StdioAppend", false);
 }

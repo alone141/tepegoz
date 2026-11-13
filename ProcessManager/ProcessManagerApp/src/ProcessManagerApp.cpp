@@ -12,7 +12,7 @@ bool ProcessManagerApp::StartUp(const std::string& configPath)
 {
     InitializeLogger();
 
-    logger::Info("PROCESMANAGER VERSION: %s", PROCESSMANAGER_VERSION_FULL);
+    logger::Info("PROCESMANAGER VERSION: %s", PROCESS_MANAGER_VERSION_FULL);
 
 
     // A file named with --config is used as given; only the installed one may fall back to the share directory.

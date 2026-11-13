@@ -5,7 +5,7 @@
 
 namespace process_manager
 {
-    enum ProcessManagerCommandEnum : char
+    enum class CommandCode : char
     {
         Unknown = -1,
         StartServiceWithArgs = 77,
@@ -15,11 +15,11 @@ namespace process_manager
         RestartService,
         GetVersionInfo
     };
-    struct ProcessManagerCommandStruct
+    struct CommandMessage
     {
-        ProcessManagerCommandEnum command;
-        char ServiceName[32];
-        char Args[32];
+        CommandCode command;
+        char serviceName[32];
+        char args[32];
     };
 
     struct __attribute__((packed)) VersionInfo
@@ -31,19 +31,19 @@ namespace process_manager
     // The answer to GetVersionInfo: the manager's own version, from the CMake project.
     struct __attribute__((packed)) VersionReport
     {
-        ProcessManagerCommandEnum command; // 1 byte
+        CommandCode command; // 1 byte
         VersionInfo manager;
         uint8_t reserved[3];
     };
     namespace comm
     {
-        constexpr std::string_view COMMAND_SERVER_ID = "PMC";
-        constexpr std::string_view GUI_ID = "GUI";
-        inline const std::string PROCESS_MANAGER_ID = "BPM"; //loglayabilmek icin std::string
-        inline const char* COMMAND_SERVER_PORT = "tcp://localhost:5557";
-        inline const char* HEALTH_PUBLISH_PORT_DETAILED = "tcp://*:6667";
-        inline const char* HEALTH_LISTEN_PORT_DETAILED = "tcp://localhost:6667";
+        constexpr std::string_view command_server_id = "PMC";
+        constexpr std::string_view gui_id = "GUI";
+        inline const std::string process_manager_id = "BPM"; // std::string so that it can be logged
+        inline const char* command_server_port = "tcp://localhost:5557";
+        inline const char* health_publish_port_detailed = "tcp://*:6667";
+        inline const char* health_listen_port_detailed = "tcp://localhost:6667";
         // Journal reads for a monitor GUI on another machine (JournalServer).
-        inline const char* JOURNAL_SERVER_PORT = "tcp://*:6670";
+        inline const char* journal_server_port = "tcp://*:6670";
     }
 }

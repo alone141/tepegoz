@@ -19,7 +19,7 @@ Multipart:
 The manager answers a command from b"GUI" with [b"BPM"][b"1" accepted | b"0" refused].
 
 struct CommandMessage {
-    uint8_t command;          // CommandEnum
+    uint8_t command;          // CommandCode
     char    ServiceName[32];
     char    Args[32];         // may be empty
 };
@@ -220,13 +220,13 @@ def format_bytes(n: int) -> str:
 # Commands (DEALER)
 # ──────────────────────────────────────────────────────────────────────────────
 
-# The manager's GUI_ID: commands from it are answered, and it does not clash
+# The manager's gui_id: commands from it are answered, and it does not clash
 # with the C++ CLI, which connects as b"PMC".
 GUI_IDENTITY = b"GUI"
 
 
 class CommandEnum(IntEnum):
-    """Must match the C++ CommandEnum wire values."""
+    """Must match the C++ CommandCode wire values."""
     START   = 78
     STOP    = 79
     RESTART = 81

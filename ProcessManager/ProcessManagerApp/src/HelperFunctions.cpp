@@ -7,7 +7,7 @@
 #include "CommandWatch.hpp"
 #include "StatusClient.hpp"
 
-const char* ConfigTemplate = R"yaml(# Process manager configuration (YAML)
+const char* config_template = R"yaml(# Process manager configuration (YAML)
 
 # Settings of the manager itself.
 ProcessManager:
@@ -121,8 +121,8 @@ namespace
     status_client::Endpoints LocalManager()
     {
         status_client::Endpoints endpoints{};
-        endpoints.reports = process_manager::comm::HEALTH_LISTEN_PORT_DETAILED;
-        endpoints.commands = process_manager::comm::COMMAND_SERVER_PORT;
+        endpoints.reports = process_manager::comm::health_listen_port_detailed;
+        endpoints.commands = process_manager::comm::command_server_port;
         return endpoints;
     }
 
@@ -266,7 +266,7 @@ void GenerateTemplateConfig()
 
     if (fout.is_open())
     {
-        fout << ConfigTemplate;
+        fout << config_template;
     }
 
     fout.close();

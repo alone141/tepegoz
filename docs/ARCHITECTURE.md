@@ -164,13 +164,13 @@ Each service is reaped with
 
 ### Commands
 
-`PMC` or `GUI` sends `[BPM][command]`, where the command is a 65-byte `ProcessManagerCommandStruct`:
+`PMC` or `GUI` sends `[BPM][command]`, where the command is a 65-byte `CommandMessage`:
 
 | Offset | Field | Type |
 |---|---|---|
 | 0 | `command` | `uint8` |
-| 1 | `ServiceName` | `char[32]`, NUL-terminated; `all` means every service |
-| 33 | `Args` | `char[32]` |
+| 1 | `serviceName` | `char[32]`, NUL-terminated; `all` means every service |
+| 33 | `args` | `char[32]` |
 
 | Code | Command |
 |---|---|

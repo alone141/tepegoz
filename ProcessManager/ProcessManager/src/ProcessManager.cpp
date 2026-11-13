@@ -199,10 +199,10 @@ ProcessManager::ProcessManager(std::unique_ptr<ProcessManagerParams> args)
     listener(zmqContext, zmq::socket_type::dealer),
     statusPublisher(zmqContext, zmq::socket_type::pub)
 {
-    listener.set(zmq::sockopt::routing_id, comm::PROCESS_MANAGER_ID);
-    listener.connect(comm::COMMAND_SERVER_PORT);
+    listener.set(zmq::sockopt::routing_id, comm::process_manager_id);
+    listener.connect(comm::command_server_port);
 
-    statusPublisher.bind(comm::HEALTH_PUBLISH_PORT_DETAILED);
+    statusPublisher.bind(comm::health_publish_port_detailed);
 
     processParams = std::move(args);
 }
@@ -215,11 +215,11 @@ ProcessManager::~ProcessManager()
 }
 void process_manager::ProcessManager::Run()
 {
-    logger::Info("Health status will be published from %s", comm::HEALTH_PUBLISH_PORT_DETAILED);
-    logger::Info("Heartbeats will be listened from %s as %s", comm::COMMAND_SERVER_PORT, comm::PROCESS_MANAGER_ID.c_str());
+    logger::Info("Health status will be published from %s", comm::health_publish_port_detailed);
+    logger::Info("Heartbeats will be listened from %s as %s", comm::command_server_port, comm::process_manager_id.c_str());
     // The broker learns a dealer's name from what it sends, and this socket otherwise only receives:
     // a message to itself names it in the broker's log. It comes back here and is ignored.
-    listener.send(zmq::buffer(comm::PROCESS_MANAGER_ID), zmq::send_flags::sndmore | zmq::send_flags::dontwait);
+    listener.send(zmq::buffer(comm::process_manager_id), zmq::send_flags::sndmore | zmq::send_flags::dontwait);
     listener.send(zmq::str_buffer("hello"), zmq::send_flags::dontwait);
     zmq::pollitem_t items[] = { { listener.handle(), 0, ZMQ_POLLIN, 0} };
 
@@ -228,16 +228,16 @@ void process_manager::ProcessManager::Run()
     GpuUsageReporter gpuUsage;
     // Reads the journal for a monitor GUI on another machine, which cannot run journalctl here. Without it the
     // manager still supervises; only such a GUI loses its logs.
-    journal_server::JournalServer journalServer{ comm::JOURNAL_SERVER_PORT, JournalIdentity(),
+    journal_server::JournalServer journalServer{ comm::journal_server_port, JournalIdentity(),
         std::string(journal_server::default_journalctl), std::string(journal_server::default_systemctl) };
     std::string journalError;
     if (journalServer.Start(journalError) == journal_server::StartCode::Ok)
     {
-        logger::Info("Journal reads will be served from %s", comm::JOURNAL_SERVER_PORT);
+        logger::Info("Journal reads will be served from %s", comm::journal_server_port);
     }
     else
     {
-        logger::Error("Journal server could not bind %s: %s; a GUI on another machine will show no logs", comm::JOURNAL_SERVER_PORT, journalError.c_str());
+        logger::Error("Journal server could not bind %s: %s; a GUI on another machine will show no logs", comm::journal_server_port, journalError.c_str());
     }
     std::vector<process_manager::DetailedHealthReport> published;
     auto nextReport = std::chrono::steady_clock::now();
@@ -515,9 +515,9 @@ bool process_manager::ProcessManager::CheckProcessConfig(std::vector<std::string
     return false;
 }
 
-bool process_manager::ProcessManager::ApplyToAll(ProcessManagerCommandEnum command)
+bool process_manager::ProcessManager::ApplyToAll(CommandCode command)
 {
-    if (command == ProcessManagerCommandEnum::StopService)
+    if (command == CommandCode::StopService)
     {
         for (auto& process : processParams->processList)
         {
@@ -527,7 +527,7 @@ bool process_manager::ProcessManager::ApplyToAll(ProcessManagerCommandEnum comma
         }
         return true;
     }
-    if (command == ProcessManagerCommandEnum::StartService || command == ProcessManagerCommandEnum::RestartService)
+    if (command == CommandCode::StartService || command == CommandCode::RestartService)
     {
         logger::Debug("--start all received, resetting config");
         for (auto& process : processParams->processList)
@@ -565,11 +565,11 @@ void process_manager::ProcessManager::StartDependencies(const Process& process) 
     }
 }
 
-bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessManagerCommandStruct& message)
+bool process_manager::ProcessManager::ApplyCommandServerMessage(const CommandMessage& message)
 {
     logger::Debug("Command received");
     const auto& command = message.command;
-    const std::string processName = FixedString(message.ServiceName, sizeof(message.ServiceName));
+    const std::string processName = FixedString(message.serviceName, sizeof(message.serviceName));
     if (processName == "all")
     {
         return ApplyToAll(command);
@@ -580,7 +580,7 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
         logger::Warning("Cannot find %s", processName.c_str());
         return false;
     }
-    else if (command == ProcessManagerCommandEnum::StartService)
+    else if (command == CommandCode::StartService)
     {
         StartDependencies(*it);
         it->SetWorkMode(WorkMode::Auto);
@@ -593,26 +593,26 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
             it->StartProcess(); // no-op while it runs
         }
     }
-    else if (command == ProcessManagerCommandEnum::StartServiceWithArgs)
+    else if (command == CommandCode::StartServiceWithArgs)
     {
         if (it->HasPid())
         {
             logger::Error("[%s] Already running, stop it before starting it with other arguments", processName.c_str());
             return false;
         }
-        const std::string argsText = FixedString(message.Args, sizeof(message.Args));
+        const std::string argsText = FixedString(message.args, sizeof(message.args));
         it->OverrideStartupArgs(config_section::SplitList(argsText, ' '));
 
         it->StartProcess();
         it->SetWorkMode(WorkMode::Auto);
     }
-    else if (command == ProcessManagerCommandEnum::StopService)
+    else if (command == CommandCode::StopService)
     {
         it->SetWorkMode(WorkMode::Manual);
         it->SuspendHealthCheck();
         it->Stop();
     }
-    else if (command == ProcessManagerCommandEnum::RestartService)
+    else if (command == CommandCode::RestartService)
     {
         StartDependencies(*it);
         it->SetWorkMode(WorkMode::Auto);
@@ -625,7 +625,7 @@ bool process_manager::ProcessManager::ApplyCommandServerMessage(const ProcessMan
             it->StartProcess();
         }
     }
-    else if (command == ProcessManagerCommandEnum::DisableService)
+    else if (command == CommandCode::DisableService)
     {
         RetireProcess(*it);
         processParams->processList.erase(it);
@@ -642,38 +642,38 @@ bool process_manager::ProcessManager::ProcessMessage(const std::vector<zmq::mess
     if (messages.size() < 2) return false;
 
     const auto& receivedFrom = messages[0].to_string_view();
-    if (receivedFrom == comm::COMMAND_SERVER_ID ||
-        receivedFrom == comm::GUI_ID)
+    if (receivedFrom == comm::command_server_id ||
+        receivedFrom == comm::gui_id)
     {
         const auto& payload = messages[1];
         if (payload.size() == 0) return false;
-        const auto command = static_cast<ProcessManagerCommandEnum>(*static_cast<const char*>(payload.data()));
-        if (command == ProcessManagerCommandEnum::GetVersionInfo)
+        const auto command = static_cast<CommandCode>(*static_cast<const char*>(payload.data()));
+        if (command == CommandCode::GetVersionInfo)
         {
             VersionReport version{};
-            version.command = ProcessManagerCommandEnum::GetVersionInfo;
-#ifdef PROCESSMANAGER_VERSION_MAJOR
-            version.manager.major = PROCESSMANAGER_VERSION_MAJOR;
-            version.manager.minor = PROCESSMANAGER_VERSION_MINOR;
-            version.manager.patch = PROCESSMANAGER_VERSION_PATCH;
-#endif // PROCESSMANAGER_VERSION_MAJOR
+            version.command = CommandCode::GetVersionInfo;
+#ifdef PROCESS_MANAGER_VERSION_MAJOR
+            version.manager.major = PROCESS_MANAGER_VERSION_MAJOR;
+            version.manager.minor = PROCESS_MANAGER_VERSION_MINOR;
+            version.manager.patch = PROCESS_MANAGER_VERSION_PATCH;
+#endif // PROCESS_MANAGER_VERSION_MAJOR
 
 
             auto result = reinterpret_cast<char*>(&version);
-            listener.send(zmq::buffer(comm::GUI_ID), zmq::send_flags::sndmore);
+            listener.send(zmq::buffer(comm::gui_id), zmq::send_flags::sndmore);
             listener.send(zmq::buffer(result, sizeof(VersionReport)), zmq::send_flags::none);
             return true;
         }
         else
         {
             // A short frame leaves the rest zero; a longer one is cut to the struct.
-            ProcessManagerCommandStruct message{};
+            CommandMessage message{};
             std::memcpy(&message, payload.data(), std::min(payload.size(), sizeof(message)));
             auto reply = ApplyCommandServerMessage(message);
             auto resultString = std::to_string(reply);
-            if (messages[0].to_string_view() == comm::GUI_ID)
+            if (messages[0].to_string_view() == comm::gui_id)
             {
-                listener.send(zmq::buffer(comm::GUI_ID), zmq::send_flags::sndmore);
+                listener.send(zmq::buffer(comm::gui_id), zmq::send_flags::sndmore);
                 listener.send(zmq::buffer(resultString, 1), zmq::send_flags::none);
             }
             return true;
