@@ -43,10 +43,11 @@ The manager is a single process that runs the services as its children. All comm
 | Path | What it is |
 |---|---|
 | `ProcessManager/` | The C++20 CMake project: the manager, its modules and tests. |
-| `ProcessManager/ProcessManagerApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `reload`, `--start` …). `tests/keepalive.cpp` is a heartbeat example. |
+| `ProcessManager/ProcessManagerApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `reload`, `add`, `list`, `--start` …). `tests/keepalive.cpp` is a heartbeat example. |
 | `ProcessManager/StatusTable/` | The `status` table, drawn from the health reports, with the restart-to-apply mark. |
 | `ProcessManager/CommandWatch/` | Follows a command in the health reports: where each service stands. |
 | `ProcessManager/StatusClient/` | The command line's ZeroMQ side: reads the reports for `status`, sends a command and follows it, and sends a reload and tells its answer. |
+| `ProcessManager/RegistryClient/` | The command line's `add`, `set`, `replace`, `remove`, `show` and `list`: builds a registry request from the words typed, sends it, and words the answer and the `list` table. |
 | `ProcessManager/ProcessManager/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `ProcessManagerCommands.hpp` holds the command format and the endpoints. |
 | `ProcessManager/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealth.hpp`). |
 | `ProcessManager/NetworkManager/` | The ZeroMQ message broker. |
@@ -333,7 +334,10 @@ object]` back:
 - **A refusal:** `name` when the request had one, and `problems`: the problems the change would add, or the
   services that need the one being removed.
 
-A client in Python needs only pyzmq and json:
+The command line is one client (`RegistryClient`): `add`, `replace`, `remove`, `show` and `list` send the
+operation of their name, and `set` sends `update`. It sends through a DEALER, waits up to 10 s for the answer, and
+gives up after 2 s when the request cannot be sent, as the other commands do. It reads the answer with
+`ConfigSection`, since JSON is YAML. A client in Python needs only pyzmq and json:
 
 ```python
 socket = zmq.Context().socket(zmq.DEALER)
@@ -510,9 +514,11 @@ A forked child never logs, because it may hold no lock between `fork` and `exec`
 | `log_recorder.py`, `record_view.py` | Recording services' logs into files on the GUI's machine, and the **Record logs** dialog. |
 | `systemd_logs.py` | Local `journalctl`, `systemctl` and cgroup reading, and the journal JSON parser. |
 | `health_structs.py` | The binary layouts of reports and commands. |
+| `service_registry.py` | Client of the service registry, and the logic of the service dialog: requests, answers, the form's fields and what Edit keeps. No Qt. |
+| `registry_view.py` | The service dialog: Add, Edit and Duplicate. |
 | `ui_scale.py` | Font and window sizes that follow the screen. |
 | `window_frame.py` | The main window without the system title bar: the toolbar's row is the title bar, with the window buttons, and the window's border resizes it. |
-| `mock_publisher.py` | A stand-in manager for working on the GUI. |
+| `mock_publisher.py` | A stand-in manager for working on the GUI, its service registry included. |
 
 Each data source has a worker on its own `QThread`. A worker sends Qt signals to the window, which updates the
 views:
@@ -526,6 +532,7 @@ views:
 | `CgroupLogWorker` | One process's journal, for a log window | 2 s |
 | `CgroupMembersWorker` | The processes in each service's cgroup, through 6670 | 2 s |
 | `LogRecordWorker` | The recorded services' journals, through 6670, written to their files | 2 s, and again at once for one that is behind |
+| `RegistryWorker` | The service registry on 6671: one request at a time, from a queue | `list` every 5 s and after each change; the dialogs' requests as they come |
 
 Each report holds every service, so an older one has nothing a newer one lacks. `ZmqWorker` reads every report
 waiting on its socket and keeps the last, and it signals the window only after the window has taken the previous
@@ -533,6 +540,25 @@ one. A window that is busy then skips reports instead of falling further behind.
 
 The window computes CPU percent from the difference between two reports. It marks the feed stale when reports
 stop, and keeps a 15-minute history for the state band and the graphs.
+
+The service registry has a worker of its own, so a registry that does not answer never holds up the window:
+- **Requests:** the window queues each request with `RegistryWorker.request` and gets the answer as
+  `reply_ready` with the request's id. Every request is answered once: by the registry, or by the GUI's own
+  `unreachable` status when no connection comes within 3 s or no answer within 10 s.
+- **One socket:** `RegistryClient` keeps one DEALER with `ZMQ_IMMEDIATE`, so a send fails at once instead of
+  waiting for a registry that is not there. A request left without an answer closes the socket, so a late answer
+  is never taken for the next request's.
+- **What is registered:** a `list` every 5 s, and one after each change. It gives each service's origin and
+  file, which decide which actions are open (`registry_actions`): Edit and Remove for registered services only,
+  Duplicate for any service with a definition. Without an answer, every action is off, with a tooltip that says
+  why.
+- **The mark:** "restart to apply" comes from the health report's `restartToApply`, which is live, not from the
+  list.
+- **Edit keeps what the form does not show:** `build_definition` starts from the definition `show` returned,
+  takes out only the keys the form covers, and puts back the ones the user set. A covered key whose field still
+  says what the definition says keeps the value as written (`Args` as a text, the old spelling
+  `EnviromentVariables`, a value the form would not take), so an edit that changes nothing does not mark the
+  service changed.
 
 ## Build and install
 
@@ -566,13 +592,19 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 | `status_table_tests` | 22 | The `status` table: columns, CPU figures, header, colours, the restart-to-apply mark |
 | `command_watch_tests` | 17 | Following start, stop, restart and disable, for one service and for all |
 | `status_client_tests` | 27 | Report decoding, `status --once`, commands and `reload` against a stand-in manager |
+| `registry_client_tests` | 96 | The registry commands: finding the command, reading `Key=Value`, relative programs, every request, the wording of answers and the `list` table, `show` read back by `replace --from`, exit codes, and a stand-in registry that answers, stays silent or cannot be reached |
 
 `ctest` runs all of them. Two more checks run outside ctest:
 - `TestServices/scripts/run_scenarios.py` runs the real manager against twelve scenario configurations, covering
   start order, restarts, stopping, health checks, process trees, output, environment, resource figures, a
-  service registered in `services.d`, reloads, and registering through the registry. It needs the manager's
+  service registered in `services.d`, reloads, and registering through the registry, by hand and with the
+  command line's commands. It needs the manager's
   fixed ports, so ctest does not run it.
-- The GUI is checked against `mock_publisher.py` or a running manager.
+- The GUI's registry logic, its worker and its service dialog have a unittest module,
+  `ProcessManagerGui/tests/test_service_registry.py`. It runs the worker and the window offscreen against
+  `mock_publisher.py`'s registry on ports the system picks:
+  `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s ProcessManagerGui/tests`. The rest of the GUI is
+  checked against `mock_publisher.py` or a running manager.
 
 ## Known limits
 

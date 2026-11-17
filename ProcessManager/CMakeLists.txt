@@ -80,6 +80,7 @@ add_subdirectory(Process)
 add_subdirectory(StatusTable)
 add_subdirectory(CommandWatch)
 add_subdirectory(StatusClient)
+add_subdirectory(RegistryClient)
 add_subdirectory(ProcessManagerApp)
 
 if(ENABLE_TEST)

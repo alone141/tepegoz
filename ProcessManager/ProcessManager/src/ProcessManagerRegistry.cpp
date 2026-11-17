@@ -282,7 +282,8 @@ service_registry::Reply ReplyList(ProcessManagerParams& params)
     }
 
     service_registry::JsonObject object = Header(operation);
-    object.AddText("message", std::to_string(loaded.origins.size()) + " services");
+    const std::size_t count = loaded.origins.size();
+    object.AddText("message", std::to_string(count) + (count == 1 ? " service" : " services"));
     object.AddText("folder", params.source.DropInFolder().string());
     object.AddJson("services", services + "]");
     return service_registry::Reply{service_registry::ReplyStatus::Ok, object.Text()};

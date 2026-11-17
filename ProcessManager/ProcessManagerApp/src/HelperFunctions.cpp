@@ -1,10 +1,15 @@
 #include "HelperFunctions.hpp"
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string_view>
+#include <system_error>
+#include <vector>
 #include <cxxopts.hpp>
 #include "ProcessManagerApp.hpp"
 #include "CommandWatch.hpp"
+#include "RegistryClient.hpp"
 #include "StatusClient.hpp"
 
 namespace process_manager
@@ -145,6 +150,139 @@ int SendCommand(command_watch::Command command, const std::string& serviceName, 
     return status_client::ExitCode(code);
 }
 
+void PrintHelp(const cxxopts::Options& options)
+{
+    std::cout << options.help({ "General", "Commands" }) << "\n";
+    std::cout
+        << "Commands:\n"
+        << "  validate   Validate config (keys, values, deps exist, no cycles)\n"
+        << "  graph      Print dependency order\n"
+        << "  status     Live table of every service, redrawn each second; --once prints it once\n"
+        << "  generate   Generates an example config (ProcessManagerConfig.yaml)\n"
+        << "  reload     The running manager reads its configuration again: it adds new services, removes\n"
+        << "             deleted ones, and a changed one takes its new definition at its next start\n"
+        << "\n"
+        << "Registering services (the running manager writes each one to a file in services.d):\n"
+        << "  add NAME EXECUTABLE [ARG...]  Register a service and start it. Words of the program that start\n"
+        << "                                with '-' go after '--': add camera /opt/cam/bin/server -- --port 8080\n"
+        << "  add NAME --from FILE          Register a service from a YAML file with the keys of one service\n"
+        << "  set NAME Key=Value...         Change keys of a registered service; --unset Key removes one\n"
+        << "  replace NAME --from FILE      Give a registered service a whole new definition\n"
+        << "  remove NAME                   Remove a registered service; it stops\n"
+        << "  show NAME                     Print a service's definition as YAML; where it is defined and how\n"
+        << "                                it runs go to standard error\n"
+        << "  list                          A table of every service: name, origin, state, pid, mark, file\n"
+        << "\n"
+        << "  --set Key=Value   add: one more key; can be repeated\n"
+        << "  --no-start        add: register the service, but do not start it\n"
+        << "  --unset Key       set: remove a key; can be repeated\n"
+        << "  --restart         set, replace: a running service restarts with its new definition at once\n"
+        << "  --force           remove: also when other services depend on it\n"
+        << "  --dry-run         add, set, replace, remove: check the request and print what would be\n"
+        << "                    written, but write nothing\n"
+        << "  --json            show, list: print the manager's answer as JSON\n"
+        << "  --registry HOST   The manager to ask: HOST, HOST:PORT or tcp://HOST:PORT (default\n"
+        << "                    tcp://localhost:6671). Another machine's manager takes requests only with\n"
+        << "                    RemoteRegistration: true\n"
+        << "\n"
+        << "In Key=Value the value is read as YAML: MaxRestarts=3 is a number, CheckHealth=false a boolean\n"
+        << "and 'Args=[--port, 9090]' a list. Any other value is the text as typed, such as Display=:1;\n"
+        << "quotes make a text of anything: 'Display=\"1\"'. The manager checks a request as validate does\n"
+        << "before anything is written, and a request that would add a problem is refused and writes nothing.\n"
+        << "\n"
+        << "--start, --kill, --restart and --disable follow the reports for up to 10 s and print\n"
+        << "what the command did. Exit code 0: done; 1: failed, unknown service or manager not\n"
+        << "reachable; 2: not done within 10 s. With --no-wait the command is only sent.\n"
+        << "reload waits up to 10 s for the manager's answer and prints what it did. Exit code 0:\n"
+        << "applied, also when nothing changed; 1: refused or manager not reachable; 2: no answer.\n"
+        << "add, set, replace, remove, show and list wait up to 10 s for the manager's answer. Exit code\n"
+        << "0: done; 1: refused, not understood or manager not reachable; 2: no answer.\n"
+        << "\n";
+}
+
+// A registry verb has options of its own: --restart is a flag there, where elsewhere it names a service.
+int RunRegistryVerb(int argc, char** argv, registry_client::Verb verb, const cxxopts::Options& general)
+{
+    const std::string verbName{registry_client::VerbName(verb)};
+    cxxopts::Options options{general.program(), "Registers services through the running manager"};
+    options.add_options()
+        ("h,help", "Show help and exit")
+        ("from", "A YAML file with the keys of one service", cxxopts::value<std::string>())
+        ("set", "Key=Value", cxxopts::value<std::vector<std::string>>())
+        ("unset", "Key", cxxopts::value<std::vector<std::string>>())
+        ("no-start", "Register without starting")
+        ("restart", "Restart with the new definition at once")
+        ("force", "Remove also when other services depend on it")
+        ("dry-run", "Check and print, write nothing")
+        ("json", "Print the manager's answer as JSON")
+        ("registry", "Where the manager's service registry is", cxxopts::value<std::string>())
+        ("command", "The registry command", cxxopts::value<std::string>())
+        ("words", "The command's words", cxxopts::value<std::vector<std::string>>());
+    options.parse_positional({ "command", "words" });
+
+    cxxopts::ParseResult result{};
+    try
+    {
+        result = options.parse(argc, argv);
+    }
+    catch (const cxxopts::exceptions::exception& e)
+    {
+        std::cerr << e.what() << ". Words of the program that start with '-' go after '--', as in: add camera "
+                  << "/opt/cam/bin/server -- --port 8080. Use --help to list the options.\n";
+        return 1;
+    }
+
+    if (result.count("help"))
+    {
+        PrintHelp(general);
+        return 0;
+    }
+
+    // The words are read as they were given: cxxopts would split a list value such as Args=[a,b] at its commas.
+    registry_client::VerbLine line{};
+    line.verb = verb;
+    std::string command;
+    for (const cxxopts::KeyValue& argument : result.arguments())
+    {
+        if (argument.key() == "command")
+        {
+            command = argument.value();
+        }
+        else if (argument.key() == "words")
+        {
+            line.words.push_back(argument.value());
+        }
+        else if (argument.key() == "set")
+        {
+            line.sets.push_back(argument.value());
+        }
+        else if (argument.key() == "unset")
+        {
+            line.unsets.push_back(argument.value());
+        }
+    }
+
+    if (command != verbName)
+    {
+        std::cerr << "'" << command << "' before " << verbName << " is not understood: give the command first. "
+                  << "Use --help to list the commands.\n";
+        return 1;
+    }
+
+    line.from = result.count("from") ? result["from"].as<std::string>() : std::string{};
+    line.registry = result.count("registry") ? result["registry"].as<std::string>() : std::string{};
+    line.noStart = result.count("no-start") > 0;
+    line.restart = result.count("restart") > 0;
+    line.force = result.count("force") > 0;
+    line.dryRun = result.count("dry-run") > 0;
+    line.json = result.count("json") > 0;
+
+    // Without a current folder, a relative path stays relative, and the manager's check refuses it.
+    std::error_code ignored{};
+    const std::filesystem::path folder = std::filesystem::current_path(ignored);
+    return registry_client::ExitCode(registry_client::RunVerb(line, folder, registry_client::reply_timeout));
+}
+
 } // namespace
 
 int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
@@ -168,10 +306,18 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 
 // Positional: command + rest (e.g. start --only A B)
     options.add_options("Commands")
-        ("command", "Command: validate|graph|status|generate|reload", cxxopts::value<std::string>()->default_value(""));
+        ("command", "Command: validate|graph|status|generate|reload|add|set|replace|remove|show|list", cxxopts::value<std::string>()->default_value(""));
 
     options.parse_positional({ "command" }); // first non-option becomes command
     options.positional_help("COMMAND [OPTIONS]");
+
+    // add, set, replace, remove, show and list take words and options of their own.
+    const std::vector<std::string> args(argc > 1 ? argv + 1 : argv, argc > 1 ? argv + argc : argv);
+    const std::optional<registry_client::Verb> verb = registry_client::FindVerb(args);
+    if (verb.has_value())
+    {
+        return RunRegistryVerb(argc, argv, *verb, options);
+    }
 
     // Allow unknown options
     //options.allow_unrecognised_options();
@@ -196,23 +342,7 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 
     if (result.count("help"))
     {
-        std::cout << options.help({ "General", "Commands" }) << "\n";
-        std::cout
-            << "Commands:\n"
-            << "  validate   Validate config (keys, values, deps exist, no cycles)\n"
-            << "  graph      Print dependency order\n"
-            << "  status     Live table of every service, redrawn each second; --once prints it once\n"
-            << "  generate   Generates an example config (ProcessManagerConfig.yaml)\n"
-            << "  reload     The running manager reads its configuration again: it adds new services, removes\n"
-            << "             deleted ones, and a changed one takes its new definition at its next start\n"
-            << "\n"
-            << "--start, --kill, --restart and --disable follow the reports for up to 10 s and print\n"
-            << "what the command did. Exit code 0: done; 1: failed, unknown service or manager not\n"
-            << "reachable; 2: not done within 10 s. With --no-wait the command is only sent.\n"
-            << "reload waits up to 10 s for the manager's answer and prints what it did. Exit code 0:\n"
-            << "applied, also when nothing changed; 1: refused or manager not reachable; 2: no answer.\n"
-            << "\n";
-
+        PrintHelp(options);
         return 0;
     }
 

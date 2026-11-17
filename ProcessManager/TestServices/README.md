@@ -41,7 +41,7 @@ puts copies with the installed paths in `share/processmanager/test-setup/`.
 | `everything` | One service of each kind, for watching in the monitor GUI |
 | `registered` | A service that only a file in `services.d` defines, between two of the config's services in the start order, and `--start all` |
 | `reload` | `reload` while the manager runs: a new file, an edited file (the mark, then `--restart`), a reformatted file, a deleted file, a broken file, a broken main file, `--no-wait`, and the exit codes |
-| `registry` | Registering through port 6671 with `pmt_request`: a refused add that writes nothing, an add that starts, a held add, an update (the mark), a replace with restart, show, list, a main-file service that cannot be replaced, and a remove refused for a dependent, then forced |
+| `registry` | Registering through port 6671 with `pmt_request`: a refused add that writes nothing, an add that starts, a held add, an update (the mark), a replace with restart, show, list, a main-file service that cannot be replaced, and a remove refused for a dependent, then forced. Then the same with the command line's `add`, `set`, `show`, `replace`, `list` and `remove`, and their exit codes |
 
 `validate` reports one error for `environment` on purpose: `cwd_missing` names a working directory that does not
 exist, to show that the service still starts.
@@ -59,7 +59,10 @@ file makes `reload` exit with 1 and changes nothing. Exit code 2, no answer with
 tests only, since a running manager always answers.
 
 `registry` is copied into the run folder too, without a `services.d`: the first add that the manager accepts
-makes it. The driver sends every request with `pmt_request`, its parameters as JSON, as the GUI will.
+makes it. The driver first sends requests with `pmt_request`, their parameters as JSON, as the GUI will. Then it
+runs the command line: `add` with a relative program and arguments after `--`, `add --dry-run`, `set`,
+`show > camera.yaml` with an edit and `replace --from camera.yaml --restart`, `list`, `remove` of a needed
+service (exit code 1) and with `--force`, and a refused `add` (exit code 1).
 
 Run one by hand and watch it:
 

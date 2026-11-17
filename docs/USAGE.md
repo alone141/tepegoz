@@ -128,6 +128,13 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 | `status --once` | Prints the table once and exits. It follows the reports for a second first, so CPU has a figure. Exits with 1 if no report comes within 3 s. |
 | `reload` | The running manager reads its configuration and `services.d` again and applies what changed. See [Reloading the configuration](#reloading-the-configuration). |
 | `reload --no-wait` | Sends the reload and exits at once, with 0, or with 1 when the manager is not reachable. |
+| `add NAME EXECUTABLE [ARG...]` | Registers a service with the running manager, which writes `services.d/NAME.yaml` and starts it. See [Registering services through the manager](#registering-services-through-the-manager). |
+| `add NAME --from FILE` | Registers a service from a YAML file with the keys of one service. |
+| `set NAME Key=Value...` | Changes single keys of a registered service; `--unset Key` removes one. |
+| `replace NAME --from FILE` | Gives a registered service a whole new definition. |
+| `remove NAME` | Removes a registered service, which stops. |
+| `show NAME` | Prints a service's definition as YAML; where it is defined and how it runs go to standard error. |
+| `list` | A table of every service: name, origin, state, pid, mark and file. |
 | `--start NAME`, `-s NAME` | Starts `NAME` and the services in its `DependsOn`. Sets it to Auto, so it is restarted by its `RestartMode`. |
 | `--kill NAME`, `-k NAME` | Stops `NAME` and sets it to Manual, so it stays stopped. |
 | `--restart NAME`, `-r NAME` | Stops `NAME` and starts it again, with its dependencies started first. Sets it to Auto. |
@@ -137,7 +144,8 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 | `--help`, `-h` | Lists the options. |
 
 - **Where commands go:** `--start`, `--kill`, `--restart`, `--disable` and `reload` go to the manager on the
-  same machine, through `tcp://localhost:5557`.
+  same machine, through `tcp://localhost:5557`. `add`, `set`, `replace`, `remove`, `show` and `list` go to
+  `tcp://localhost:6671`, or to the manager `--registry` names.
 - **Checking the name:** the command line reads the manager's reports first. A name the manager does not have
   is not sent; the message lists the names it has.
 - **Following the command:** after sending, the command line follows the reports for up to 10 s and prints what
@@ -316,22 +324,64 @@ by `ProcessName`:
 
 The manager also takes requests to register a service, to change or remove a registered one, and to show what it
 has, on port 6671. For a change it checks the request, writes the service's file in `services.d`, and reloads. The
-command line and the GUI are clients of these requests. Until they have their own commands, `pmt_request` from
-TestServices sends one by hand, and the [architecture document](ARCHITECTURE.md#service-registry-port-6671) has
-the protocol.
+command line's commands below send these requests, and so does the GUI (see
+[Registering services in the GUI](#registering-services-in-the-gui)); the
+[architecture document](ARCHITECTURE.md#service-registry-port-6671) has the protocol, for other clients.
 
 ```bash
-pmt_request add '{"name": "camera", "definition": {"ExecutablePath": "/opt/cam/bin/server", "Args": ["--port", "8080"]}}'
+iltaren-ProcessManager add camera /opt/cam/bin/server -- --port 8080
+iltaren-ProcessManager set camera MaxRestarts=3 Display=:1
+iltaren-ProcessManager show camera > camera.yaml       # edit camera.yaml, then:
+iltaren-ProcessManager replace camera --from camera.yaml --restart
+iltaren-ProcessManager list
+iltaren-ProcessManager remove camera
 ```
 
-| Request | What the manager does |
+| Command | What the manager does |
 |---|---|
-| `add` | Registers a new service: writes `services.d/NAME.yaml` and reloads, so the service starts by its work mode. With `start: false` it is registered but held until `--start NAME`. |
-| `replace` | Gives a registered service a whole new definition. |
-| `update` | Sets or removes single keys of a registered service. |
-| `remove` | Deletes a registered service's file and reloads, which stops the service and removes it. |
-| `show`, `list` | Shows one service's definition, or lists every service with where it is defined and how it runs. |
+| `add NAME EXECUTABLE [ARG...]` | Registers a new service: writes `services.d/NAME.yaml` and reloads, so the service starts by its work mode. The words after `EXECUTABLE` are its `Args`. With `--no-start` it is registered but held until `--start NAME`. |
+| `add NAME --from FILE` | The same, with the keys of the service from a YAML file, such as one `show` printed. |
+| `set NAME Key=Value...` | Sets single keys of a registered service; `--unset Key` removes one. |
+| `replace NAME --from FILE` | Gives a registered service a whole new definition. |
+| `remove NAME` | Deletes a registered service's file and reloads, which stops the service and removes it. |
+| `show NAME` | Prints one service's definition as YAML. |
+| `list` | Lists every service with where it is defined and how it runs. |
 
+How the command line reads what you type:
+- **Arguments of the program:** every word after `EXECUTABLE` is one argument. A word that starts with `-` would be
+  taken for an option, so put such words after `--`: `add camera /opt/cam/bin/server -- --port 8080`.
+- **More keys:** `add` takes `--set Key=Value`, as often as needed: `--set StdioMode=Pipe --set 'DependsOn=[server]'`.
+  With `--from`, a `--set` key replaces the file's.
+- **Values:** in `Key=Value` the value is read as YAML. `MaxRestarts=3` is a number, `CheckHealth=false` a
+  boolean, `null` or `~` YAML's null, `'Args=[--port, 9090]'` a list and `'EnvironmentVariables={MODE: fast}'` a
+  mapping. Any other value is the text exactly as typed, with its spaces, `#`, `:` and `=`: `Display=:1`,
+  `'Cwd=/opt/x y'`, `'Title=a # b: c'`. Quotes make a text of anything: `'Display="1"'`. The command line refuses
+  a value it cannot read rather than guess: an empty one (`Cwd=`; write `'Cwd=""'` for an empty text, or
+  `--unset Cwd`), a quote that does not close at the end, and a list or mapping that does not end with its `]` or
+  `}`. A key given twice is refused too.
+- **Paths:** a relative `EXECUTABLE`, such as `./bin/server` or `bin/server`, is made absolute from the current
+  folder before it is sent, and `--from FILE` is read from the current folder. A bare program name such as
+  `sleep` is sent as it is, and the manager's check decides. Other paths, such as `Cwd`, are sent as typed.
+- **The editing round trip:** `show NAME` prints exactly the YAML of the definition on standard output, and where
+  it is defined and how it runs on standard error, so `show NAME > FILE`, an edit, and
+  `replace NAME --from FILE` work. For a registered file that is skipped, `show` prints the file's text, so that
+  it can be repaired the same way.
+- **`--dry-run`:** `add`, `set`, `replace` and `remove` check the request and write nothing. `add`, `set` and
+  `replace` print the YAML that would be written on standard output and the rest on standard error, so
+  `add camera /opt/cam/bin/server --dry-run > camera.yaml` gives a file to edit and `add camera --from`.
+- **The `list` table:** `NAME ORIGIN STATE PID MARK FILE`. `ORIGIN` is `main` or `registered`. `STATE` is the
+  state the manager reports, `Disabled` for a service it does not have (`Enabled: false`, or `--disable`), and
+  `Skipped` for a registered file it skipped. `*` in `MARK` means restart to apply; `!` means the file is skipped,
+  and a line under the table gives the problem.
+- **`--json`:** `show` and `list` print the manager's answer, one JSON object, as it came.
+- **Another machine:** `--registry HOST`, `HOST:PORT` or `tcp://HOST:PORT` sends to a manager with
+  `RemoteRegistration: true`. Paths are checked on the manager's machine.
+- **What is printed:** the manager's message, such as `'camera' is registered and starts`, and the file. A
+  refusal prints `Refused:` with the message on standard error, then each problem on a line of its own.
+- **Exit codes:** 0 when done, a dry run included; 1 when refused, not understood, the command line is wrong, or
+  the manager is not reachable; 2 when no answer comes within 10 s. These commands always wait for the answer.
+
+What the manager does with a request:
 - **Checked first, written only when valid:** the manager builds the configuration the request would make, in
   memory, and checks it as `validate` does, including the executable and the folders on its own machine. It
   refuses the request when that would add a problem: a missing executable, an unknown key, a dependency on a
@@ -343,13 +393,12 @@ pmt_request add '{"name": "camera", "definition": {"ExecutablePath": "/opt/cam/b
 - **Only registered services change:** services of the main file can be shown and listed. Changing or removing
   one needs an edit of the main file.
 - **A changed service:** as after a reload, a running service keeps running and is marked "restart to apply".
-  With `restart: true` it restarts at once. A stopped service with `restart: true` takes its new definition at
-  once and stays stopped.
-- **Removing a needed service:** refused while enabled services name it in `DependsOn`, unless `force: true`.
-  Those services keep running, and their next start misses the dependency.
-- **Dry run:** `dryRun: true` checks the request and returns the YAML that would be written, and writes nothing.
+  With `--restart` it restarts at once. A stopped service with `--restart` takes its new definition at once and
+  stays stopped.
+- **Removing a needed service:** refused while enabled services name it in `DependsOn`, unless `--force`. Those
+  services keep running, and their next start misses the dependency.
 - **The file:** written from the checked definition as plain YAML with `ProcessName` first, through a temporary
-  dot file that is renamed into place. `replace` and `update` rewrite the file, so comments in a file written by
+  dot file that is renamed into place. `replace` and `set` rewrite the file, so comments in a file written by
   hand are lost.
 - **The whole configuration is reloaded:** a request also applies other changes made to the files, as `reload`
   would. If that reload is refused, the manager puts the file back as it was.
@@ -500,18 +549,19 @@ It needs Python 3 with PyQt6 and pyzmq. It runs on Linux and Windows.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--host HOST` | `127.0.0.1` | The manager's machine; the default host of the four endpoints below. |
+| `--host HOST` | `127.0.0.1` | The manager's machine; the default host of the five endpoints below. |
 | `--sub ENDPOINT` | `tcp://HOST:6667` | The manager's health reports. |
 | `--dealer ENDPOINT` | `tcp://HOST:5557` | Commands, through the broker. |
 | `--network ENDPOINT` | `tcp://HOST:6669` | The broker's status. |
 | `--journal ENDPOINT` | `tcp://HOST:6670` | The journal server: the logs. |
+| `--registry ENDPOINT` | `tcp://HOST:6671` | The service registry: registering, changing and removing services. |
 
 The **Connection** button in the toolbar shows a **HOST** field, so you can switch machines without restarting
-the GUI. Type the manager's machine, a name or an address, and press Enter or **Reconnect**. It goes into all four
+the GUI. Type the manager's machine, a name or an address, and press Enter or **Reconnect**. It goes into all five
 endpoints, each keeping its port, and the GUI reconnects. A pasted endpoint or `host:port` works too; only its host
 is used.
 
-The window does not show or edit the four endpoints. A port of their own, or an endpoint on another machine, is
+The window does not show or edit the five endpoints. A port of their own, or an endpoint on another machine, is
 set with the options above when the GUI starts. When the endpoints are on different machines, HOST is empty, and
 **Reconnect** with HOST empty reconnects to them as they are.
 
@@ -523,17 +573,25 @@ set with the options above when the GUI starts. When the endpoints are on differ
 - **Toolbar:**
   - the feed state: **Live** while reports arrive, **Waiting for data…** before the first one, and
     **No data for N s** when they stop;
-  - the manager's machine; hovering over it lists the four endpoints;
+  - the manager's machine; hovering over it lists the five endpoints;
   - the **Network** pill: how many are connected to the broker, red when the broker's status stops coming;
   - the **GPU** pill;
   - **Record logs**, which reads **● Recording · N** while N services are recorded (see
     [Recording logs](#recording-logs));
   - **Connection**.
 - **Sidebar:** the manager (**processmanager**), its **network manager** (the broker), then every service
-  with a dot for its state and its CPU use. The filter box narrows the list. Right-click a service for
-  **Start**, **Stop** and **Restart**, which ask for confirmation like the buttons on its page.
+  with a dot for its state and its CPU use. An amber `*` after a name marks a service that waits for a restart
+  to apply its new definition, as `*` does in `status`; hovering over the row says so. The filter box narrows
+  the list. Right-click a service for **Start**, **Stop** and **Restart**, which ask for confirmation like the
+  buttons on its page, and for **Edit…**, **Duplicate…** and **Remove…**; right-click anywhere in the list for
+  **Add service…**, which is also the button under the list. See
+  [Registering services in the GUI](#registering-services-in-the-gui).
 - **A service's page:**
-  - its state and pid, and **Start**, **Stop** and **Restart** (each asks for confirmation);
+  - its state and pid, **restart to apply** next to the state while a new definition waits for the service's
+    next start (hover over it for what that means), and **Start**, **Stop** and **Restart** (each asks for
+    confirmation);
+  - where the service is defined: **Defined in the main file** or **Registered**, with the file, and
+    **Edit…**, **Duplicate…** and **Remove…**;
   - tiles for CPU (percent of one core), memory, GPU, VRAM, missed beats and restarts;
   - a band of its states over the last 15 minutes;
   - three tabs:
@@ -561,6 +619,47 @@ and `--restart`. The manager answers accepted or refused, and the status bar sho
 - **No answer:** a command the manager has not answered within 10 s is reported in the status bar; it may not
   have arrived.
 - **Several GUIs:** each gets the answers to its own commands, except when two send at the same moment.
+
+### Registering services in the GUI
+
+The GUI registers, changes and removes services through the manager's service registry (see
+[Registering services through the manager](#registering-services-through-the-manager)). It asks the registry
+what is registered every 5 seconds, and again after each change it makes.
+
+| Action | Where | For | What it does |
+|---|---|---|---|
+| **Add service…** | The button under the sidebar; the sidebar's menu | A new service | Opens the service dialog, empty. |
+| **Edit…** | A service's page; its sidebar menu | Registered services | Opens the dialog filled from the service's definition. **Save** replaces it. |
+| **Duplicate…** | A service's page; its sidebar menu | Any service | Opens the dialog filled from the service's definition, without a name. |
+| **Remove…** | A service's page; its sidebar menu | Registered services | Asks for confirmation, naming the service and its file, then removes it. |
+
+The service dialog:
+- **Up front:** the name, the executable, the arguments on one line, the working folder, and **Start it now**
+  (on by default; off registers the service and holds it until you start it). Edit has **Restart now to apply**
+  instead, off by default.
+- **Arguments:** split as a shell splits them: quote an argument that has spaces (`--title 'Front door'`).
+- **Advanced:** fold it open for the work mode, the restart mode and its numbers, the health check and its
+  numbers, the output and its file, the dependencies (ticked from the services the manager has), and the
+  environment variables (a table of names and values). A field left empty, or at **Default**, is not written,
+  so the manager's default applies; the field shows the default.
+- **Paths:** typed, because the manager checks them on its own machine. **Browse…** shows only when the manager
+  runs on the GUI's machine, under Linux.
+- **Check:** asks the manager whether it would take the service, and shows the file it would write, or its
+  problems. Nothing is written.
+- **Register** (Edit: **Save**): sends the change. A refused change keeps the dialog open: the manager's answer
+  shows under the fields, and each problem that names a field shows under that field. An accepted change closes
+  the dialog, and the status bar says what the manager did, such as "'camera' is registered and starts".
+- **Edit keeps what the form does not show:** keys the dialog has no field for, such as `UseDisplay` or
+  `CreateProcessGroup`, are listed at its top and sent back as they are. A field you do not change is sent back
+  as it was written, so an edit that changes nothing leaves the service unchanged.
+- **Restart to apply:** a changed service that runs keeps running with its old definition and is marked
+  **restart to apply** until its next start. **Restart now to apply** restarts it at once instead.
+- **Removing a needed service:** when other services name it in `DependsOn`, the manager refuses, and the GUI
+  lists them and offers **Remove anyway**. Those services keep running, and their next start misses it.
+
+When the registry does not answer, every one of these actions is greyed out, and its tooltip says why: the
+manager is older than the registry, or it runs on another machine without `RemoteRegistration: true`. The rest
+of the GUI works as before.
 
 ### Logs in the GUI
 
@@ -594,8 +693,13 @@ While it records:
 
 ### Trying the GUI without a manager
 
-`ProcessManagerGui/mock_publisher.py` acts as a manager with six fake services, on the same ports. It publishes
-reports, answers commands, and serves broker status and logs.
+`ProcessManagerGui/mock_publisher.py` acts as a manager with seven fake services, on the same ports. It publishes
+reports, answers commands, serves broker status and logs, and answers the service registry from services it
+keeps in memory: six are the main file's, and `map_server` is registered, with `path_planner` depending on it. A
+service added in the GUI joins the reports, a changed running one is marked "restart to apply", and a removed
+one leaves. Its checks only stand in for the manager's: every absolute path exists, except one whose file name
+starts with `missing`. Each endpoint has an option of its own (`--pub`, `--router`, `--network`, `--journal`,
+`--registry`), for running it on other ports; `--registry ''` leaves the registry, and `map_server`, out.
 
 ```bash
 python3 ProcessManagerGui/mock_publisher.py

@@ -202,6 +202,12 @@ class Manager:
         except ValueError:
             return lines[0], {"message": lines[1]}
 
+    def cli(self, args: List[str], cwd: Optional[str] = None) -> Tuple[int, str, str]:
+        """A command of the manager's own command line: its exit code, standard output and standard error."""
+        result = subprocess.run([self.paths.manager] + args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, timeout=30)
+        return result.returncode, result.stdout, result.stderr
+
     def status(self) -> str:
         result = subprocess.run([self.paths.manager, "status", "--once"], stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, universal_newlines=True, timeout=30)
@@ -842,6 +848,94 @@ def scenario_registry(c: Context) -> None:
 
     status, reply = c.manager.request("frobnicate")
     c.results.check(status == "error" and reply.get("message", "") != "", "a request that is not understood is an error")
+
+    registry_verbs(c, folder)
+
+
+def cmdline(pid: int) -> List[str]:
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as file:
+            return [part.decode(errors="replace") for part in file.read().split(b"\0")[:-1]]
+    except OSError:
+        return []
+
+
+def table_rows(text: str) -> Dict[str, List[str]]:
+    """The rows of the list table by name: the words of each line after the header."""
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith("NAME"):
+        return {}
+    return {line.split()[0]: line.split() for line in lines[1:] if line and line[0] not in "*!"}
+
+
+def registry_verbs(c: Context, folder: str) -> None:
+    """The same registry through the command line's verbs: add, set, show, replace, list and remove."""
+    workdir = os.path.dirname(c.manager.config)
+    steady = os.path.join(c.paths.bin_dir, "pmt_steady")
+    relative = os.path.relpath(steady, workdir)
+    code, out, err = c.manager.cli(["add", "camera", relative, "--", "--period-ms", "1500"], cwd=workdir)
+    camera = c.watch.wait("camera", is_running, 10)
+    c.results.check(code == 0 and camera is not None,
+                    "add camera with a relative EXECUTABLE and arguments after --: exit code 0, and it runs (%d: %s)" %
+                    (code, (out + err).strip().replace("\n", " / ")))
+    if camera is None:
+        return
+    argv = cmdline(camera.pid)
+    c.results.check(argv[1:] == ["--period-ms", "1500"] and os.path.isabs(argv[0]) and
+                    os.path.samefile(argv[0], steady),
+                    "it runs the program by its absolute path, with the arguments given after -- (%s)" % argv)
+
+    code, out, err = c.manager.cli(["add", "dry", steady, "--dry-run"])
+    time.sleep(1)
+    c.results.check(code == 0 and out.startswith("ProcessName: dry\n") and
+                    not os.path.exists(os.path.join(folder, "dry.yaml")) and "dry" not in c.watch.reported(),
+                    "add --dry-run: exit code 0, it prints the YAML, and nothing is written or started (%d)" % code)
+
+    code, out, err = c.manager.cli(["set", "camera", "MaxRestarts=3", "Display=:1"])
+    marked = c.watch.wait("camera", lambda report: report.pending == 1, 5)
+    c.results.check(code == 0 and marked is not None and marked.pid == camera.pid,
+                    "set camera MaxRestarts=3 Display=:1: exit code 0, and camera keeps its pid, marked restart to "
+                    "apply (%d: %s)" % (code, out.strip().replace("\n", " / ")))
+    with open(os.path.join(folder, "camera.yaml")) as written:
+        text = written.read()
+    c.results.check("MaxRestarts: 3\n" in text and 'Display: ":1"\n' in text,
+                    "its file has MaxRestarts as a number and Display as a text")
+
+    code, out, err = c.manager.cli(["show", "camera"])
+    shown = os.path.join(workdir, "camera.yaml")
+    write(shown, out.replace('"1500"', '"1000"'))
+    c.results.check(code == 0 and out.startswith("ProcessName: camera\n") and "registered" in err,
+                    "show camera prints only the YAML on standard output, and where it is defined on standard error")
+    code, out, err = c.manager.cli(["replace", "camera", "--from", "camera.yaml", "--restart"], cwd=workdir)
+    restarted = c.watch.wait("camera", lambda report: is_running(report) and report.pid != camera.pid and
+                             report.pending == 0, 10)
+    c.results.check(code == 0 and restarted is not None and cmdline(restarted.pid)[1:] == ["--period-ms", "1000"],
+                    "show > camera.yaml, an edit, then replace --from camera.yaml --restart: it restarts with the "
+                    "edited file (%d: %s)" % (code, (out + err).strip().replace("\n", " / ")))
+
+    code, out, err = c.manager.cli(["list"])
+    rows = table_rows(out)
+    c.results.check(code == 0 and rows.get("anchor", [""] * 2)[1] == "main" and
+                    rows.get("camera", [""] * 2)[1] == "registered",
+                    "list: anchor from the main file, camera registered (%s)" % sorted(rows))
+
+    code, out, err = c.manager.cli(["add", "needer", steady, "--set", "DependsOn=[camera]"])
+    c.results.check(code == 0 and c.watch.wait("needer", is_running, 10) is not None,
+                    "add needer with --set DependsOn=[camera]: it runs")
+    code, out, err = c.manager.cli(["remove", "camera"])
+    c.results.check(code == 1 and "needer depends on 'camera'" in err and
+                    os.path.exists(os.path.join(folder, "camera.yaml")),
+                    "remove camera, which needer needs: exit code 1, it names needer, and the file stays (%d)" % code)
+    code, out, err = c.manager.cli(["remove", "camera", "--force"])
+    c.results.check(code == 0 and c.watch.wait_gone("camera", 5) and
+                    not os.path.exists(os.path.join(folder, "camera.yaml")),
+                    "remove camera --force: exit code 0, and camera and its file are gone (%d)" % code)
+
+    code, out, err = c.manager.cli(["add", "ghost", "/nonexistent/pmt"])
+    c.results.check(code == 1 and "ExecutablePath does not exists" in err and
+                    not os.path.exists(os.path.join(folder, "ghost.yaml")),
+                    "add of a missing program: exit code 1, it prints the problem, and nothing is written (%s)" %
+                    err.strip().replace("\n", " / "))
 
 
 def prepare_stdio(paths: Paths) -> None:

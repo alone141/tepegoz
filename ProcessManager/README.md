@@ -126,6 +126,26 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   YAML reader. The port listens on 127.0.0.1 only, unless the new `ProcessManager` key `RemoteRegistration` is
   true. It has no authentication, so whoever reaches it can make the manager run any program. `pmt_request`,
   a new test program, sends requests by hand.
+- The command line registers services through the running manager: `add NAME EXECUTABLE [ARG...]` (arguments
+  that start with `-` after `--`), `add NAME --from FILE`, `set NAME Key=Value... [--unset Key]`,
+  `replace NAME --from FILE`, `remove NAME`, `show NAME` and `list`, with `--set`, `--no-start`, `--restart`,
+  `--force`, `--dry-run`, `--json` and `--registry HOST`. A value in `Key=Value` is read as YAML when it is a
+  number, a boolean, null, a quoted text, a list or a mapping, and is otherwise the text as typed; a value that
+  cannot be read is refused. A relative `EXECUTABLE` is made absolute from the current folder. `show` prints only
+  the YAML on standard output, so `show NAME > FILE`, an edit and `replace NAME --from FILE` work. The commands
+  exit with 0 when done, 1 when refused, not understood or not reachable, and 2 without an answer within 10 s.
+  The new module `RegistryClient/` builds the requests and words the answers.
+- The monitor GUI registers, changes and removes services through the service registry. **Add service…** sits
+  under the sidebar; **Edit…**, **Duplicate…** and **Remove…** are on a service's page and in its sidebar menu.
+  Edit and Remove are for registered services; Duplicate copies any service. The service dialog has the name,
+  executable, arguments (quoted like a shell's), working folder and "start it now" up front, and the rest folded
+  under **Advanced**; only the fields you fill in are written, and **Check** shows the file the manager would
+  write, or its problems next to the fields. Edit keeps every key the dialog does not show. Remove names the file
+  it deletes, and when other services depend on the service it lists them and offers **Remove anyway**. A service
+  waiting for a restart is marked `*` in the sidebar and **restart to apply** on its page, which also says where
+  the service is defined. New option `--registry ENDPOINT`; `--host` and the HOST field set it too. Without a
+  registry that answers, these actions are greyed out with the reason. `mock_publisher.py` answers the registry
+  as well, and the GUI has its first tests, `ProcessManagerGui/tests/test_service_registry.py`.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

@@ -23,8 +23,9 @@ target_sources(ProcessManagerApp
 
 target_include_directories(ProcessManagerApp PUBLIC "${CMAKE_CURRENT_LIST_DIR}/../include")
 target_link_libraries(ProcessManagerApp PUBLIC ProcessManager network_manager cxxopts::cxxopts config_section config_source logger)
-# status and the commands: the live table, and following what a command does.
-target_link_libraries(ProcessManagerApp PRIVATE status_client command_watch)
+# status and the commands: the live table, and following what a command does. add, set, replace, remove, show and
+# list: requests to the service registry.
+target_link_libraries(ProcessManagerApp PRIVATE status_client command_watch registry_client)
 
 # Installed under the product name, which install(TARGETS) cannot rename to; the build keeps the target's name.
 install(
