@@ -372,6 +372,54 @@ TEST(ProcessTest, DependencyListReadsSequenceOrSpaceSeparatedText)
     EXPECT_TRUE(none.GetDependencyList().empty());
 }
 
+TEST(ProcessTest, RestartAndStdioDefaultsAreTheDocumentedOnes)
+{
+    const process_manager::ProcessConfigParams defaults{};
+    EXPECT_EQ(defaults.restartPolicy.maxRestarts, 5);
+    EXPECT_FALSE(defaults.stdioPolicy.stdioAppend);
+    EXPECT_EQ(defaults.stdioPolicy.stdioFilePath, std::filesystem::path{"/tmp/output.txt"});
+}
+
+TEST(ProcessTest, DefaultsInTheHeadersMatchTheConfigReader)
+{
+    config_section::ConfigValue value{};
+    std::string error{};
+    ASSERT_EQ(config_section::ParseConfigText("ProcessName: defaults\nExecutablePath: /bin/true\n", value, error),
+              config_section::LoadCode::Ok)
+        << error;
+    config_section::ConfigSection section{value, "test service"};
+    process_manager::ProcessConfigParams read{};
+    ASSERT_EQ(read.UpdateArgs(section), 1);
+    const process_manager::ProcessConfigParams defaults{};
+
+    EXPECT_EQ(read.args, defaults.args);
+    EXPECT_EQ(read.cwd, defaults.cwd);
+    EXPECT_EQ(read.inheritParentEnvironment, defaults.inheritParentEnvironment);
+    EXPECT_EQ(read.useDisplay, defaults.useDisplay);
+    EXPECT_EQ(read.display, defaults.display);
+    EXPECT_EQ(read.xAuthority, defaults.xAuthority);
+    EXPECT_EQ(read.environmentVariables, defaults.environmentVariables);
+    EXPECT_EQ(read.forceKillTimeoutMs, defaults.forceKillTimeoutMs);
+    EXPECT_EQ(read.createProcessGroup, defaults.createProcessGroup);
+    EXPECT_EQ(read.dependsOn, defaults.dependsOn);
+    EXPECT_EQ(read.workMode, defaults.workMode);
+
+    EXPECT_EQ(read.stdioPolicy.stdioMode, defaults.stdioPolicy.stdioMode);
+    EXPECT_EQ(read.stdioPolicy.stdioFilePath, defaults.stdioPolicy.stdioFilePath);
+    EXPECT_EQ(read.stdioPolicy.stdioAppend, defaults.stdioPolicy.stdioAppend);
+
+    EXPECT_EQ(read.restartPolicy.restartMode, defaults.restartPolicy.restartMode);
+    EXPECT_EQ(read.restartPolicy.maxRestarts, defaults.restartPolicy.maxRestarts);
+    EXPECT_DOUBLE_EQ(read.restartPolicy.backoffMultiplier, defaults.restartPolicy.backoffMultiplier);
+    EXPECT_EQ(read.restartPolicy.restartDelayMs, defaults.restartPolicy.restartDelayMs);
+    EXPECT_EQ(read.restartPolicy.restartResetMs, defaults.restartPolicy.restartResetMs);
+
+    EXPECT_EQ(read.healthPolicy.checkHealth, defaults.healthPolicy.checkHealth);
+    EXPECT_EQ(read.healthPolicy.gracePeriodMs, defaults.healthPolicy.gracePeriodMs);
+    EXPECT_EQ(read.healthPolicy.heartbeatPeriodMs, defaults.healthPolicy.heartbeatPeriodMs);
+    EXPECT_EQ(read.healthPolicy.missedHeartbeatThreshold, defaults.healthPolicy.missedHeartbeatThreshold);
+}
+
 TEST(ProcessTest, DefaultConstructedProcessHasNoPidAndNeedsStart)
 {
     process_manager::Process process{};

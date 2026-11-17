@@ -16,8 +16,8 @@ struct StdioPolicy
 
 
     StdioMode stdioMode = StdioMode::Inherit;
-    std::filesystem::path stdioFilePath{};
-    bool stdioAppend = true;
+    std::filesystem::path stdioFilePath{"/tmp/output.txt"};
+    bool stdioAppend = false;
 };
 
 } // namespace process_manager

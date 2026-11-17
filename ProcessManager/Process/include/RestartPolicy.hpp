@@ -14,7 +14,7 @@ struct RestartPolicy
 {
     void UpdateArgs(config_section::ConfigSection& section);
     RestartMode restartMode = RestartMode::OnFailure;
-    int maxRestarts = 10; // in a row; a run of RestartResetMs or longer starts the count again
+    int maxRestarts = 5; // in a row; a run of RestartResetMs or longer starts the count again
     double backoffMultiplier = 2.0;
     std::chrono::milliseconds restartDelayMs{ 1'000 };
     std::chrono::milliseconds restartResetMs{ 60'000 };

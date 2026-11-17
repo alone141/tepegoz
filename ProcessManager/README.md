@@ -75,6 +75,10 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   says no until the next `StartProcess()`, also when the stop came while a restart was waiting for its delay.
   The manager already kept a stopped service stopped in every mode, since a stop command also makes the
   service Manual, so what it does is unchanged.
+- The defaults in `RestartPolicy.hpp` and `StdioPolicy.hpp` now match the configuration reader and the
+  documentation: `MaxRestarts` 5 (was 10), `StdioAppend` false (was true) and `StdioFilePath`
+  `/tmp/output.txt` (was empty). Services read from the configuration always got the documented values, so
+  the manager behaves as before.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of
