@@ -145,6 +145,7 @@ void Process::StartProcess()
         return;
     }
     runtime.consecutiveRestarts = 0;
+    runtime.stopRequested = false;
     Launch();
 }
 
@@ -298,6 +299,7 @@ void Process::RequestStopAndEscalate(std::chrono::milliseconds poll)
 void Process::Stop()
 {
     runtime.restartRequested = false;
+    runtime.stopRequested = true; // also without a pid: it cancels a restart that is waiting for its delay
     BeginStop();
 }
 
@@ -536,6 +538,11 @@ bool Process::RestartLimitReached() const
     return runtime.consecutiveRestarts >= config.restartPolicy.maxRestarts;
 }
 
+bool Process::IsKeptStopped() const
+{
+    return config.restartPolicy.restartMode == RestartMode::UnlessStopped && runtime.stopRequested;
+}
+
 // RestartDelayMs before the first restart in a row, BackoffMultiplier times longer for each one after.
 std::chrono::milliseconds Process::RestartDelay() const
 {
@@ -552,6 +559,10 @@ bool Process::NeedsRestart() const
     // This has turned into a spider's web.
     const auto rMode = config.restartPolicy.restartMode;
     if (rMode == RestartMode::Never) return false;
+    if (IsKeptStopped())
+    {
+        return false;
+    }
     if (RestartLimitReached()) return false;
 
     if (HasPid())
@@ -742,7 +753,7 @@ pid_t Process::ReapExit()
         }
 
         const auto rMode = config.restartPolicy.restartMode;
-        if (!IsWorkingManually() && rMode != RestartMode::Never && RestartLimitReached() &&
+        if (!IsWorkingManually() && rMode != RestartMode::Never && !IsKeptStopped() && RestartLimitReached() &&
             (rMode != RestartMode::OnFailure || ExitedWithFailure()))
         {
             logger::Error("[%s] Not restarting: %d restarts in a row (MaxRestarts)", config.processName.c_str(), runtime.consecutiveRestarts);

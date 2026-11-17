@@ -66,6 +66,7 @@ struct ProcessRuntimeParams
     std::chrono::high_resolution_clock::time_point stopDeadline{};
     pid_t stopGroup = -1; // process group being stopped; outlives the reaped leader
     bool restartRequested = false;
+    bool stopRequested = false; // Stop() since the last StartProcess(): UnlessStopped keeps it stopped
     bool healthCheckSuspended = false;
     bool unresponsiveStop = false;
     std::string stdioLine;

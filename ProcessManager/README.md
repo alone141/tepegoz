@@ -71,6 +71,10 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
 - An exit whose status was lost, because something else in the manager's process reaped it, no longer counts
   as a failure. `OnFailure` used to restart such a service even when it had ended cleanly; `Always` and
   `UnlessStopped` still restart it.
+- `UnlessStopped` no longer behaves exactly like `Always` inside `Process`: after `Stop()`, `NeedsRestart()`
+  says no until the next `StartProcess()`, also when the stop came while a restart was waiting for its delay.
+  The manager already kept a stopped service stopped in every mode, since a stop command also makes the
+  service Manual, so what it does is unchanged.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

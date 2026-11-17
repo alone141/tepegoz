@@ -654,14 +654,52 @@ TEST(ProcessTest, NeverDoesNotRestartAfterFailure)
     EXPECT_FALSE(RestartDueAfterExit("Never", "pmt_exit", "--code, 3, --after-ms, 0"));
 }
 
-TEST(ProcessTest, UnlessStoppedRestartsAfterStopExactlyLikeAlways)
+TEST(ProcessTest, AlwaysRestartsAfterStop)
 {
     process_manager::Process process{};
-    ASSERT_EQ(Configure(process, Service("unless", "pmt_steady", "RestartMode: UnlessStopped\nRestartDelayMs: 0\n")), 1);
+    ASSERT_EQ(Configure(process, Service("always", "pmt_steady", "RestartMode: Always\nRestartDelayMs: 0\n")), 1);
     process.StartProcess();
     ASSERT_TRUE(StopAndWait(process));
     EXPECT_FALSE(process.HasPid());
     EXPECT_TRUE(process.NeedsRestart());
+}
+
+TEST(ProcessTest, UnlessStoppedRestartsAfterCleanExit)
+{
+    EXPECT_TRUE(RestartDueAfterExit("UnlessStopped", "pmt_exit", "--code, 0, --after-ms, 0"));
+}
+
+TEST(ProcessTest, UnlessStoppedKeepsStoppedServiceStoppedUntilTheNextStart)
+{
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("unless", "pmt_exit",
+                                         "Args: [--code, 0, --after-ms, 300]\nRestartMode: UnlessStopped\n"
+                                         "RestartDelayMs: 0\n")),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(StopAndWait(process));
+    EXPECT_FALSE(process.HasPid());
+    EXPECT_FALSE(process.NeedsRestart());
+
+    process.StartProcess();
+    ASSERT_TRUE(WaitForExit(process));
+    EXPECT_TRUE(process.NeedsRestart());
+}
+
+TEST(ProcessTest, UnlessStoppedStopWhileARestartIsDueCancelsIt)
+{
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("unless", "pmt_exit",
+                                         "Args: [--code, 3, --after-ms, 0]\nRestartMode: UnlessStopped\n"
+                                         "RestartDelayMs: 0\n")),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(WaitForExit(process));
+    ASSERT_TRUE(process.NeedsRestart());
+
+    process.Stop();
+    EXPECT_FALSE(process.IsStopping());
+    EXPECT_FALSE(process.NeedsRestart());
 }
 
 TEST(ProcessTest, OnFailureDoesNotRestartExitReapedElsewhere)

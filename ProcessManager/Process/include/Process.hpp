@@ -84,6 +84,7 @@ private:
     bool IsHealthCheckActive() const;
     bool IsUnresponsive() const;
     bool RestartLimitReached() const;
+    bool IsKeptStopped() const;
     std::chrono::milliseconds RestartDelay() const;
     bool IsGroupAlive() const;
 
