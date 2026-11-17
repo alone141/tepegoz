@@ -79,6 +79,10 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   documentation: `MaxRestarts` 5 (was 10), `StdioAppend` false (was true) and `StdioFilePath`
   `/tmp/output.txt` (was empty). Services read from the configuration always got the documented values, so
   the manager behaves as before.
+- `validate` and the start-up check no longer repeat a problem with `ExecutablePath` as `ResolvedPath does
+  not exists` or `ResolvedPath is not a regular file`. Those two checks looked at `ExecutablePath` a second
+  time. Checking the resolved path instead would not help: the checks follow symlinks, so it gives the same
+  answers. They are gone.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

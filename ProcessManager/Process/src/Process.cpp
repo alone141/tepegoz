@@ -617,8 +617,7 @@ void Process::CheckConfig(std::vector<std::string>& errorList) const noexcept
 {
     std::error_code erc;
 
-    //check executablepath
-
+    // These checks follow symlinks, so the same checks on the canonical path would only repeat their answers.
     if (!fs::exists(config.executablePath, erc))
     {
         errorList.push_back(GetProcessName() + " ExecutablePath does not exists");
@@ -635,17 +634,6 @@ void Process::CheckConfig(std::vector<std::string>& errorList) const noexcept
     {
         errorList.push_back(GetProcessName() + " ExecutablePath access denied");
     }
-
-    const auto& resolvedPath = fs::weakly_canonical(config.executablePath, erc);
-    if (!fs::exists(config.executablePath, erc))
-    {
-        errorList.push_back(GetProcessName() + " ResolvedPath does not exists");
-    }
-    if (!fs::is_regular_file(config.executablePath, erc))
-    {
-        errorList.push_back(GetProcessName() + " ResolvedPath is not a regular file");
-    }
-
 
     //check cwd
     // 1) Must exist

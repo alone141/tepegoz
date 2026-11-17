@@ -466,7 +466,7 @@ TEST(ProcessTest, CheckConfigAcceptsValidService)
     EXPECT_TRUE(errors.empty());
 }
 
-TEST(ProcessTest, CheckConfigReportsMissingExecutableFiveTimes)
+TEST(ProcessTest, CheckConfigReportsEachProblemOfMissingExecutableOnce)
 {
     process_manager::Process process{};
     ASSERT_EQ(Configure(process, "ProcessName: svc\nExecutablePath: /nonexistent/pmt_missing\n"), 1);
@@ -477,8 +477,6 @@ TEST(ProcessTest, CheckConfigReportsMissingExecutableFiveTimes)
                           "svc ExecutablePath does not exists",
                           "svc ExecutablePath is not a regular file",
                           "svc ExecutablePath access denied",
-                          "svc ResolvedPath does not exists",
-                          "svc ResolvedPath is not a regular file",
                       }));
 }
 
@@ -492,7 +490,34 @@ TEST(ProcessTest, CheckConfigReportsDirectoryAsExecutable)
     EXPECT_EQ(errors, (std::vector<std::string>{
                           "svc ExecutablePath is a directory",
                           "svc ExecutablePath is not a regular file",
-                          "svc ResolvedPath is not a regular file",
+                      }));
+}
+
+TEST(ProcessTest, CheckConfigAcceptsSymlinkToExecutable)
+{
+    const ScratchDirectory scratch{};
+    const std::filesystem::path link = scratch.Path() / "steady_link";
+    std::filesystem::create_symlink(Program("pmt_steady"), link);
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, "ProcessName: svc\nExecutablePath: " + link.string() + "\n"), 1);
+    std::vector<std::string> errors{};
+    process.CheckConfig(errors);
+    EXPECT_TRUE(errors.empty());
+}
+
+TEST(ProcessTest, CheckConfigReportsDanglingSymlinkAsMissingExecutable)
+{
+    const ScratchDirectory scratch{};
+    const std::filesystem::path link = scratch.Path() / "dangling_link";
+    std::filesystem::create_symlink(scratch.Path() / "nowhere", link);
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, "ProcessName: svc\nExecutablePath: " + link.string() + "\n"), 1);
+    std::vector<std::string> errors{};
+    process.CheckConfig(errors);
+    EXPECT_EQ(errors, (std::vector<std::string>{
+                          "svc ExecutablePath does not exists",
+                          "svc ExecutablePath is not a regular file",
+                          "svc ExecutablePath access denied",
                       }));
 }
 
