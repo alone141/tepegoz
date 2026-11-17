@@ -400,6 +400,12 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const confi
             problems.push_back(label + ": ProcessName is reserved (pm, all, BPM, PMC, GUI) or contains '/'; service ignored");
             continue;
         }
+        if (loaded == -3)
+        {
+            addProblems(section.Problems());
+            problems.push_back(label + ": a renamed key is set in both its spellings; service ignored");
+            continue;
+        }
         if (loaded != 1)
         {
             problems.push_back(label + ": ProcessName and ExecutablePath are required; service ignored");

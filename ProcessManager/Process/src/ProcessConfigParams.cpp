@@ -29,7 +29,10 @@ int ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
     args = section.ReadList("Args", ' ');
     this->cwd = std::filesystem::path(section.ReadString("Cwd", ""));
 
-    inheritParentEnvironment = section.ReadBool("InheritParentEnviroment", true);
+    // Older configurations spell these two keys as the code once read them.
+    const bool bothSpellings = (section.Has("InheritParentEnvironment") && section.Has("InheritParentEnviroment")) ||
+                               (section.Has("EnvironmentVariables") && section.Has("EnviromentVariables"));
+    inheritParentEnvironment = section.ReadBool(section.RenamedKey("InheritParentEnvironment", "InheritParentEnviroment"), true);
     useDisplay = section.ReadBool("UseDisplay", false);
     this->display = section.ReadString("Display", ":1");
     this->xAuthority = section.ReadString("XAuthority", "/home/user/.Xauthority");
@@ -40,7 +43,7 @@ int ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
     forceKillTimeoutMs = std::chrono::milliseconds(section.ReadInt("ForceKillTimeoutMs", 10000, 1000, INT_MAX));
 
     dependsOn = section.ReadList("DependsOn", ' ');
-    environmentVariables = section.ReadAssignments("EnviromentVariables", ';');
+    environmentVariables = section.ReadAssignments(section.RenamedKey("EnvironmentVariables", "EnviromentVariables"), ';');
 
     // The choices in WorkMode order; without one, [ProcessManager] Mode may apply (GenerateConfig).
     this->workMode = static_cast<WorkMode>(section.ReadChoice("WorkMode", { "Auto", "Manual" }, 1));
@@ -49,7 +52,7 @@ int ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
     restartPolicy.UpdateArgs(section);
     healthPolicy.UpdateArgs(section);
 
-    return 1;
+    return bothSpellings ? -3 : 1;
 }
 
 } // namespace process_manager

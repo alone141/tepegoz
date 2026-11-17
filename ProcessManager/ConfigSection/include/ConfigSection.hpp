@@ -96,6 +96,14 @@ public:
     bool Has(std::string_view key) const;
 
     /**
+     * @brief Choose the spelling of a renamed key to read, and report the old spelling when it is used.
+     * @param key The current spelling.
+     * @param oldKey The spelling older configurations use. Its presence is reported as a problem.
+     * @return @p oldKey when only it has a value, otherwise @p key.
+     */
+    std::string_view RenamedKey(std::string_view key, std::string_view oldKey);
+
+    /**
      * @brief Read a single value as text.
      * @param key Key to read.
      * @param fallback Returned when the key is missing or holds a list or mapping.

@@ -341,6 +341,19 @@ TEST(ProcessTest, UpdateArgsReturnsMinusTwoForReservedNames)
     }
 }
 
+TEST(ProcessTest, UpdateArgsReturnsMinusThreeForAKeyInBothSpellings)
+{
+    process_manager::Process environment{};
+    EXPECT_EQ(Configure(environment, Service("both", "pmt_steady",
+                                             "EnvironmentVariables: {A: 1}\nEnviromentVariables: {B: 2}\n")),
+              -3);
+
+    process_manager::Process inherit{};
+    EXPECT_EQ(Configure(inherit, Service("both", "pmt_steady",
+                                         "InheritParentEnvironment: false\nInheritParentEnviroment: true\n")),
+              -3);
+}
+
 TEST(ProcessTest, ReservedNameIsReportedBeforeMissingExecutablePath)
 {
     process_manager::Process process{};
@@ -1246,7 +1259,7 @@ TEST(ProcessTest, EnvironmentVariablesAreAddedToTheInheritedEnvironment)
     process_manager::Process process{};
     ASSERT_EQ(Configure(process, Service("env", "pmt_env",
                                          "Args: [--show, PMT_COLOR, --show, PMT_EMPTY, --show, PMT_INHERITED]\n"
-                                         "EnviromentVariables: {PMT_COLOR: blue, PMT_EMPTY: \"\"}\n" +
+                                         "EnvironmentVariables: {PMT_COLOR: blue, PMT_EMPTY: \"\"}\n" +
                                              scratch.FileSettings("out.txt"))),
               1);
     process.StartProcess();
@@ -1263,6 +1276,23 @@ TEST(ProcessTest, ClearedEnvironmentHoldsOnlyTheConfiguredVariables)
     const ScratchDirectory scratch{};
     process_manager::Process process{};
     ASSERT_EQ(Configure(process, Service("cleared", "pmt_env",
+                                         "Args: [--all-env]\nInheritParentEnvironment: false\n"
+                                         "EnvironmentVariables: PMT_ONLY=this\n" +
+                                             scratch.FileSettings("out.txt"))),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(WaitForText(scratch.Path() / "out.txt", "environ "));
+    const std::string text = ReadFile(scratch.Path() / "out.txt");
+    EXPECT_NE(text.find("environment has 1 variables"), std::string::npos) << text;
+    EXPECT_NE(text.find("environ PMT_ONLY=this"), std::string::npos) << text;
+    EXPECT_NE(text.find("env PATH unset"), std::string::npos) << text;
+}
+
+TEST(ProcessTest, OldSpellingsOfTheEnvironmentKeysStillWork)
+{
+    const ScratchDirectory scratch{};
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("old", "pmt_env",
                                          "Args: [--all-env]\nInheritParentEnviroment: false\n"
                                          "EnviromentVariables: PMT_ONLY=this\n" +
                                              scratch.FileSettings("out.txt"))),
@@ -1272,7 +1302,6 @@ TEST(ProcessTest, ClearedEnvironmentHoldsOnlyTheConfiguredVariables)
     const std::string text = ReadFile(scratch.Path() / "out.txt");
     EXPECT_NE(text.find("environment has 1 variables"), std::string::npos) << text;
     EXPECT_NE(text.find("environ PMT_ONLY=this"), std::string::npos) << text;
-    EXPECT_NE(text.find("env PATH unset"), std::string::npos) << text;
 }
 
 TEST(ProcessTest, UseDisplaySetsDisplayAndXauthority)

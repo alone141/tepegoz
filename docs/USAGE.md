@@ -186,7 +186,9 @@ Services:
 
 - **Checks:** unknown keys, values of the wrong kind, and numbers outside their range are reported by
   `validate` and at startup. A number outside its range is clamped to the nearest limit.
-- **Spelling:** two keys are spelled as the code reads them: `EnviromentVariables` and `InheritParentEnviroment`.
+- **Renamed keys:** `EnvironmentVariables` and `InheritParentEnvironment` were once spelled `EnviromentVariables`
+  and `InheritParentEnviroment`. The old spellings still work, and `validate` and the startup check report them.
+  A service that sets both spellings of one key is ignored.
 - **Quoting:** a value with two spaces in a row must be quoted (`"a  b"`), because of the YAML reader in use.
 
 ### `ProcessManager`
@@ -222,8 +224,8 @@ Each entry is one service. `ProcessName` and `ExecutablePath` are required; ever
 | `StdioMode` | `Inherit` | Where stdout and stderr go: `Inherit`, `Pipe`, `File` or `NullDevice`. See [Output](#output). |
 | `StdioFilePath` | `/tmp/output.txt` | The file, with `StdioMode: File`. Its folder must exist. |
 | `StdioAppend` | `false` | With `File`: add to the file instead of starting it again at each start. |
-| `InheritParentEnviroment` | `true` | `true`: start with the manager's environment. `false`: start with an empty one. |
-| `EnviromentVariables` | none | Variables to set: a mapping (`NAME: value`) or a list of `NAME=value` texts. |
+| `InheritParentEnvironment` | `true` | `true`: start with the manager's environment. `false`: start with an empty one. |
+| `EnvironmentVariables` | none | Variables to set: a mapping (`NAME: value`) or a list of `NAME=value` texts. |
 | `UseDisplay` | `false` | Sets `DISPLAY` and `XAUTHORITY`, for a program that opens windows. |
 | `Display` | `":1"` | The `DISPLAY` value, with `UseDisplay`. |
 | `XAuthority` | `/home/user/.Xauthority` | The `XAUTHORITY` value, with `UseDisplay`. |
@@ -344,10 +346,10 @@ restarted. Give a slow starter a long enough `GracePeriodMs`.
 ### Environment and display
 
 The variables are set in this order:
-1. The service starts with the manager's environment, or with an empty one if `InheritParentEnviroment` is
+1. The service starts with the manager's environment, or with an empty one if `InheritParentEnvironment` is
    `false`. An empty environment also has no `PATH`.
 2. `UseDisplay` adds `DISPLAY` and `XAUTHORITY`.
-3. `EnviromentVariables` adds its variables.
+3. `EnvironmentVariables` adds its variables.
 
 ### Resource figures
 

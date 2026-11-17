@@ -91,6 +91,10 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   gets SIGTERM, then SIGKILL after `ForceKillTimeoutMs`, and whatever is left in its cgroup is killed. Such
   children used to run on beside the next instance, and a stop could no longer reach them. A restart, or a
   start command, waits until they are gone.
+- The keys `EnviromentVariables` and `InheritParentEnviroment` are now spelled `EnvironmentVariables` and
+  `InheritParentEnvironment`. The old spellings still work, but `validate` and the start-up check report them,
+  so `validate` exits with 1 for a configuration that uses them until it is renamed. A service that sets both
+  spellings of one key is ignored. `generate` writes the new spellings.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

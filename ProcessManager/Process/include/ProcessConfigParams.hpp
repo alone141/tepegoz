@@ -21,7 +21,8 @@ namespace process_manager
 struct ProcessConfigParams
 {
 
-    // 1 when loaded, -1 when ProcessName or ExecutablePath is missing, -2 when ProcessName is reserved.
+    // 1 when loaded, -1 when ProcessName or ExecutablePath is missing, -2 when ProcessName is reserved,
+    // -3 when a renamed key is set in both spellings (read in full, so the section's problems are complete).
     int UpdateArgs(config_section::ConfigSection& section);
     static bool IsReservedName(const std::string& name);
 

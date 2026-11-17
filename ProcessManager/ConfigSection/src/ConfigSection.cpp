@@ -334,6 +334,24 @@ bool ConfigSection::Has(std::string_view key) const
     return found != nullptr && found->kind != ValueKind::Null;
 }
 
+std::string_view ConfigSection::RenamedKey(std::string_view key, std::string_view oldKey)
+{
+    if (FindValue(*value, oldKey) == nullptr)
+    {
+        return key;
+    }
+
+    Read(oldKey); // reported here instead of as an unknown key
+    if (Has(key) && Has(oldKey))
+    {
+        AddProblem(oldKey, "the old spelling of " + std::string{key} + ", which is set too");
+        return key;
+    }
+
+    AddProblem(oldKey, "the old spelling of " + std::string{key} + "; it still works, but rename it");
+    return Has(key) ? key : oldKey;
+}
+
 std::string ConfigSection::ReadString(std::string_view key, std::string_view fallback)
 {
     const ConfigValue* found = ReadScalar(key);

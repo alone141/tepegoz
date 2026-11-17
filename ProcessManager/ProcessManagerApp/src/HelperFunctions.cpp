@@ -46,9 +46,10 @@ Services:
     # OPTIONAL: whether the service gets a cgroup of its own.
     # DEFAULT: true
     CreateProcessGroup: true
-    # OPTIONAL: start with the manager's environment (true) or an empty one (false), plus EnviromentVariables.
+    # OPTIONAL: start with the manager's environment (true) or an empty one (false), plus EnvironmentVariables.
+    # The old spelling InheritParentEnviroment still works, and 'validate' reports it.
     # DEFAULT: true
-    InheritParentEnviroment: true
+    InheritParentEnvironment: true
     # OPTIONAL: where stdout and stderr go.
     # DEFAULT: Inherit
     # Inherit: the same output as the process manager (under systemd: a journal stream of its own)
@@ -70,8 +71,9 @@ Services:
     # DEFAULT: none
     DependsOn: []
     # OPTIONAL: environment variables, as NAME: value pairs (or a list of NAME=value texts).
+    # The old spelling EnviromentVariables still works, and 'validate' reports it.
     # DEFAULT: none
-    EnviromentVariables:
+    EnvironmentVariables:
       PYTHONPATH: /usr/local/lib/python3.10/site-packages
     # OPTIONAL: when to restart.
     # DEFAULT: OnFailure

@@ -29,7 +29,7 @@ Services:
     StdioMode: Pipe
     GracePeriodMs: 100
     RestartMode: Never
-    EnviromentVariables:
+    EnvironmentVariables:
       PMT_COLOR: blue
       PMT_EMPTY: ""
 
@@ -40,8 +40,8 @@ Services:
     StdioMode: Pipe
     GracePeriodMs: 100
     RestartMode: Never
-    InheritParentEnviroment: false
-    EnviromentVariables:
+    InheritParentEnvironment: false
+    EnvironmentVariables:
       PMT_ONLY: this
 
   - ProcessName: display

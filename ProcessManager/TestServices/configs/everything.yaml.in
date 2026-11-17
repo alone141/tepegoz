@@ -80,7 +80,7 @@ Services:
     Args: [--show, PMT_COLOR]
     StdioMode: Pipe
     GracePeriodMs: 300
-    EnviromentVariables:
+    EnvironmentVariables:
       PMT_COLOR: blue
 
   - ProcessName: hog

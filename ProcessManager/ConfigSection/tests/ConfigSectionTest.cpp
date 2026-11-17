@@ -210,6 +210,34 @@ TEST(ConfigSectionTest, UnreadKeyIsUnknown)
     EXPECT_TRUE(HasProblemWith(section, "service 'A': unknown key 'ForceKilTimeoutMs'"));
 }
 
+TEST(ConfigSectionTest, RenamedKeyPrefersTheCurrentSpelling)
+{
+    const config_section::ConfigValue document = Parse("NewName: 1\n");
+    config_section::ConfigSection section{document, "test"};
+    EXPECT_EQ(section.RenamedKey("NewName", "OldName"), "NewName");
+    EXPECT_EQ(section.ReadInt("NewName", 0, 0, 10), 1);
+    EXPECT_TRUE(section.Problems().empty());
+}
+
+TEST(ConfigSectionTest, RenamedKeyReadsAndReportsTheOldSpelling)
+{
+    const config_section::ConfigValue document = Parse("OldName: 2\n");
+    config_section::ConfigSection section{document, "test"};
+    EXPECT_EQ(section.RenamedKey("NewName", "OldName"), "OldName");
+    EXPECT_EQ(section.ReadInt(section.RenamedKey("NewName", "OldName"), 0, 0, 10), 2);
+    EXPECT_TRUE(HasProblemWith(section, "test: OldName: the old spelling of NewName; it still works, but rename it"));
+    EXPECT_FALSE(HasProblemWith(section, "unknown key"));
+}
+
+TEST(ConfigSectionTest, RenamedKeyInBothSpellingsReadsTheCurrentOneAndReports)
+{
+    const config_section::ConfigValue document = Parse("NewName: 1\nOldName: 2\n");
+    config_section::ConfigSection section{document, "test"};
+    EXPECT_EQ(section.ReadInt(section.RenamedKey("NewName", "OldName"), 0, 0, 10), 1);
+    EXPECT_TRUE(HasProblemWith(section, "test: OldName: the old spelling of NewName, which is set too"));
+    EXPECT_FALSE(HasProblemWith(section, "unknown key"));
+}
+
 TEST(ConfigSectionTest, NullValueCountsAsMissing)
 {
     const config_section::ConfigValue document = Parse("Cwd:\nArgs: ~\n");

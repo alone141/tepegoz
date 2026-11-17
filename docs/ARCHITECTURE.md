@@ -355,8 +355,8 @@ The configuration is read in four steps:
    and column.
 2. **Keys:** each part of the program reads its own keys through a `ConfigSection`. `ProcessConfigParams`,
    `RestartPolicy`, `HealthPolicy` and `StdioPolicy` give the defaults and the limits.
-3. **Problems:** the `ConfigSection` records what it found: unknown keys, values of the wrong kind, and clamped
-   numbers.
+3. **Problems:** the `ConfigSection` records what it found: unknown keys, values of the wrong kind, clamped
+   numbers, and old spellings of renamed keys (`RenamedKey`).
 4. **Reporting:** `validate` prints the problems, and the manager logs them at start-up.
 
 The manager reads the file once, at start-up. `--start all` rebuilds the services from the document it kept then.
@@ -425,7 +425,8 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `config_section_tests` | 23 | YAML reading, defaults, problems |
+| `config_section_tests` | 26 | YAML reading, defaults, problems, renamed keys |
+| `process_tests` | 86 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health |
 | `logger_tests` | 13 | Levels, files, rotation, journald prefixes |
 | `network_manager_tests` | 35 | Routing, identities, status and events |
 | `gpu_monitor_tests` | 27 | NVML stand-in: sampling, process lists, stuck calls |
