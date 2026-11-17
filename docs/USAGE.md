@@ -267,7 +267,7 @@ dependencies. Stopping or losing a service does not stop the services that depen
 | `RestartMode` | Restarted after |
 |---|---|
 | `Never` | Nothing. |
-| `OnFailure` | A failure: an exit code other than 0, a crash by a signal other than SIGTERM, SIGINT, SIGHUP or SIGPIPE, or a stop for missed heartbeats. An exit whose status was lost is not a failure. |
+| `OnFailure` | A failure: an exit code other than 0, a crash by a signal other than SIGTERM, SIGINT, SIGHUP or SIGPIPE, or a stop for missed heartbeats. An exit whose status was lost is not a failure, and neither is an exit during any other stop the manager began, even one that SIGKILL ended. |
 | `Always`, `UnlessStopped` | Any exit, and missed heartbeats. (The two behave the same.) |
 
 - **Stop commands win:** in every mode, a stop command (`--kill`, the GUI's Stop) keeps the service stopped.
@@ -284,8 +284,8 @@ dependencies. Stopping or losing a service does not stop the services that depen
 ### Stopping
 
 1. **SIGTERM:** the manager sends SIGTERM to the service's whole process group.
-2. **SIGKILL:** after `ForceKillTimeoutMs`, it sends SIGKILL to the group and kills whatever is left in the
-   service's cgroup.
+2. **SIGKILL:** after `ForceKillTimeoutMs`, it logs the warning `Graceful shutdown failed`, sends SIGKILL to
+   the group and kills whatever is left in the service's cgroup.
 3. **Giving up:** if processes remain after another `ForceKillTimeoutMs`, it logs `Force shutdown failed`.
 
 A stop is complete when the service's main process has exited and its process group is empty.

@@ -83,6 +83,10 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   not exists` or `ResolvedPath is not a regular file`. Those two checks looked at `ExecutablePath` a second
   time. Checking the resolved path instead would not help: the checks follow symlinks, so it gives the same
   answers. They are gone.
+- An exit during a stop the manager began no longer counts as a failure when SIGKILL ended it, as systemd
+  treats a unit its stop job ended. A stop for missed heartbeats still does. The manager already kept a
+  stopped service stopped, so this shows only inside `Process`. The SIGKILL after `ForceKillTimeoutMs` is
+  now logged as a warning (`Graceful shutdown failed`) instead of a debug line.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

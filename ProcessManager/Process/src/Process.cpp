@@ -344,7 +344,8 @@ void Process::AdvanceStop()
 
     if (runtime.stopPhase == StopPhase::Terminating)
     {
-        logger::Debug("[%s] Graceful shutdown failed ", config.processName.c_str());
+        logger::Warning("[%s] Graceful shutdown failed: still running %ld ms after SIGTERM, sending SIGKILL",
+                        config.processName.c_str(), static_cast<long>(config.forceKillTimeoutMs.count()));
         if (runtime.stopGroup > 0) ::kill(-runtime.stopGroup, SIGKILL);
         else ForceStop(runtime.processHandle);
         if (config.createProcessGroup) TerminateProcessGroup();
@@ -508,6 +509,10 @@ bool Process::ExitedWithFailure() const
     const auto& exitStatus = runtime.exitStatus;
     if (exitStatus.pid <= 0) return false; // no exit recorded since the last start
     if (runtime.unresponsiveStop) return true; // we stopped it for missed heartbeats
+    if (exitStatus.duringStop)
+    {
+        return false; // a stop asked for this exit, also when SIGKILL ended it
+    }
 
     if (!exitStatus.isTerminatedBySignal) return exitStatus.exitCode > 0;
     if (exitStatus.termSignal <= 0)
@@ -717,6 +722,7 @@ pid_t Process::ReapExit()
         }
 
         exits.pid = pid;
+        exits.duringStop = IsStopping();
         runtime.processHandle.pid = -1;
         runtime.processHandle.pgid = -1;
         runtime.exitStatus = exits;

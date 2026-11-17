@@ -948,8 +948,8 @@ TEST(ProcessTest, StopKillsServiceAndChildIgnoringSigtermAfterForceKillTimeout)
     EXPECT_FALSE(IsAlive(pid));
     EXPECT_FALSE(IsAlive(child));
     EXPECT_GE(CountOf(ReadFile(scratch.Path() / "out.txt"), "ignored SIGTERM #1"), 2);
-    // Killed by SIGKILL, which OnFailure counts as a failure.
-    EXPECT_TRUE(process.NeedsRestart());
+    // Ended by SIGKILL, but the stop asked for that: OnFailure does not count it as a failure.
+    EXPECT_FALSE(process.NeedsRestart());
 }
 
 TEST(ProcessTest, ForceKillTimeoutBelowOneSecondIsRaisedToOneSecond)
