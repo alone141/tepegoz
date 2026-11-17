@@ -508,6 +508,10 @@ bool Process::ExitedWithFailure() const
     if (runtime.unresponsiveStop) return true; // we stopped it for missed heartbeats
 
     if (!exitStatus.isTerminatedBySignal) return exitStatus.exitCode > 0;
+    if (exitStatus.termSignal <= 0)
+    {
+        return false; // reaped elsewhere: the status is lost, which is no sign of a failure
+    }
 
     // The signals systemd's Restart=on-failure counts as a clean stop.
     switch (exitStatus.termSignal)
@@ -695,7 +699,7 @@ pid_t Process::ReapExit()
         if (pid < 0 && errno == ECHILD)
         {
             // No longer our child. Drop the pid, which would otherwise signal whoever reuses it;
-            // the exit status stays unknown (the defaults).
+            // the exit status stays unknown (the defaults), which ExitedWithFailure does not count.
             pid = currentPid;
         }
         else if (pid <= 0)

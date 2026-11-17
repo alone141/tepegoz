@@ -151,6 +151,34 @@ bool RestartDueAfterExit(std::string_view restartMode, std::string_view program,
     return process.NeedsRestart();
 }
 
+// Starts a program that exits with 0 at once, reaps it outside the Process as another waitpid in the manager would,
+// and tells whether the restart policy wants it back, with no delay.
+bool RestartDueAfterCleanExitReapedElsewhere(std::string_view restartMode)
+{
+    process_manager::Process process{};
+    const std::string settings = "Args: [--code, 0, --after-ms, 0]\nRestartMode: " + std::string{restartMode} +
+                                 "\nRestartDelayMs: 0\n";
+    if (Configure(process, Service("stolen", "pmt_exit", settings)) != 1)
+    {
+        ADD_FAILURE() << "configuration refused";
+        return false;
+    }
+
+    process.StartProcess();
+    const pid_t pid = process.GetPid();
+    int status = 0;
+    if (pid <= 0 || ::waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+    {
+        ADD_FAILURE() << "pmt_exit was not reaped with exit code 0";
+        return false;
+    }
+
+    EXPECT_EQ(process.ReapExit(), pid);
+    EXPECT_FALSE(process.HasPid());
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    return process.NeedsRestart();
+}
+
 bool IsAlive(pid_t pid)
 {
     return pid > 0 && ::kill(pid, 0) == 0;
@@ -636,21 +664,14 @@ TEST(ProcessTest, UnlessStoppedRestartsAfterStopExactlyLikeAlways)
     EXPECT_TRUE(process.NeedsRestart());
 }
 
-TEST(ProcessTest, ExitReapedElsewhereCountsAsFailureEvenAfterCleanExit)
+TEST(ProcessTest, OnFailureDoesNotRestartExitReapedElsewhere)
 {
-    process_manager::Process process{};
-    ASSERT_EQ(Configure(process, Service("stolen", "pmt_exit", "Args: [--code, 0, --after-ms, 0]\nRestartDelayMs: 0\n")), 1);
-    process.StartProcess();
-    const pid_t pid = process.GetPid();
-    int status = 0;
-    ASSERT_EQ(::waitpid(pid, &status, 0), pid);
-    ASSERT_TRUE(WIFEXITED(status));
-    ASSERT_EQ(WEXITSTATUS(status), 0);
+    EXPECT_FALSE(RestartDueAfterCleanExitReapedElsewhere("OnFailure"));
+}
 
-    EXPECT_EQ(process.ReapExit(), pid);
-    EXPECT_FALSE(process.HasPid());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
-    EXPECT_TRUE(process.NeedsRestart());
+TEST(ProcessTest, AlwaysRestartsExitReapedElsewhere)
+{
+    EXPECT_TRUE(RestartDueAfterCleanExitReapedElsewhere("Always"));
 }
 
 TEST(ProcessTest, RestartDelayGrowsByBackoffMultiplierOnEachRestartInARow)

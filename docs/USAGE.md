@@ -267,7 +267,7 @@ dependencies. Stopping or losing a service does not stop the services that depen
 | `RestartMode` | Restarted after |
 |---|---|
 | `Never` | Nothing. |
-| `OnFailure` | A failure: an exit code other than 0, a crash by a signal other than SIGTERM, SIGINT, SIGHUP or SIGPIPE, an exit whose status was lost, or a stop for missed heartbeats. |
+| `OnFailure` | A failure: an exit code other than 0, a crash by a signal other than SIGTERM, SIGINT, SIGHUP or SIGPIPE, or a stop for missed heartbeats. An exit whose status was lost is not a failure. |
 | `Always`, `UnlessStopped` | Any exit, and missed heartbeats. (The two behave the same.) |
 
 - **Stop commands win:** in every mode, a stop command (`--kill`, the GUI's Stop) keeps the service stopped.
