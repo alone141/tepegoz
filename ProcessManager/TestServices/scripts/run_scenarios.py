@@ -427,9 +427,13 @@ def scenario_process_tree(c: Context) -> None:
                        ("survives" if survived else "does not survive"))
 
     c.results.check(c.watch.wait("orphaner", is_stopped, 10) is not None, "orphaner's parent crashes and stays stopped")
+    time.sleep(1)
     orphans = numbers(c.manager.said("orphaner"), r"^child \d+ pid (\d+)")
-    c.results.note("orphaner: %d of its %d children still run after the parent crashed (RestartMode Never)" %
-                   (sum(1 for pid in orphans if pid_alive(pid)), len(orphans)))
+    running = sum(1 for pid in orphans if pid_alive(pid))
+    c.results.check(len(orphans) == 2 and running == 0,
+                    "orphaner: the manager stops the children its crashed parent left (%d of %d still run)" %
+                    (running, len(orphans)))
+    c.results.check("[orphaner] Stopping what pid" in c.manager.log(), "the manager logs that it stops the leftovers")
 
 
 def scenario_stdio(c: Context) -> None:

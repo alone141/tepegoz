@@ -267,7 +267,7 @@ void ProcessManager::Run()
             process.DrainStdioPipe();
         }
         retiring.erase(std::remove_if(retiring.begin(), retiring.end(),
-            [](const Process& p) { return !p.HasPid(); }), retiring.end());
+            [](const Process& p) { return !p.HasPid() && !p.IsStopping(); }), retiring.end());
 
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextReport || !SameStates(status, published))
@@ -348,7 +348,7 @@ void ProcessManager::RetireProcess(Process& process)
 {
     process.SuspendHealthCheck();
     process.Stop();
-    if (process.HasPid()) retiring.push_back(std::move(process));
+    if (process.HasPid() || process.IsStopping()) retiring.push_back(std::move(process));
 }
 bool ProcessManager::IsStopInProgress() const
 {

@@ -1,5 +1,5 @@
 # process_tree: children in the service's process group, a child that escapes it with setsid(), and a parent that
-# crashes and leaves its children behind. Leftover children exit on their own after 60 s.
+# crashes and leaves its children behind for the manager to stop. Leftover children exit on their own after 60 s.
 # Then:  iltaren-ProcessManager --kill tree | --kill escapee | --kill escapee_cgroup
 
 ProcessManager:
@@ -29,7 +29,7 @@ Services:
     GracePeriodMs: 300
     CreateProcessGroup: true
 
-  # The parent crashes after 1.5 s; its two children stay.
+  # The parent crashes after 1.5 s; the manager then stops its two children.
   - ProcessName: orphaner
     ExecutablePath: @PMT_BIN_DIR@/pmt_forker
     Args: [--children, 2, --crash-parent-after-ms, 1500, --child-lifetime-ms, 60000]

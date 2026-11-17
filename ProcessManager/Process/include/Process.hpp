@@ -91,6 +91,7 @@ private:
     void Launch();
     void BeginStop();
     void FinishStop();
+    void StopLeftovers(pid_t group);
     void AppendStdioOutput(std::string_view output);
     void FlushStdioLine();
 

@@ -293,6 +293,10 @@ A stop is complete when the service's main process has exited and its process gr
 A child that left the process group, for example with `setsid()`, is reached only through the cgroup. That child
 gets SIGKILL without a SIGTERM first, and without a cgroup it survives the stop.
 
+When the main process exits by itself, whatever it left behind gets the same treatment: SIGTERM to what remains
+of its process group, SIGKILL after `ForceKillTimeoutMs`, and a kill of whatever is left in its cgroup. The service
+shows as Stopped meanwhile. It is restarted, or started by a command, only once those processes are gone.
+
 ### Health checks
 
 With `CheckHealth: true`, the service must send heartbeats through the manager's message broker:

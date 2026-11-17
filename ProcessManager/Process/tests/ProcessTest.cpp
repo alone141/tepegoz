@@ -1017,13 +1017,13 @@ TEST(ProcessTest, WithoutCgroupsStopLeavesSetsidEscapeeRunning)
     ::kill(escapee, SIGKILL);
 }
 
-TEST(ProcessTest, ChildrenOutliveLeaderThatExitsOnItsOwnAndStopCannotReachThem)
+TEST(ProcessTest, ChildrenOfLeaderThatExitsOnItsOwnAreStoppedBeforeARestart)
 {
     const ScratchDirectory scratch{};
     process_manager::Process process{};
     ASSERT_EQ(Configure(process, Service("orphans", "pmt_forker",
                                          "Args: [--children, 1, --crash-parent-after-ms, 200, --period-ms, 50, "
-                                         "--child-lifetime-ms, 5000]\n" +
+                                         "--child-lifetime-ms, 5000]\nRestartDelayMs: 0\n" +
                                              scratch.FileSettings("out.txt"))),
               1);
     process.StartProcess();
@@ -1032,11 +1032,45 @@ TEST(ProcessTest, ChildrenOutliveLeaderThatExitsOnItsOwnAndStopCannotReachThem)
     const pid_t child = PidAfter(ReadFile(scratch.Path() / "out.txt"), "started child ");
     ASSERT_GT(child, 0);
 
-    EXPECT_TRUE(IsAlive(child));
-    process.Stop();
-    EXPECT_FALSE(process.IsStopping());
-    EXPECT_TRUE(IsAlive(child));
+    EXPECT_TRUE(process.IsStopping());
+    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_FALSE(process.NeedsRestart());
+    const bool stopped = WaitForStop(process);
+    const bool childAlive = IsAlive(child);
     ::kill(-leader, SIGKILL);
+    ASSERT_TRUE(stopped);
+    EXPECT_FALSE(childAlive);
+    // The leader crashed with SIGSEGV, which OnFailure restarts once the child is gone.
+    EXPECT_TRUE(process.NeedsRestart());
+}
+
+TEST(ProcessTest, StartWhileLeftoversAreStoppedWaitsForThem)
+{
+    const ScratchDirectory scratch{};
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("waits", "pmt_forker",
+                                         "Args: [--children, 1, --crash-parent-after-ms, 200, --period-ms, 50, "
+                                         "--child-lifetime-ms, 5000]\n" +
+                                             scratch.FileSettings("out.txt"))),
+              1);
+    process.StartProcess();
+    const pid_t leader = process.GetPid();
+    ASSERT_TRUE(WaitForExit(process));
+    ASSERT_TRUE(process.IsStopping());
+
+    process.StartProcess();
+    EXPECT_FALSE(process.HasPid());
+    EXPECT_TRUE(process.IsRestartRequested());
+    process.AutoRestart();
+    EXPECT_FALSE(process.HasPid());
+
+    const bool stopped = WaitForStop(process);
+    ::kill(-leader, SIGKILL);
+    ASSERT_TRUE(stopped);
+    EXPECT_TRUE(process.IsRestartRequested());
+    process.StartProcess();
+    EXPECT_TRUE(process.HasPid());
+    EXPECT_FALSE(process.IsRestartRequested());
 }
 
 TEST(ProcessTest, RestartRequestSurvivesTheStopUntilTheNextStart)
@@ -1133,6 +1167,28 @@ TEST(ProcessTest, MoveAssignmentStopsTheChildItReplaces)
     EXPECT_EQ(target.GetPid(), incoming);
     EXPECT_EQ(target.GetProcessName(), "incoming");
     EXPECT_FALSE(source.HasPid());
+}
+
+TEST(ProcessTest, MoveConstructionHandsOverTheStopOfLeftovers)
+{
+    const ScratchDirectory scratch{};
+    process_manager::Process source{};
+    ASSERT_EQ(Configure(source, Service("handed", "pmt_forker",
+                                        "Args: [--children, 1, --crash-parent-after-ms, 200, --period-ms, 50, "
+                                        "--child-lifetime-ms, 5000]\n" +
+                                            scratch.FileSettings("out.txt"))),
+              1);
+    source.StartProcess();
+    const pid_t leader = source.GetPid();
+    ASSERT_TRUE(WaitForExit(source));
+    ASSERT_TRUE(source.IsStopping());
+
+    process_manager::Process target{std::move(source)};
+    EXPECT_FALSE(source.IsStopping());
+    EXPECT_TRUE(target.IsStopping());
+    const bool stopped = WaitForStop(target);
+    ::kill(-leader, SIGKILL);
+    EXPECT_TRUE(stopped);
 }
 
 // ---- What reaches the child

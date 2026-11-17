@@ -109,7 +109,7 @@ int Process::UpdateArgs(config_section::ConfigSection& section)
 
 Process::~Process()
 {
-    if (runtime.processHandle.pid > 0)
+    if (HasPid() || IsStopping())
     {
         RequestStopAndEscalate();
     }
@@ -120,19 +120,23 @@ Process::Process(Process&& other) noexcept
     config(std::move(other.config))
 {
     other.runtime.processHandle = ProcessHandle{};
+    other.runtime.stopPhase = StopPhase::None; // the stop in progress moves with the child
+    other.runtime.stopGroup = -1;
 }
 
 Process& Process::operator=(Process&& other) noexcept
 {
     if (this != &other)
     {
-        if (HasPid())
+        if (HasPid() || IsStopping())
         {
             RequestStopAndEscalate();
         }
         runtime = std::move(other.runtime);
         config = std::move(other.config);
         other.runtime.processHandle = ProcessHandle{};
+        other.runtime.stopPhase = StopPhase::None;
+        other.runtime.stopGroup = -1;
     }
     return *this;
 }
@@ -144,6 +148,11 @@ void Process::StartProcess()
         logger::Debug("[%s] Already running as pid %d, not starting another instance", config.processName.c_str(), runtime.processHandle.pid);
         return;
     }
+    if (IsStopping())
+    {
+        runtime.restartRequested = true; // starts once the stop in progress has finished
+        return;
+    }
     runtime.consecutiveRestarts = 0;
     runtime.stopRequested = false;
     Launch();
@@ -151,7 +160,7 @@ void Process::StartProcess()
 
 void Process::AutoRestart()
 {
-    if (HasPid()) return;
+    if (HasPid() || IsStopping()) return;
     ++runtime.consecutiveRestarts;
     logger::Info("[%s] Restart %d of at most %d in a row", config.processName.c_str(), runtime.consecutiveRestarts, config.restartPolicy.maxRestarts);
     Launch();
@@ -285,7 +294,7 @@ void Process::ForceStop(const ProcessHandle& pHandle) const
 void Process::RequestStopAndEscalate(std::chrono::milliseconds poll)
 {
     logger::Debug("[%s] RequestStopAndEscalate with polling period %ld ms and ForceKilTimeout %ld ms ", config.processName.c_str(), static_cast<long>(poll.count()), static_cast<long>(config.forceKillTimeoutMs.count()));
-    if (runtime.processHandle.pid <= 0) return;
+    if (!HasPid() && !IsStopping()) return;
 
     poll = std::max(poll, std::chrono::milliseconds(1));
     Stop();
@@ -362,6 +371,27 @@ void Process::AdvanceStop()
 bool Process::IsGroupAlive() const
 {
     return runtime.stopGroup > 0 && ::kill(-runtime.stopGroup, 0) == 0;
+}
+
+// The main process exited by itself. What is left in its process group gets the stop the service would have got,
+// and nothing starts again until it is gone; what left the group but not the cgroup is killed at once, as in a stop.
+void Process::StopLeftovers(pid_t group)
+{
+    runtime.stopGroup = group;
+    if (IsGroupAlive())
+    {
+        logger::Info("[%s] Stopping what pid %d left behind in its process group", config.processName.c_str(), group);
+        ::kill(-group, SIGTERM);
+        runtime.stopPhase = StopPhase::Terminating;
+        runtime.stopDeadline = Now() + config.forceKillTimeoutMs;
+        return;
+    }
+
+    runtime.stopGroup = -1;
+    if (config.createProcessGroup)
+    {
+        TerminateProcessGroup();
+    }
 }
 
 void Process::FinishStop()
@@ -574,6 +604,10 @@ bool Process::NeedsRestart() const
     {
         return !IsGracePeriod() && IsUnresponsive();
     }
+    if (IsStopping())
+    {
+        return false; // what the last instance left behind is still being stopped
+    }
     if (IsUndefined(runtime.exitTime)) return false; // never ran: NeedsStart covers it
     if (Now() - runtime.exitTime < RestartDelay()) return false;
     if (rMode == RestartMode::OnFailure)
@@ -690,6 +724,7 @@ RuntimeHealth Process::GetRuntimeStats() const noexcept
 pid_t Process::ReapExit()
 {
     const auto currentPid = runtime.processHandle.pid;
+    const pid_t group = runtime.processHandle.pgid;
     ExitStatus exits;
 
     if (currentPid <= 0) return 0;
@@ -751,6 +786,10 @@ pid_t Process::ReapExit()
             (rMode != RestartMode::OnFailure || ExitedWithFailure()))
         {
             logger::Error("[%s] Not restarting: %d restarts in a row (MaxRestarts)", config.processName.c_str(), runtime.consecutiveRestarts);
+        }
+        if (!exits.duringStop)
+        {
+            StopLeftovers(group);
         }
         return pid;
 

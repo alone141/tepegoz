@@ -87,6 +87,10 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   treats a unit its stop job ended. A stop for missed heartbeats still does. The manager already kept a
   stopped service stopped, so this shows only inside `Process`. The SIGKILL after `ForceKillTimeoutMs` is
   now logged as a warning (`Graceful shutdown failed`) instead of a debug line.
+- When a service's main process exits by itself, the manager now stops what it left behind. Its process group
+  gets SIGTERM, then SIGKILL after `ForceKillTimeoutMs`, and whatever is left in its cgroup is killed. Such
+  children used to run on beside the next instance, and a stop could no longer reach them. A restart, or a
+  start command, waits until they are gone.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

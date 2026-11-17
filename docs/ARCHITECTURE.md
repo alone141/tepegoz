@@ -301,6 +301,10 @@ Killing ────── SIGKILL to the group, cgroup.kill; deadline = now + F
 
 When a stop is done, the manager also kills whatever is left in the service's cgroup and removes the cgroup.
 
+A main process that exits by itself starts the same two steps for what it left in its process group, and a kill
+of its cgroup. A start or restart waits until they are done: `StartProcess` turns into a restart request, and
+`NeedsRestart` says no while the stop runs.
+
 Whether an exit is restarted depends on three things:
 - **Why it stopped:** an exit code, a signal, or a stop for missed heartbeats.
 - **`RestartMode`.**
