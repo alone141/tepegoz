@@ -4,6 +4,7 @@
 #include "ProcessManagerParams.hpp"
 #include <zmq.hpp>
 #include "ProcessManagerCommands.hpp"
+#include "ServiceRegistry.hpp"
 
 #include <atomic>
 
@@ -41,6 +42,15 @@ public:
      * @return What was done, or why nothing was: then params and retiring are unchanged.
      */
     static ReloadReport Reload(ProcessManagerParams& params, std::vector<Process>& retiring);
+    /**
+     * @brief Answer one request of the service registry: show, add, change or remove a registered service.
+     * @param params The current parameters. A change that is written is applied with Reload.
+     * @param retiring Receives the services a change removed that still have to be stopped.
+     * @param frames The request's frames, without the envelope: the operation, then its parameters.
+     * @return The reply's status and its JSON object. Anything but ReplyStatus::Ok leaves the files as they were.
+     */
+    static service_registry::Reply HandleRegistry(ProcessManagerParams& params, std::vector<Process>& retiring,
+                                                  const std::vector<std::string>& frames);
 private:
     void StopAll();
     static void RetireProcess(Process& process, std::vector<Process>& retiring);
@@ -52,6 +62,8 @@ private:
     void StartDependencies(const Process& process) const;
     bool IsStopInProgress() const;
     std::vector<Process>::iterator GetProcess(std::string_view processName) const;
+    void BindRegistry();
+    void ServeRegistry();
 
 
     std::unique_ptr<ProcessManagerParams> processParams;
@@ -62,6 +74,7 @@ private:
     zmq::context_t zmqContext;
     zmq::socket_t listener;
     zmq::socket_t statusPublisher;
+    zmq::socket_t registrar; // ServiceRegistry requests, answered in the supervision loop
 };
 
 } // namespace process_manager

@@ -118,6 +118,14 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   `InheritParentEnvironment`. The old spellings still work, but `validate` and the start-up check report them,
   so `validate` exits with 1 for a configuration that uses them until it is renamed. A service that sets both
   spellings of one key is ignored. `generate` writes the new spellings.
+- The manager registers, changes and removes services on request, on port 6671 (the service registry, new
+  module `ServiceRegistry/`). A request to `add`, `replace`, `update` or `remove` a service is checked as
+  `validate` checks a configuration, written as one file in `services.d`, and applied with a reload; a request
+  that would add a problem writes nothing. Only registered services can be changed this way; `show` and `list`
+  cover every service. Requests are a YAML or JSON mapping, and replies one JSON object, so the GUI needs no
+  YAML reader. The port listens on 127.0.0.1 only, unless the new `ProcessManager` key `RemoteRegistration` is
+  true. It has no authentication, so whoever reaches it can make the manager run any program. `pmt_request`,
+  a new test program, sends requests by hand.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

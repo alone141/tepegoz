@@ -1,14 +1,16 @@
 # Process manager configuration, installed by cmake --install. It starts no service yet.
 # List your services under Services, or give each one a file in the services.d folder next to this file:
 # <ProcessName>.yaml, with the keys of one Services entry. Those come after the ones listed here, in file name order.
-# Then check the configuration and restart the manager:
+# Then check the configuration and have the manager read it again:
 #   @INSTALLED_MANAGER@ validate --config @PM_CONFIG_DIR@ProcessManagerConfig.yaml
-#   systemctl restart @UNIT_NAME@
+#   systemctl reload @UNIT_NAME@
 # '@INSTALLED_MANAGER@ generate' writes a template that documents every key.
 # To install your own file instead, configure the build with -DPM_CONFIG_SOURCE=/path/to/ProcessManagerConfig.yaml.
 
 ProcessManager:
   Mode: Auto
   LogLevel: Info
+  # true lets any machine that reaches port 6671 register services, which the manager runs as root.
+  RemoteRegistration: false
 
 Services: []

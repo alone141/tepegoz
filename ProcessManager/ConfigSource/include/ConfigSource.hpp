@@ -50,6 +50,17 @@ struct DropInFile
     DropInCode code = DropInCode::Ok;
 };
 
+// A registered service's file as a change would leave it, so that the change can be checked before it is written.
+struct DropInOverride
+{
+    // The service, which is also the file's name without its extension.
+    std::string serviceName;
+    // false: the file is taken as deleted.
+    bool present = true;
+    // The file's content when present: the keys of one service.
+    config_section::ConfigValue definition;
+};
+
 // What became of the drop-in folder. An empty folder is Listed; one that could not be listed has no files either, but
 // is NotReadable or NotFolder, so that it is never taken for a folder whose files were all deleted.
 enum class FolderCode
@@ -105,6 +116,17 @@ public:
      * @return LoadCode::Ok, otherwise MainFileNotOpened or MainFileSyntaxError.
      */
     LoadCode Load(LoadedConfig& out, std::string& error) const;
+
+    // error is a second out-parameter: the reason the main file failed, worded for whoever edits it.
+    /**
+     * @brief Read the configuration as it would be with some files of the drop-in folder written or deleted.
+     * @param out Receives the merged configuration on success. A drop-in problem skips that file only.
+     * @param error Receives why the main file could not be read or parsed.
+     * @param overrides The files taken as written or deleted, by service name. Nothing on disk is touched, and a
+     *        folder that cannot be listed takes none of them.
+     * @return LoadCode::Ok, otherwise MainFileNotOpened or MainFileSyntaxError.
+     */
+    LoadCode Load(LoadedConfig& out, std::string& error, const std::vector<DropInOverride>& overrides) const;
 
     /**
      * @brief Return the path of the main configuration file.

@@ -21,6 +21,10 @@ ProcessManager:
   Mode: Auto
   # Lowest level that is logged: Verbose, Debug, Info, Warning or Error. DEFAULT: Debug
   LogLevel: Debug
+  # Where services can be registered from, through port 6671: false, this machine only; true, any machine that
+  # reaches the port. The port has no authentication and the manager runs as root, so whoever can send to it can
+  # make the manager run any program. Read at start-up only. DEFAULT: false
+  RemoteRegistration: false
 
 # One entry per service, started in dependency order. Any number of services can be listed.
 # Each MUST have a ProcessName and an ExecutablePath; every other key is optional.

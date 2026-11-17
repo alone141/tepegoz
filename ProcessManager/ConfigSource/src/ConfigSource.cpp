@@ -129,25 +129,11 @@ FolderCode ListDropIns(const std::filesystem::path& folder, std::vector<std::fil
 }
 
 // problem is a second out-parameter: why the file is skipped, worded for whoever edits it.
-DropInCode ReadDropIn(const std::filesystem::path& file, const std::vector<std::string>& mainNames,
-                      config_section::ConfigValue& service, std::string& problem)
+DropInCode CheckDropIn(const std::filesystem::path& file, const std::vector<std::string>& mainNames,
+                       const config_section::ConfigValue& service, std::string& problem)
 {
     const std::string label = file.string();
     const std::string serviceName = file.stem().string();
-    std::string error;
-    const config_section::LoadCode loaded = config_section::LoadConfigFile(file, service, error);
-    if (loaded == config_section::LoadCode::FileNotOpened)
-    {
-        problem = label + ": cannot be read" + std::string{skipped};
-        return DropInCode::NotReadable;
-    }
-
-    if (loaded == config_section::LoadCode::SyntaxError)
-    {
-        problem = label + ": not valid YAML: " + error + std::string{skipped};
-        return DropInCode::SyntaxError;
-    }
-
     if (service.kind != config_section::ValueKind::Mapping)
     {
         problem = label + ": must be a mapping of keys to values, the keys of one service" + std::string{skipped};
@@ -176,6 +162,66 @@ DropInCode ReadDropIn(const std::filesystem::path& file, const std::vector<std::
     }
 
     return DropInCode::Ok;
+}
+
+// problem is a second out-parameter: why the file is skipped, worded for whoever edits it.
+DropInCode ReadDropIn(const std::filesystem::path& file, const std::vector<std::string>& mainNames,
+                      config_section::ConfigValue& service, std::string& problem)
+{
+    std::string error;
+    const config_section::LoadCode loaded = config_section::LoadConfigFile(file, service, error);
+    if (loaded == config_section::LoadCode::FileNotOpened)
+    {
+        problem = file.string() + ": cannot be read" + std::string{skipped};
+        return DropInCode::NotReadable;
+    }
+
+    if (loaded == config_section::LoadCode::SyntaxError)
+    {
+        problem = file.string() + ": not valid YAML: " + error + std::string{skipped};
+        return DropInCode::SyntaxError;
+    }
+
+    return CheckDropIn(file, mainNames, service, problem);
+}
+
+// A pointer, not std::optional: the override is read in place instead of copied.
+const DropInOverride* FindOverride(const std::vector<DropInOverride>& overrides, const std::string& serviceName)
+{
+    for (const DropInOverride& replacement : overrides)
+    {
+        if (replacement.serviceName == serviceName)
+        {
+            return &replacement;
+        }
+    }
+
+    return nullptr;
+}
+
+// Puts the overridden files into files as the change would leave the folder: deleted ones out, written ones in.
+void ApplyOverrides(const std::filesystem::path& folder, const std::vector<DropInOverride>& overrides,
+                    std::vector<std::filesystem::path>& files)
+{
+    files.erase(std::remove_if(files.begin(), files.end(),
+                               [&overrides](const std::filesystem::path& file)
+                               {
+                                   return FindOverride(overrides, file.stem().string()) != nullptr;
+                               }),
+                files.end());
+    for (const DropInOverride& replacement : overrides)
+    {
+        if (replacement.present)
+        {
+            files.push_back(folder / (replacement.serviceName + std::string{drop_in_extension}));
+        }
+    }
+
+    std::sort(files.begin(), files.end(),
+              [](const std::filesystem::path& a, const std::filesystem::path& b)
+              {
+                  return a.filename().string() < b.filename().string();
+              });
 }
 
 // Appends services to the Services list of document, making the list when the document has none.
@@ -217,6 +263,11 @@ ConfigSource::ConfigSource(std::filesystem::path mainFile)
 
 LoadCode ConfigSource::Load(LoadedConfig& out, std::string& error) const
 {
+    return Load(out, error, std::vector<DropInOverride>{});
+}
+
+LoadCode ConfigSource::Load(LoadedConfig& out, std::string& error, const std::vector<DropInOverride>& overrides) const
+{
     LoadedConfig loaded{};
     loaded.mainFile = mainFile;
     const config_section::LoadCode read = config_section::LoadConfigFile(mainFile, loaded.document, error);
@@ -242,6 +293,11 @@ LoadCode ConfigSource::Load(LoadedConfig& out, std::string& error) const
     const std::filesystem::path folder = DropInFolder();
     std::vector<std::filesystem::path> files;
     loaded.folder = ListDropIns(folder, files, loaded.problems);
+    if (loaded.folder == FolderCode::Listed || loaded.folder == FolderCode::Missing)
+    {
+        ApplyOverrides(folder, overrides, files);
+    }
+
     loaded.takesServices = CanTakeServices(loaded.document);
     if (!files.empty() && !loaded.takesServices)
     {
@@ -258,7 +314,14 @@ LoadCode ConfigSource::Load(LoadedConfig& out, std::string& error) const
     {
         config_section::ConfigValue service{};
         std::string problem;
-        const DropInCode code = ReadDropIn(file, mainNames, service, problem);
+        const DropInOverride* replacement = FindOverride(overrides, file.stem().string());
+        if (replacement != nullptr)
+        {
+            service = replacement->definition;
+        }
+
+        const DropInCode code = replacement != nullptr ? CheckDropIn(file, mainNames, service, problem)
+                                                       : ReadDropIn(file, mainNames, service, problem);
         loaded.dropIns.push_back(DropInFile{file, file.stem().string(), code});
         if (code != DropInCode::Ok)
         {

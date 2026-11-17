@@ -540,3 +540,122 @@ TEST(ConfigSourceTest, FindOriginFindsTheServiceByName)
     EXPECT_EQ(mainOrigin->kind, config_source::OriginKind::MainFile);
     EXPECT_EQ(config_source::FindOrigin(loaded.origins, "unknown"), nullptr);
 }
+
+namespace
+{
+
+config_source::DropInOverride Written(const std::string& name, const std::string& text)
+{
+    config_source::DropInOverride written{};
+    written.serviceName = name;
+    std::string error;
+    EXPECT_EQ(config_section::ParseConfigText(text, written.definition, error), config_section::LoadCode::Ok) << error;
+    return written;
+}
+
+config_source::DropInOverride Deleted(const std::string& name)
+{
+    config_source::DropInOverride deleted{};
+    deleted.serviceName = name;
+    deleted.present = false;
+    return deleted;
+}
+
+config_source::LoadedConfig LoadWith(const ScratchFolder& folder, const std::vector<config_source::DropInOverride>& overrides)
+{
+    const config_source::ConfigSource source{folder.MainFile()};
+    config_source::LoadedConfig loaded{};
+    std::string error;
+    EXPECT_EQ(source.Load(loaded, error, overrides), config_source::LoadCode::Ok) << error;
+    return loaded;
+}
+
+} // namespace
+
+TEST(ConfigSourceTest, OverrideAddsAFileThatIsNotThere)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    folder.Write("services.d/zeta.yaml", Service("zeta"));
+    const config_source::LoadedConfig loaded = LoadWith(folder, {Written("alpha", Service("alpha"))});
+    EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"main", "alpha", "zeta"}));
+    const config_source::ServiceOrigin* alpha = config_source::FindOrigin(loaded.origins, "alpha");
+    ASSERT_NE(alpha, nullptr);
+    EXPECT_EQ(alpha->kind, config_source::OriginKind::DropIn);
+    EXPECT_EQ(alpha->file, folder.DropIn("alpha.yaml"));
+    EXPECT_FALSE(std::filesystem::exists(folder.DropIn("alpha.yaml")));
+}
+
+TEST(ConfigSourceTest, OverrideAddsAFileToAMissingFolder)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    const config_source::LoadedConfig loaded = LoadWith(folder, {Written("alpha", Service("alpha"))});
+    EXPECT_EQ(loaded.folder, config_source::FolderCode::Missing);
+    EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"main", "alpha"}));
+    EXPECT_FALSE(std::filesystem::exists(folder.DropInFolder()));
+}
+
+TEST(ConfigSourceTest, OverrideReplacesWhatTheFileHolds)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    folder.Write("services.d/extra.yaml", Service("extra"));
+    const config_source::LoadedConfig loaded =
+        LoadWith(folder, {Written("extra", Service("extra") + "WorkMode: Manual\n")});
+    const config_section::ConfigValue* services = config_section::FindValue(loaded.document, "Services");
+    ASSERT_NE(services, nullptr);
+    ASSERT_EQ(services->children.size(), 2U);
+    const config_section::ConfigValue* workMode = config_section::FindValue(services->children[1], "WorkMode");
+    ASSERT_NE(workMode, nullptr);
+    EXPECT_EQ(workMode->text, "Manual");
+}
+
+TEST(ConfigSourceTest, OverrideRepairsABrokenFile)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    folder.Write("services.d/broken.yaml", "ProcessName: [broken\n");
+    EXPECT_FALSE(Load(folder).problems.empty());
+    const config_source::LoadedConfig loaded = LoadWith(folder, {Written("broken", Service("broken"))});
+    EXPECT_TRUE(loaded.problems.empty());
+    EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"main", "broken"}));
+}
+
+TEST(ConfigSourceTest, OverrideDeletesAFile)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    folder.Write("services.d/gone.yaml", Service("gone"));
+    folder.Write("services.d/kept.yaml", Service("kept"));
+    const config_source::LoadedConfig loaded = LoadWith(folder, {Deleted("gone")});
+    EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"main", "kept"}));
+    ASSERT_EQ(loaded.dropIns.size(), 1U);
+    EXPECT_EQ(loaded.dropIns[0].serviceName, "kept");
+    EXPECT_TRUE(std::filesystem::exists(folder.DropIn("gone.yaml")));
+}
+
+TEST(ConfigSourceTest, OverrideGoesThroughTheChecksOfAFile)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    const config_source::LoadedConfig loaded =
+        LoadWith(folder, {Written("other", Service("wrong")), Written("main", Service("main"))});
+    EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"main"}));
+    ASSERT_EQ(loaded.dropIns.size(), 2U);
+    EXPECT_EQ(loaded.dropIns[0].serviceName, "main");
+    EXPECT_EQ(loaded.dropIns[0].code, config_source::DropInCode::NameTaken);
+    EXPECT_EQ(loaded.dropIns[1].serviceName, "other");
+    EXPECT_EQ(loaded.dropIns[1].code, config_source::DropInCode::NameMismatch);
+}
+
+TEST(ConfigSourceTest, OverridesAreNotAppliedToAFolderThatCannotBeListed)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    folder.Write("services.d", "a file where the folder should be\n");
+    const config_source::LoadedConfig loaded = LoadWith(folder, {Written("alpha", Service("alpha"))});
+    EXPECT_EQ(loaded.folder, config_source::FolderCode::NotFolder);
+    EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"main"}));
+    EXPECT_TRUE(loaded.dropIns.empty());
+}

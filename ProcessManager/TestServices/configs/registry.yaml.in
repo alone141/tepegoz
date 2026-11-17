@@ -1,0 +1,15 @@
+# registry: services registered through the manager's service registry (port 6671), with pmt_request.
+# The driver copies this config into the scenario's run folder, where the registry makes services.d next to it.
+# Run:   iltaren-ProcessManager --config registry.yaml
+#        pmt_request add '{"name": "extra", "definition": {"ExecutablePath": "/bin/sleep", "Args": ["60"]}}'
+
+ProcessManager:
+  Mode: Auto
+  LogLevel: Info
+
+Services:
+  - ProcessName: anchor
+    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    Args: [--period-ms, 2000]
+    StdioMode: Pipe
+    GracePeriodMs: 500

@@ -17,6 +17,7 @@ How the process manager and its monitor GUI are built, and how they talk to each
  │    │            PUB *:6667 ─────────────── health reports ───────────┼──►│                  │
  │    │                                                                 │   │                  │
  │  journal server ─ ROUTER *:6670 ◄─── journal reads, cgroup PIDs ─────┼───┤                  │
+ │  registry ─ ROUTER 127.0.0.1:6671 ◄─── register, change, remove ─────┼───┤                  │
  │  GPU monitor (NVML)                                                  │   └──────────────────┘
  │  signal thread (SIGTERM, SIGINT)                                     │
  └───────┬──────────────────────────────────────────────────▲───────────┘   ┌──────────────────┐
@@ -34,6 +35,8 @@ The manager is a single process that runs the services as its children. All comm
   once when a service's state changes.
 - **Journal server (port 6670):** reads the systemd journal, and lists the processes in each service's cgroup,
   for the GUI, which may be on another machine.
+- **Service registry (port 6671):** registers, changes and removes services on request, by writing their files in
+  `services.d` and reloading. It listens on this machine only unless `RemoteRegistration: true`.
 
 ## Repository layout
 
@@ -50,6 +53,7 @@ The manager is a single process that runs the services as its children. All comm
 | `ProcessManager/ConfigSection/` | Reads the YAML configuration (the only code that uses fkYAML) and reports problems. |
 | `ProcessManager/ConfigSource/` | Reads the main configuration file and the `services.d` folder next to it into one document, and keeps where each service was defined and whether the folder could be listed. |
 | `ProcessManager/ReloadPlan/` | Compares the services the manager has with a configuration read again: added, removed, changed, kept, unchanged, or why the reload is refused. |
+| `ProcessManager/ServiceRegistry/` | The service registry's parts that need no running manager: requests, names, editing a definition, writing it as YAML and JSON, and the files of `services.d` with snapshots to undo a change. |
 | `ProcessManager/Logger/` | Logging to the console, the journal and rotating files. |
 | `ProcessManager/GpuMonitor/` | GPU sampling through NVML, loaded at run time. |
 | `ProcessManager/JournalServer/` | Answers journal reads for a remote GUI. |
@@ -76,7 +80,7 @@ the original modules (`ProcessManagerApp`, `ProcessManager`, `Process`) apart fr
 | main | Start-up, then waits for the supervision thread and shuts down | — |
 | signal | `sigwait` for SIGINT and SIGTERM. The first asks the supervision loop to stop; the second ends the process at once. | — |
 | broker | `NetworkManager::Run`: relays messages between connected sockets | ROUTER `*:5557`, PUB `*:6669` |
-| supervision | `ProcessManager::Run`: the loop below | DEALER `BPM` → 5557, PUB `*:6667` |
+| supervision | `ProcessManager::Run`: the loop below | DEALER `BPM` → 5557, PUB `*:6667`, ROUTER `127.0.0.1:6671` (`*:6671` with `RemoteRegistration: true`) |
 | GPU monitor | Samples NVML every second; a call stuck for 2 s is left behind | — |
 | journal server | Answers journal reads, running `journalctl` or `systemctl` for each, and lists the services' cgroups | ROUTER `*:6670` |
 
@@ -115,8 +119,10 @@ for each service:  check heartbeats → advance a stop in progress → reap an e
 for each service being retired (--disable, --start all): advance its stop, reap it
 if 500 ms have passed since the last report, or a service's state, pid, restart count or mark changed:
                    publish the detailed reports on 6667
-wait for messages on the DEALER, until the next report is due (at most 50 ms while a stop is in progress)
+wait for messages on the DEALER and the registry, until the next report is due (at most 50 ms while a stop is
+                   in progress)
 handle up to 64 messages: commands from PMC or GUI (a reload among them), heartbeats from services
+answer up to 16 service registry requests
 ```
 
 The start step goes through the services in start order. A service in its grace period, or being stopped, ends
@@ -291,6 +297,71 @@ How the server runs the program:
 - **Running:** with `posix_spawnp` and no shell. The program gets at most 5 s and 4 MB of output, and is killed
   when the server stops.
 - **The manager's unit and cgroup:** found from the cgroup that `ProcessGroupBuilder` found at start-up.
+
+### Service registry (port 6671)
+
+The supervision loop answers requests to register, change and remove services, on a ROUTER bound to
+`127.0.0.1:6671`, or to `*:6671` with `RemoteRegistration: true`. A bind that fails is logged, and the manager
+supervises without the registry. A REQ or DEALER client sends `[operation, parameters]` and gets `[status,
+object]` back:
+- **operation:** `version`, `list`, `show`, `add`, `replace`, `update` or `remove`.
+- **parameters:** one YAML or JSON mapping. `version` and `list` take none, and the frame can be left out. A
+  request has at most two frames and 64 KiB, and an unknown parameter is an error.
+- **status:** `ok`; `refused`, when nothing was written, with `message` and `problems` saying why; or `error`,
+  when the request was not understood, with `message` saying why.
+- **object:** one JSON object. Every one has `version`, the protocol version (1), and `message`, a sentence for a
+  person.
+
+| Operation | Parameters | `ok` object, besides `version`, `operation` and `message` |
+|---|---|---|
+| `version` | none | `folder`: the `services.d` folder |
+| `list` | none | `folder`, and `services`: one object per service, below |
+| `show` | `name` | `name`, `origin`, `file`, `enabled`, `definition` (the service's keys as a JSON object), `yaml`, and the run state. For a file of `services.d` that is skipped: `definition` is `null`, with `problem` and `fileText` |
+| `add` | `name`, `definition`, `start` (default true), `dryRun` | `name`, `outcome`, `file`, `yaml`, `reload` |
+| `replace` | `name`, `definition`, `restart`, `dryRun` | the same |
+| `update` | `name`, `set` (keys and their new values), `unset` (a key, or a list of keys), `restart`, `dryRun` | the same |
+| `remove` | `name`, `force`, `dryRun` | `name`, `outcome`, `file`, `reload` |
+
+- **A service in `list`:** `name`, `origin` (`main` or `registered`), `file`, `enabled`, `loaded` (the manager
+  has it), `state`, `pid` (-1 when it does not run), `workMode`, `restartToApply`, and `problem` for a file of
+  `services.d` that is skipped.
+- **`outcome`:** `starting`; `held` (added with `start: false`); `manual` (its WorkMode is Manual); `disabled`
+  (`Enabled: false`); `waiting` (a changed service waits for its next start); `restarting`; `applied` (a stopped
+  service took its new definition); `unchanged`; `removed`; or `valid` for a dry run.
+- **`reload`:** the counts of the reload that applied the change: `added`, `removed`, `changed`, `kept`,
+  `skipped` and `unchanged`.
+- **A refusal:** `name` when the request had one, and `problems`: the problems the change would add, or the
+  services that need the one being removed.
+
+A client in Python needs only pyzmq and json:
+
+```python
+socket = zmq.Context().socket(zmq.DEALER)
+socket.connect("tcp://localhost:6671")
+definition = {"ExecutablePath": "/opt/cam/bin/server", "Args": ["--port", "8080"]}
+socket.send_multipart([b"add", json.dumps({"name": "camera", "definition": definition}).encode()])
+status, reply = socket.recv_multipart()   # b"ok", and the JSON object
+```
+
+How a change is made, in `ProcessManager::HandleRegistry` (`ProcessManagerRegistry.cpp`):
+1. **Name:** `service_registry::CheckName` and the reserved names. `replace`, `update` and `remove` need a file
+   in `services.d` and refuse a service of the main file; `add` refuses a name that is anywhere already.
+2. **Definition:** `add` and `replace` take the one sent; `update` reads the file and applies `unset`, then `set`.
+   `ProcessName` is set from the name, and a definition that states another one is refused.
+3. **Checking:** `ConfigSource::Load` with a `DropInOverride` reads the configuration as the change would leave
+   it, without touching the folder. The problems of both configurations are found as `validate` finds them, and
+   any problem only the new one has refuses the request. A `remove` with `force` leaves out the missing
+   dependencies of the services it was told to leave.
+4. **Writing:** `ServiceFiles` keeps a `Snapshot` of the file and the folder, then writes the YAML `EmitYaml` made
+   to a dot file, which is renamed over the file, or deletes the file.
+5. **Reloading:** `ProcessManager::Reload` applies the change. If the reload is refused, the snapshot is put back.
+6. **Answering:** the outcome is what the reload did to the service. `start: false` makes the new service Manual
+   in the manager only, and `restart: true` restarts a running service, or applies the waiting definition of a
+   stopped one.
+
+`EmitYaml` writes a text without quotes only when the reader reads it back as that same text, and quotes it
+otherwise, so `"8080"`, `"true"` and `":1"` stay texts. A float keeps a decimal point (`2.0`), so it reads back
+as a float. The tests read every written file back and compare the keys and values.
 
 ## Service supervision
 
@@ -482,9 +553,10 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 | Suite | Tests | Covers |
 |---|---|---|
 | `config_section_tests` | 26 | YAML reading, defaults, problems, renamed keys |
-| `config_source_tests` | 34 | The main file with `services.d`: order, skipped and ignored files, origins, reading again, the folder's state, whether the main file takes services |
+| `config_source_tests` | 41 | The main file with `services.d`: order, skipped and ignored files, origins, reading again, the folder's state, whether the main file takes services, and files overridden for a check |
+| `service_registry_tests` | 43 | Registry requests and their parameters, names, editing a definition, YAML that reads back the same, JSON, problems a change adds, writing, removing and restoring files |
 | `reload_plan_tests` | 33 | The reload plan: added, removed, changed, kept, unchanged and skipped services, what counts as a change, and the refusals |
-| `process_manager_tests` | 25 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all`; the reload of the manager's services without its sockets |
+| `process_manager_tests` | 54 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all`; the reload of the manager's services, and every registry request, without its sockets |
 | `process_tests` | 97 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health, a deferred definition |
 | `logger_tests` | 13 | Levels, files, rotation, journald prefixes |
 | `network_manager_tests` | 35 | Routing, identities, status and events |
@@ -496,14 +568,19 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 | `status_client_tests` | 27 | Report decoding, `status --once`, commands and `reload` against a stand-in manager |
 
 `ctest` runs all of them. Two more checks run outside ctest:
-- `TestServices/scripts/run_scenarios.py` runs the real manager against eleven scenario configurations, covering
+- `TestServices/scripts/run_scenarios.py` runs the real manager against twelve scenario configurations, covering
   start order, restarts, stopping, health checks, process trees, output, environment, resource figures, a
-  service registered in `services.d`, and reloads. It needs the manager's fixed ports, so ctest does not run it.
+  service registered in `services.d`, reloads, and registering through the registry. It needs the manager's
+  fixed ports, so ctest does not run it.
 - The GUI is checked against `mock_publisher.py` or a running manager.
 
 ## Known limits
 
-- **No authentication:** the ports listen on every interface. Use a firewall.
+- **No authentication:** the ports listen on every interface, except the registry's, which listens on 127.0.0.1
+  unless `RemoteRegistration: true`. Whoever can send to the registry can make the manager run any program as
+  root. Use a firewall.
+- **Registered files are rewritten:** `replace` and `update` write a service's file from its keys and values, so
+  the comments and the layout of a file written by hand are lost.
 - **Fixed ports:** they are compile-time constants, so one manager per machine.
 - **GUIs share one identity:** when two GUIs send commands at the same moment, an answer can reach the other
   GUI.

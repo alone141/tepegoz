@@ -18,6 +18,7 @@ The manager's log of each scenario is kept in the run folder it prints.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -31,7 +32,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
-MANAGER_PORTS = (5557, 6667, 6669)
+MANAGER_PORTS = (5557, 6667, 6669, 6671)
 INSTALLED_MANAGER = "iltaren-ProcessManager"
 STOP_LIMIT_S = 30.0
 FIRST_REPORT_LIMIT_S = 10.0
@@ -185,6 +186,21 @@ class Manager:
         result = subprocess.run([self.paths.manager, "reload"] + ([] if wait else ["--no-wait"]),
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=30)
         return result.returncode, result.stdout
+
+    def request(self, operation: str,
+                parameters: Optional[Dict[str, object]] = None) -> Tuple[str, Dict[str, object]]:
+        """A service registry request through pmt_request, with its parameters as JSON: the reply's status and
+        object."""
+        frames = [operation] + ([json.dumps(parameters)] if parameters is not None else [])
+        result = subprocess.run([os.path.join(self.paths.bin_dir, "pmt_request"), "--"] + frames,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=30)
+        lines = result.stdout.splitlines()
+        if result.returncode != 0 or len(lines) < 2:
+            return "none", {"message": result.stdout.strip()}
+        try:
+            return lines[0], json.loads(lines[1])
+        except ValueError:
+            return lines[0], {"message": lines[1]}
 
     def status(self) -> str:
         result = subprocess.run([self.paths.manager, "status", "--once"], stdout=subprocess.PIPE,
@@ -710,6 +726,124 @@ def scenario_reload(c: Context) -> None:
                     "the manager does not answer a reload that asked for no answer")
 
 
+def steady_definition(paths: Paths) -> Dict[str, object]:
+    """A pmt_steady service as a registry request carries it: a JSON object."""
+    return {"ExecutablePath": os.path.abspath(os.path.join(paths.bin_dir, "pmt_steady")),
+            "Args": ["--period-ms", "2000"], "StdioMode": "Pipe", "GracePeriodMs": 500}
+
+
+def marked_definition(paths: Paths, mark: str) -> Dict[str, object]:
+    """pmt_env, which prints PMT_MARK as its definition sets it."""
+    return {"ExecutablePath": os.path.abspath(os.path.join(paths.bin_dir, "pmt_env")),
+            "Args": ["--show", "PMT_MARK"], "EnvironmentVariables": {"PMT_MARK": mark},
+            "StdioMode": "Pipe", "GracePeriodMs": 500}
+
+
+def wait_said(c: Context, name: str, text: str, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(text in line for line in c.manager.said(name)):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def scenario_registry(c: Context) -> None:
+    folder = os.path.join(os.path.dirname(c.manager.config), "services.d")
+    if not c.results.check(c.watch.wait("anchor", is_running, 15) is not None, "anchor, from the main file, runs"):
+        return
+    c.results.check("Service registry listens on tcp://127.0.0.1:6671, for this machine only" in c.manager.log(),
+                    "the registry listens on 6671, for this machine only")
+
+    status, reply = c.manager.request("version")
+    c.results.check(status == "ok" and reply.get("version") == 1, "version: protocol version 1 (%s)" % status)
+
+    status, reply = c.manager.request("add", {"name": "missing", "definition": {"ExecutablePath": "/nonexistent/pmt"}})
+    c.results.check(status == "refused" and
+                    any("ExecutablePath does not exists" in problem for problem in reply.get("problems", [])),
+                    "add of a missing executable is refused and names the problem (%s)" % reply.get("message"))
+    c.results.check(not os.path.exists(folder), "and nothing is written: not even services.d is made")
+
+    status, reply = c.manager.request("add", {"name": "added", "definition": steady_definition(c.paths)})
+    c.results.check(status == "ok" and reply.get("outcome") == "starting",
+                    "add: registered and starting (%s: %s)" % (status, reply.get("message")))
+    c.results.check(os.path.isfile(os.path.join(folder, "added.yaml")), "it is written to services.d/added.yaml")
+    c.results.check(c.watch.wait("added", is_running, 10) is not None, "and it runs")
+
+    status, reply = c.manager.request("add", {"name": "held", "definition": steady_definition(c.paths), "start": False})
+    c.results.check(status == "ok" and reply.get("outcome") == "held",
+                    "add with start false: registered and held (%s)" % reply.get("message"))
+    c.watch.wait("held", lambda report: True, 5)
+    time.sleep(1.5)
+    held = c.watch.get("held")
+    c.results.check(held is not None and not has_pid(held), "held is in the reports and does not run")
+    c.manager.command("start", "held")
+    c.results.check(c.watch.wait("held", is_running, 10) is not None, "--start held starts it")
+
+    definition = marked_definition(c.paths, "one")
+    status, reply = c.manager.request("add", {"name": "edited", "definition": definition})
+    edited = c.watch.wait("edited", is_running, 10)
+    if not c.results.check(status == "ok" and edited is not None, "edited, a pmt_env, is registered and runs"):
+        return
+    pid = edited.pid
+
+    status, reply = c.manager.request("update",
+                                      {"name": "edited", "set": {"EnvironmentVariables": {"PMT_MARK": "two"}}})
+    c.results.check(status == "ok" and reply.get("outcome") == "waiting",
+                    "update: the new definition waits for a restart (%s)" % reply.get("message"))
+    marked = c.watch.wait("edited", lambda report: report.pending == 1, 5)
+    c.results.check(marked is not None and marked.pid == pid, "edited keeps its pid and is marked restart to apply")
+
+    definition["EnvironmentVariables"] = {"PMT_MARK": "three"}
+    status, reply = c.manager.request("replace", {"name": "edited", "definition": definition, "restart": True})
+    c.results.check(status == "ok" and reply.get("outcome") == "restarting",
+                    "replace with restart: it restarts at once (%s)" % reply.get("message"))
+    restarted = c.watch.wait("edited", lambda report: is_running(report) and report.pid != pid and report.pending == 0,
+                             10)
+    c.results.check(restarted is not None, "edited runs with a new pid and without the mark")
+    c.results.check(wait_said(c, "edited", "env PMT_MARK='three'", 5),
+                    "and with the replaced definition: it prints PMT_MARK='three'")
+
+    status, reply = c.manager.request("show", {"name": "edited"})
+    shown = reply.get("definition") or {}
+    c.results.check(status == "ok" and reply.get("origin") == "registered" and
+                    shown.get("EnvironmentVariables") == {"PMT_MARK": "three"} and shown.get("Args") == definition["Args"],
+                    "show gives the definition on disk, as JSON")
+
+    status, reply = c.manager.request("list")
+    listed = {service.get("name"): service for service in reply.get("services", [])}
+    c.results.check(status == "ok" and listed.get("anchor", {}).get("origin") == "main" and
+                    listed.get("edited", {}).get("origin") == "registered" and
+                    restarted is not None and listed.get("edited", {}).get("pid") == restarted.pid,
+                    "list gives each service with its origin and its pid (%s)" % sorted(listed))
+
+    status, reply = c.manager.request("replace", {"name": "anchor", "definition": steady_definition(c.paths)})
+    c.results.check(status == "refused" and "main file" in reply.get("message", ""),
+                    "a service of the main file cannot be replaced (%s)" % reply.get("message"))
+
+    user = dict(steady_definition(c.paths), DependsOn=["added"])
+    status, reply = c.manager.request("add", {"name": "user", "definition": user})
+    c.results.check(status == "ok" and c.watch.wait("user", is_running, 10) is not None,
+                    "user, which depends on added, is registered and runs")
+    added_pid = c.watch.get("added").pid
+    status, reply = c.manager.request("remove", {"name": "added"})
+    c.results.check(status == "refused" and
+                    any("user depends on 'added'" in problem for problem in reply.get("problems", [])),
+                    "remove of added, which user needs, is refused (%s)" % reply.get("message"))
+    c.results.check(os.path.isfile(os.path.join(folder, "added.yaml")) and c.watch.get("added").pid == added_pid,
+                    "and added stays, with its file and its pid")
+    status, reply = c.manager.request("remove", {"name": "added", "force": True})
+    c.results.check(status == "ok" and reply.get("outcome") == "removed",
+                    "remove with force removes it (%s)" % reply.get("message"))
+    c.results.check(not os.path.exists(os.path.join(folder, "added.yaml")) and c.watch.wait_gone("added", 5),
+                    "its file is gone, and so is it from the reports")
+    time.sleep(0.5)
+    c.results.check(not pid_alive(added_pid), "its process is stopped")
+
+    status, reply = c.manager.request("frobnicate")
+    c.results.check(status == "error" and reply.get("message", "") != "", "a request that is not understood is an error")
+
+
 def prepare_stdio(paths: Paths) -> None:
     for path in ("/tmp/pmt_to_file.txt", "/tmp/pmt_to_file_append.txt"):
         if os.path.exists(path):
@@ -748,6 +882,13 @@ def place_reload(paths: Paths, config: str, workdir: str) -> str:
     return placed
 
 
+def place_registry(paths: Paths, config: str, workdir: str) -> str:
+    """Copies the config into the run folder, where the registry makes services.d next to it."""
+    placed = os.path.join(workdir, os.path.basename(config))
+    shutil.copyfile(config, placed)
+    return placed
+
+
 SCENARIOS: Dict[str, Callable[[Context], None]] = {
     "basic": scenario_basic,
     "restarts": scenario_restarts,
@@ -760,11 +901,13 @@ SCENARIOS: Dict[str, Callable[[Context], None]] = {
     "everything": scenario_everything,
     "registered": scenario_registered,
     "reload": scenario_reload,
+    "registry": scenario_registry,
 }
 PREPARE: Dict[str, Callable[[Paths], None]] = {"stdio": prepare_stdio}
 # Scenarios whose config needs files next to it: the config is copied into the scenario's run folder with them, and
 # the copy is what validate and the manager read.
-PLACE: Dict[str, Callable[[Paths, str, str], str]] = {"registered": place_registered, "reload": place_reload}
+PLACE: Dict[str, Callable[[Paths, str, str], str]] = {"registered": place_registered, "reload": place_reload,
+                                                      "registry": place_registry}
 # Errors 'validate' reports on purpose.
 EXPECTED_VALIDATE_ERRORS: Dict[str, Tuple[str, ...]] = {"environment": ("cwd_missing Cwd",)}
 

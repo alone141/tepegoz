@@ -1,0 +1,4 @@
+include(GoogleTest)
+add_executable(service_registry_tests ServiceRegistryTest.cpp)
+target_link_libraries(service_registry_tests PRIVATE service_registry GTest::gtest_main)
+gtest_discover_tests(service_registry_tests)

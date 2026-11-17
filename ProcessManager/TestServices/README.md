@@ -19,6 +19,7 @@ Each program prints `HH:MM:SS.mmm name[pid]: message` lines and takes `--help`.
 | `pmt_env` | Prints its arguments, working directory, ids and environment, then waits | `--show NAME`, `--all-env`, `--exit-after-ms` |
 | `pmt_hog` | Keeps threads busy and holds memory | `--cpu-percent`, `--threads`, `--memory-mb` |
 | `pmt_watch` | Prints the manager's health reports as text, one line per service; `pending=1` marks a service whose reloaded definition waits for its next start | `--once`, `--timeout-ms`, `--endpoint` |
+| `pmt_request` | Sends one request, its frames given as arguments, to the service registry (port 6671) by default, and prints each frame of the reply on a line | `--endpoint`, `--timeout-ms` |
 
 `pmt_heartbeat` only counts for a service with `CheckHealth: true` and a `--name` equal to its `ProcessName`.
 
@@ -40,6 +41,7 @@ puts copies with the installed paths in `share/processmanager/test-setup/`.
 | `everything` | One service of each kind, for watching in the monitor GUI |
 | `registered` | A service that only a file in `services.d` defines, between two of the config's services in the start order, and `--start all` |
 | `reload` | `reload` while the manager runs: a new file, an edited file (the mark, then `--restart`), a reformatted file, a deleted file, a broken file, a broken main file, `--no-wait`, and the exit codes |
+| `registry` | Registering through port 6671 with `pmt_request`: a refused add that writes nothing, an add that starts, a held add, an update (the mark), a replace with restart, show, list, a main-file service that cannot be replaced, and a remove refused for a dependent, then forced |
 
 `validate` reports one error for `environment` on purpose: `cwd_missing` names a working directory that does not
 exist, to show that the service still starts.
@@ -55,6 +57,9 @@ runs, and runs `reload` after each change. It checks that unchanged services kee
 service keeps running with the mark until `--restart` starts it with its new definition, and that a broken main
 file makes `reload` exit with 1 and changes nothing. Exit code 2, no answer within 10 s, is covered by the unit
 tests only, since a running manager always answers.
+
+`registry` is copied into the run folder too, without a `services.d`: the first add that the manager accepts
+makes it. The driver sends every request with `pmt_request`, its parameters as JSON, as the GUI will.
 
 Run one by hand and watch it:
 

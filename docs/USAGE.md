@@ -207,6 +207,7 @@ Services:
 |---|---|---|---|
 | `Mode` | `Auto`, `Manual`, `Inherit` | `Inherit` | The `WorkMode` of every service that sets none. `Inherit`: such services are Manual. |
 | `LogLevel` | `Verbose`, `Debug`, `Info`, `Warning`, `Error` | `Debug` | Lowest level that is logged. `Verbose` adds every message the broker forwards. |
+| `RemoteRegistration` | `true`, `false` | `false` | Where services can be registered from through port 6671: `false`, this machine only; `true`, any machine that reaches the port. Read at startup only. See [Registering services through the manager](#registering-services-through-the-manager). |
 
 ### `Services`
 
@@ -268,6 +269,8 @@ DependsOn: [server]
   else is loaded.
 - **When the folder is read:** at startup and on every reload, like the main file. `validate --config FILE` and
   `graph --config FILE` read the folder next to `FILE`.
+- **Written by the manager too:** the manager writes and deletes these files itself when it is asked to register,
+  change or remove a service. See [Registering services through the manager](#registering-services-through-the-manager).
 
 ### Reloading the configuration
 
@@ -308,6 +311,53 @@ by `ProcessName`:
 - **Exit codes:** 0 when applied, also when nothing changed; 1 when refused or the manager is not reachable;
   2 when no answer comes within 10 s. `--no-wait` only sends the reload, and the manager does not answer it: 0
   once it is sent, 1 when the manager is not reachable.
+
+### Registering services through the manager
+
+The manager also takes requests to register a service, to change or remove a registered one, and to show what it
+has, on port 6671. For a change it checks the request, writes the service's file in `services.d`, and reloads. The
+command line and the GUI are clients of these requests. Until they have their own commands, `pmt_request` from
+TestServices sends one by hand, and the [architecture document](ARCHITECTURE.md#service-registry-port-6671) has
+the protocol.
+
+```bash
+pmt_request add '{"name": "camera", "definition": {"ExecutablePath": "/opt/cam/bin/server", "Args": ["--port", "8080"]}}'
+```
+
+| Request | What the manager does |
+|---|---|
+| `add` | Registers a new service: writes `services.d/NAME.yaml` and reloads, so the service starts by its work mode. With `start: false` it is registered but held until `--start NAME`. |
+| `replace` | Gives a registered service a whole new definition. |
+| `update` | Sets or removes single keys of a registered service. |
+| `remove` | Deletes a registered service's file and reloads, which stops the service and removes it. |
+| `show`, `list` | Shows one service's definition, or lists every service with where it is defined and how it runs. |
+
+- **Checked first, written only when valid:** the manager builds the configuration the request would make, in
+  memory, and checks it as `validate` does, including the executable and the folders on its own machine. It
+  refuses the request when that would add a problem: a missing executable, an unknown key, a dependency on a
+  service that does not exist, a cycle. Problems the configuration has already, in other services, do not block
+  a request. A refused request writes nothing.
+- **Names:** a registered service's name is also its file name: 1 to 31 letters, digits, `_`, `-` and `.`, not
+  starting with a dot, and not `pm`, `all`, `BPM`, `PMC` or `GUI`. A name the main file or `services.d` has
+  already cannot be added.
+- **Only registered services change:** services of the main file can be shown and listed. Changing or removing
+  one needs an edit of the main file.
+- **A changed service:** as after a reload, a running service keeps running and is marked "restart to apply".
+  With `restart: true` it restarts at once. A stopped service with `restart: true` takes its new definition at
+  once and stays stopped.
+- **Removing a needed service:** refused while enabled services name it in `DependsOn`, unless `force: true`.
+  Those services keep running, and their next start misses the dependency.
+- **Dry run:** `dryRun: true` checks the request and returns the YAML that would be written, and writes nothing.
+- **The file:** written from the checked definition as plain YAML with `ProcessName` first, through a temporary
+  dot file that is renamed into place. `replace` and `update` rewrite the file, so comments in a file written by
+  hand are lost.
+- **The whole configuration is reloaded:** a request also applies other changes made to the files, as `reload`
+  would. If that reload is refused, the manager puts the file back as it was.
+- **Where requests come from:** port 6671 listens on 127.0.0.1 only. With `RemoteRegistration: true` it
+  listens on every interface. The port has no authentication and the manager runs as root, so whoever can send to
+  it can make the manager run any program as root: with the default, any user of the manager's machine; with
+  `RemoteRegistration: true`, any machine that reaches the port. Keep the default unless a firewall admits only
+  trusted machines. The setting is read at startup only, and the manager logs where the port listens.
 
 ## How services are run
 
@@ -560,9 +610,12 @@ python3 ProcessManagerGui/process_monitor_gui.py
 | 6667 | Clients subscribe | GUI, `status`, `pmt_watch` | Detailed health reports, every 500 ms and at once when a service's state changes |
 | 6669 | Clients subscribe | GUI | Broker status every second, and broker events (JSON) |
 | 6670 | Clients connect to the manager | GUI | Journal server |
+| 6671 | Clients connect to the manager | The command line, the GUI, `pmt_request` | Service registry: registers, changes and removes services. 127.0.0.1 only, unless `RemoteRegistration: true` |
 
-The manager listens on every interface. There is no authentication: anyone who can reach these ports can read
-the logs and send commands. Keep them behind a firewall that admits only the machines that run the GUI.
+The manager listens on every interface, except on 6671, which listens on 127.0.0.1 unless `RemoteRegistration:
+true`. There is no authentication: anyone who can reach these ports can read the logs and send commands, and
+anyone who can reach 6671 can make the manager run any program as root. Keep them behind a firewall that admits
+only the machines that run the GUI.
 
 The ports are fixed in the code, so two managers cannot run on one machine. Stop the installed service before
 starting another manager by hand.

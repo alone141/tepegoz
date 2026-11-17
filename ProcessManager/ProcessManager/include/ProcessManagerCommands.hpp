@@ -79,6 +79,10 @@ inline const char* health_publish_port_detailed = "tcp://*:6667";
 inline const char* health_listen_port_detailed = "tcp://localhost:6667";
 // Journal reads for a monitor GUI on another machine (JournalServer).
 inline const char* journal_server_port = "tcp://*:6670";
+// Registering services (ServiceRegistry): this machine only, or every interface with RemoteRegistration: true.
+inline const char* registry_port_local = "tcp://127.0.0.1:6671";
+inline const char* registry_port_remote = "tcp://*:6671";
+inline const char* registry_connect = "tcp://localhost:6671";
 
 } // namespace comm
 

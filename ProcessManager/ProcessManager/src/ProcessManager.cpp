@@ -232,7 +232,8 @@ ProcessManager::ProcessManager(std::unique_ptr<ProcessManagerParams> args)
     :
     zmqContext(1),
     listener(zmqContext, zmq::socket_type::dealer),
-    statusPublisher(zmqContext, zmq::socket_type::pub)
+    statusPublisher(zmqContext, zmq::socket_type::pub),
+    registrar(zmqContext, zmq::socket_type::router)
 {
     listener.set(zmq::sockopt::routing_id, comm::process_manager_id);
     listener.connect(comm::command_server_port);
@@ -240,12 +241,14 @@ ProcessManager::ProcessManager(std::unique_ptr<ProcessManagerParams> args)
     statusPublisher.bind(comm::health_publish_port_detailed);
 
     processParams = std::move(args);
+    BindRegistry();
 }
 ProcessManager::~ProcessManager()
 {
     //shutdown
     listener.close();
     statusPublisher.close();
+    registrar.close();
     zmqContext.close();
 }
 void ProcessManager::Run()
@@ -256,7 +259,7 @@ void ProcessManager::Run()
     // a message to itself names it in the broker's log. It comes back here and is ignored.
     listener.send(zmq::buffer(comm::process_manager_id), zmq::send_flags::sndmore | zmq::send_flags::dontwait);
     listener.send(zmq::str_buffer("hello"), zmq::send_flags::dontwait);
-    zmq::pollitem_t items[] = { { listener.handle(), 0, ZMQ_POLLIN, 0} };
+    zmq::pollitem_t items[] = { { listener.handle(), 0, ZMQ_POLLIN, 0}, { registrar.handle(), 0, ZMQ_POLLIN, 0} };
 
     // Sampled on a thread of its own: a driver call that hangs must not hold up the supervision.
     gpu_monitor::GpuMonitor gpuMonitor{ gpu_monitor::LoadNvml, gpu_monitor::default_period, gpu_monitor::default_retry_period };
@@ -317,7 +320,7 @@ void ProcessManager::Run()
         const auto timeout = std::clamp(untilReport, std::chrono::milliseconds(0), longest);
         try
         {
-            zmq::poll(items, 1, timeout);
+            zmq::poll(items, 2, timeout);
         }
         catch (const zmq::error_t& e)
         {
@@ -339,6 +342,7 @@ void ProcessManager::Run()
             }
             ProcessMessage(messages);
         }
+        ServeRegistry();
     }
     logger::Debug("Exiting");
     StopAll(); // here, on the thread that supervises the processes
@@ -408,6 +412,7 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const confi
         // Inherit: no default, so a service without a WorkMode of its own is Manual.
         const int mode = manager.ReadChoice("Mode", { "Inherit", "Manual", "Auto" }, 0);
         hasDefaultWorkMode = mode != 0;
+        processManagerParams->remoteRegistration = manager.ReadBool("RemoteRegistration", false);
         processManagerParams->workMode = mode == 2 ? WorkMode::Auto : WorkMode::Manual;
         // The choices in logger::Level order.
         processManagerParams->logLevel = static_cast<logger::Level>(manager.ReadChoice("LogLevel", { "Verbose", "Debug", "Info", "Warning", "Error" }, 1));
