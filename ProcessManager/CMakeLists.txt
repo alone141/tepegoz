@@ -69,6 +69,7 @@ endforeach()
 
 add_subdirectory(ConfigSection)
 add_subdirectory(ConfigSource)
+add_subdirectory(ReloadPlan)
 add_subdirectory(Logger)
 add_subdirectory(NetworkManager)
 add_subdirectory(GpuMonitor)

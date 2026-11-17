@@ -17,6 +17,9 @@ Multipart:
   frame 0 : b"BPM"
   frame 1 : packed CommandMessage (65 bytes)
 The manager answers a command from b"GUI" with [b"BPM"][b"1" accepted | b"0" refused].
+RELOAD_CONFIG (83) is answered to whoever sent it, unless Args is "no-reply", with a packed
+16-byte ReloadReport: command (83), result (0 applied, else why it was refused), then
+little-endian uint16 counts added, removed, changed, kept, skipped, unchanged, and 2 reserved bytes.
 
 struct CommandMessage {
     uint8_t command;          // CommandCode
@@ -73,6 +76,9 @@ class RuntimeHealth(ctypes.Structure):
     _pack_ = 8
     _fields_ = [
         ("state",        ctypes.c_uint8),
+        # 1 while a reloaded definition waits for the service's next start ("restart to apply").
+        # It takes the padding byte after state, so the report keeps its size.
+        ("restartToApply", ctypes.c_uint8),
         ("start_time",   ctypes.c_int64),   # ns
         ("lastSeen",     ctypes.c_int64),   # ns
         ("missedBeats",  ctypes.c_int32),
@@ -106,6 +112,8 @@ class DetailedHealthReport(ctypes.Structure):
 
 REPORT_SIZE = ctypes.sizeof(DetailedHealthReport)
 assert REPORT_SIZE == 144, f"Unexpected REPORT_SIZE={REPORT_SIZE}"
+RESTART_TO_APPLY_OFFSET = DetailedHealthReport.runtimeHealth.offset + RuntimeHealth.restartToApply.offset
+assert RESTART_TO_APPLY_OFFSET == 89, f"Unexpected restartToApply offset {RESTART_TO_APPLY_OFFSET}"
 LEGACY_REPORT_SIZE = 128  # managers from before GPU reporting
 
 
@@ -230,6 +238,8 @@ class CommandEnum(IntEnum):
     START   = 78
     STOP    = 79
     RESTART = 81
+    # Read the configuration again; answered with a 16-byte ReloadReport (see the module docstring).
+    RELOAD_CONFIG = 83
 
 
 class CommandMessage(ctypes.Structure):

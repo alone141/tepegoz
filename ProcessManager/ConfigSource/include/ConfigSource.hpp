@@ -50,6 +50,16 @@ struct DropInFile
     DropInCode code = DropInCode::Ok;
 };
 
+// What became of the drop-in folder. An empty folder is Listed; one that could not be listed has no files either, but
+// is NotReadable or NotFolder, so that it is never taken for a folder whose files were all deleted.
+enum class FolderCode
+{
+    Listed,
+    Missing,
+    NotReadable,
+    NotFolder,
+};
+
 // The configuration as the manager uses it: the main file and its drop-in folder, read together.
 struct LoadedConfig
 {
@@ -63,6 +73,11 @@ struct LoadedConfig
     std::vector<DropInFile> dropIns;
     // Problems with the drop-in folder and its files. Problems inside the services are left to their readers.
     std::vector<std::string> problems;
+    // Whether the drop-in folder was listed. Its files are read only when it was.
+    FolderCode folder = FolderCode::Missing;
+    // Whether the main file can take the registered services: it is empty, or a mapping whose Services is missing,
+    // empty or a list. When it cannot, no drop-in file is read.
+    bool takesServices = true;
 };
 
 enum class LoadCode

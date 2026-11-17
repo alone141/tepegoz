@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <ctype.h>
 #include <sys/types.h>
@@ -42,6 +43,9 @@ static const char* RuntimeStateToString(RuntimeState e)
 struct RuntimeHealth
 {
     RuntimeState state = RuntimeState::Unknown;
+    // In the health report: 1 while a reloaded definition waits for the service's next start ("restart to apply").
+    // It takes a byte that was padding, so the report keeps its size and every other field its offset.
+    uint8_t restartToApply = 0;
 
     std::chrono::high_resolution_clock::time_point startTime;
     std::chrono::high_resolution_clock::time_point lastSeen;
@@ -81,5 +85,20 @@ struct DetailedHealthReport
     GpuUsage gpuUsage;
 };
 static_assert(sizeof(DetailedHealthReport) == 144, "the GUI parses 144-byte health reports");
+// The offsets the GUI (health_structs.py) reads the fields at.
+static_assert(offsetof(DetailedHealthReport, processName) == 0, "processName moved");
+static_assert(offsetof(DetailedHealthReport, pid) == 64, "pid moved");
+static_assert(offsetof(DetailedHealthReport, memoryUsageInBytes) == 72, "memoryUsageInBytes moved");
+static_assert(offsetof(DetailedHealthReport, cpuUsageInUsec) == 80, "cpuUsageInUsec moved");
+static_assert(offsetof(DetailedHealthReport, runtimeHealth.state) == 88, "runtimeHealth.state moved");
+static_assert(offsetof(DetailedHealthReport, runtimeHealth.restartToApply) == 89, "restartToApply is not the padding byte after state");
+static_assert(offsetof(DetailedHealthReport, runtimeHealth.startTime) == 96, "runtimeHealth.startTime moved");
+static_assert(offsetof(DetailedHealthReport, runtimeHealth.lastSeen) == 104, "runtimeHealth.lastSeen moved");
+static_assert(offsetof(DetailedHealthReport, runtimeHealth.missedBeats) == 112, "runtimeHealth.missedBeats moved");
+static_assert(offsetof(DetailedHealthReport, runtimeHealth.restartCount) == 116, "runtimeHealth.restartCount moved");
+static_assert(offsetof(DetailedHealthReport, snapshotTime) == 120, "snapshotTime moved");
+static_assert(offsetof(DetailedHealthReport, gpuUsage.memoryUsageInBytes) == 128, "gpuUsage.memoryUsageInBytes moved");
+static_assert(offsetof(DetailedHealthReport, gpuUsage.utilizationPercent) == 136, "gpuUsage.utilizationPercent moved");
+static_assert(offsetof(DetailedHealthReport, gpuUsage.state) == 140, "gpuUsage.state moved");
 
 } // namespace process_manager

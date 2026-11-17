@@ -10,12 +10,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unistd.h>
 #include <vector>
 #include <zmq.hpp>
+#include <zmq_addon.hpp>
 
 namespace status_client
 {
@@ -26,6 +28,8 @@ namespace
 using Clock = std::chrono::steady_clock;
 
 constexpr std::chrono::milliseconds poll_step{200};
+// Longer than the manager's report period: an empty report this long after the reload's answer was made after it.
+constexpr std::chrono::milliseconds reload_report_wait{600};
 constexpr std::string_view clear_screen = "\033[H\033[2J";
 
 static_assert(static_cast<int>(process_manager::RuntimeState::Unhealthy) ==
@@ -180,6 +184,121 @@ void PrintLines(const std::vector<std::string>& lines)
     std::cout << std::flush;
 }
 
+std::string RefusalText(process_manager::ReloadResult result)
+{
+    switch (result)
+    {
+    case process_manager::ReloadResult::Applied:
+        return std::string{};
+    case process_manager::ReloadResult::NoSource:
+        return "the manager's configuration was not read from a file";
+    case process_manager::ReloadResult::MainFileNotOpened:
+        return "the configuration file could not be opened";
+    case process_manager::ReloadResult::MainFileSyntaxError:
+        return "the configuration file is not valid YAML";
+    case process_manager::ReloadResult::NoServicesList:
+        return "the configuration file has no Services list for the services";
+    case process_manager::ReloadResult::FolderNotReadable:
+        return "the services.d folder could not be listed";
+    case process_manager::ReloadResult::DependencyCycle:
+        return "the new configuration has a dependency cycle";
+    case process_manager::ReloadResult::DuplicateName:
+        return "the new configuration has two services of the same name";
+    }
+    return "refused with code " + std::to_string(static_cast<int>(result));
+}
+
+// The names in one report and not in the other.
+std::vector<std::string> Missing(const std::vector<status_table::ServiceSample>& from,
+                                 const std::vector<status_table::ServiceSample>& in)
+{
+    std::vector<std::string> names{};
+    for (const status_table::ServiceSample& sample : from)
+    {
+        if (!command_watch::FindService(in, sample.name).has_value())
+        {
+            names.push_back(sample.name);
+        }
+    }
+    return names;
+}
+
+std::string Joined(const std::vector<std::string>& names)
+{
+    std::string joined{};
+    for (const std::string& name : names)
+    {
+        joined += (joined.empty() ? "" : ", ") + name;
+    }
+    return joined;
+}
+
+std::int64_t NowNs()
+{
+    return SinceEpochNs(std::chrono::high_resolution_clock::now());
+}
+
+// A report the manager made after it answered: one taken after the answer came, or, without services to tell the
+// time by, one that came a report period after it.
+bool MadeAfter(const std::vector<status_table::ServiceSample>& report, std::int64_t answeredNs,
+               Clock::time_point answeredAt)
+{
+    if (report.empty())
+    {
+        return Clock::now() - answeredAt > reload_report_wait;
+    }
+
+    return std::any_of(report.begin(), report.end(),
+                       [answeredNs](const status_table::ServiceSample& sample) { return sample.snapshotNs >= answeredNs; });
+}
+
+bool SendReloadRequest(zmq::socket_t& socket, bool wait)
+{
+    process_manager::CommandMessage message{};
+    message.command = process_manager::CommandCode::ReloadConfig;
+    if (!wait)
+    {
+        const std::string_view noReply = process_manager::reload_without_reply;
+        std::memcpy(message.args, noReply.data(), noReply.size());
+    }
+
+    const std::string& destination = process_manager::comm::process_manager_id;
+    return socket.send(zmq::buffer(destination), zmq::send_flags::sndmore) &&
+           socket.send(zmq::buffer(&message, sizeof(message)), zmq::send_flags::none);
+}
+
+// Waits up to timeout for the answer; false when none came.
+bool ReceiveReloadReply(zmq::socket_t& socket, std::chrono::milliseconds timeout, ReloadReply& out)
+{
+    const Clock::time_point deadline = Clock::now() + timeout;
+    while (Clock::now() < deadline)
+    {
+        const std::chrono::milliseconds left =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+        zmq::pollitem_t items[] = {{socket.handle(), 0, ZMQ_POLLIN, 0}};
+        zmq::poll(items, 1, std::min(left, poll_step));
+        if ((items[0].revents & ZMQ_POLLIN) == 0)
+        {
+            continue;
+        }
+
+        std::vector<zmq::message_t> frames{};
+        if (!zmq::recv_multipart(socket, std::back_inserter(frames), zmq::recv_flags::dontwait).has_value() ||
+            frames.empty())
+        {
+            continue;
+        }
+
+        const zmq::message_t& payload = frames.back();
+        const std::string_view bytes{static_cast<const char*>(payload.data()), payload.size()};
+        if (ParseReloadReply(bytes, out) == ParseCode::Ok)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 ParseCode ParseReport(std::string_view bytes, std::vector<status_table::ServiceSample>& out)
@@ -209,6 +328,7 @@ ParseCode ParseReport(std::string_view bytes, std::vector<status_table::ServiceS
         sample.gpuState = GpuStateOf(report.gpuUsage.state);
         sample.gpuPercent = report.gpuUsage.utilizationPercent;
         sample.vramBytes = report.gpuUsage.memoryUsageInBytes;
+        sample.restartToApply = report.runtimeHealth.restartToApply != 0;
         samples.push_back(sample);
     }
     out = samples;
@@ -383,6 +503,165 @@ int ExitCode(CommandCode code)
     }
 
     return code == CommandCode::TimedOut ? 2 : 1;
+}
+
+ParseCode ParseReloadReply(std::string_view bytes, ReloadReply& out)
+{
+    process_manager::ReloadReport report{};
+    if (bytes.size() != sizeof(report))
+    {
+        return ParseCode::BadSize;
+    }
+
+    std::memcpy(static_cast<void*>(&report), bytes.data(), sizeof(report));
+    if (report.command != process_manager::CommandCode::ReloadConfig)
+    {
+        return ParseCode::WrongCommand;
+    }
+
+    ReloadReply reply{};
+    reply.applied = report.result == process_manager::ReloadResult::Applied;
+    reply.refusal = RefusalText(report.result);
+    reply.added = report.added;
+    reply.removed = report.removed;
+    reply.changed = report.changed;
+    reply.kept = report.kept;
+    reply.skipped = report.skipped;
+    reply.unchanged = report.unchanged;
+    out = reply;
+    return ParseCode::Ok;
+}
+
+std::vector<std::string> DescribeReload(const ReloadReply& reply, const std::vector<status_table::ServiceSample>& before,
+                                        const std::vector<status_table::ServiceSample>& after, bool named)
+{
+    std::vector<std::string> lines{};
+    if (!reply.applied)
+    {
+        lines.push_back("Reload refused: " + reply.refusal + ". Nothing was changed; the manager's log says more.");
+        return lines;
+    }
+
+    lines.push_back("Reload applied: " + std::to_string(reply.added) + " added, " + std::to_string(reply.removed) +
+                    " removed, " + std::to_string(reply.changed) + " changed, " + std::to_string(reply.kept) +
+                    " kept, " + std::to_string(reply.skipped) + " not added, " + std::to_string(reply.unchanged) +
+                    " unchanged");
+    if (named)
+    {
+        const std::vector<std::string> added = Missing(after, before);
+        const std::vector<std::string> removed = Missing(before, after);
+        std::vector<std::string> waiting{};
+        for (const status_table::ServiceSample& sample : after)
+        {
+            if (sample.restartToApply)
+            {
+                waiting.push_back(sample.name);
+            }
+        }
+
+        if (!added.empty())
+        {
+            lines.push_back("  added: " + Joined(added));
+        }
+        if (!removed.empty())
+        {
+            lines.push_back("  removed: " + Joined(removed));
+        }
+        if (!waiting.empty())
+        {
+            lines.push_back("  restart to apply their new definition: " + Joined(waiting));
+        }
+    }
+    if (reply.kept > 0)
+    {
+        lines.push_back("  kept as they were, their new definition could not be read: " + std::to_string(reply.kept) +
+                        " (the manager's log names them)");
+    }
+    if (reply.skipped > 0)
+    {
+        lines.push_back("  not added, their definition could not be read: " + std::to_string(reply.skipped) +
+                        " (the manager's log names them)");
+    }
+    return lines;
+}
+
+ReloadCode SendReload(const Endpoints& endpoints, bool wait, std::chrono::seconds timeout)
+{
+    zmq::context_t context{1};
+    std::optional<zmq::socket_t> reports{};
+    std::vector<status_table::ServiceSample> before{};
+    bool watching = false;
+    if (wait)
+    {
+        // Subscribed before sending, so the services before the reload are known.
+        reports.emplace(Subscriber(context, endpoints.reports));
+        watching = NextReport(*reports, first_report_timeout, before);
+        if (!watching)
+        {
+            std::cerr << "No report from the process manager at " << endpoints.reports
+                      << "; the reload is told without the names of the services\n";
+        }
+    }
+
+    zmq::socket_t socket{context, zmq::socket_type::dealer};
+    socket.set(zmq::sockopt::routing_id, command_line_identity);
+    // Give up when the manager is not running instead of waiting for it forever.
+    socket.set(zmq::sockopt::immediate, 1);
+    socket.set(zmq::sockopt::sndtimeo, 2000);
+    socket.set(zmq::sockopt::linger, wait ? 0 : 2000);
+    socket.connect(endpoints.commands);
+    if (!SendReloadRequest(socket, wait))
+    {
+        std::cerr << "Process manager is not reachable at " << endpoints.commands << "\n";
+        return ReloadCode::NotReachable;
+    }
+    if (!wait)
+    {
+        return ReloadCode::Sent;
+    }
+
+    ReloadReply reply{};
+    if (!ReceiveReloadReply(socket, timeout, reply))
+    {
+        std::cerr << "No answer from the process manager within " << timeout.count()
+                  << "s; whether it reloaded is in its log\n";
+        return ReloadCode::TimedOut;
+    }
+
+    const std::int64_t answeredNs = NowNs();
+    const Clock::time_point answeredAt = Clock::now();
+    std::vector<status_table::ServiceSample> after{};
+    bool named = false;
+    const Clock::time_point until = answeredAt + first_report_timeout;
+    while (watching && reply.applied && !named && Clock::now() < until)
+    {
+        const std::chrono::milliseconds left =
+            std::chrono::duration_cast<std::chrono::milliseconds>(until - Clock::now());
+        named = NextReport(*reports, left, after) && MadeAfter(after, answeredNs, answeredAt);
+    }
+
+    const std::vector<std::string> lines = DescribeReload(reply, before, after, named);
+    if (!reply.applied)
+    {
+        for (const std::string& line : lines)
+        {
+            std::cerr << line << '\n';
+        }
+        return ReloadCode::Refused;
+    }
+
+    PrintLines(lines);
+    return ReloadCode::Applied;
+}
+
+int ExitCode(ReloadCode code)
+{
+    if (code == ReloadCode::Applied || code == ReloadCode::Sent)
+    {
+        return 0;
+    }
+
+    return code == ReloadCode::TimedOut ? 2 : 1;
 }
 
 } // namespace status_client

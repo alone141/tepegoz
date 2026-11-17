@@ -34,9 +34,16 @@ public:
      * @return New parameters, with services that have not been started.
      */
     static std::unique_ptr<ProcessManagerParams> RebuildConfig(const ProcessManagerParams& params);
+    /**
+     * @brief Read params' source again and apply what changed, without stopping a service that stays (ReloadConfig).
+     * @param params The current parameters. On success the services, document, origins and settings are the new ones.
+     * @param retiring Receives the removed services that still have to be stopped.
+     * @return What was done, or why nothing was: then params and retiring are unchanged.
+     */
+    static ReloadReport Reload(ProcessManagerParams& params, std::vector<Process>& retiring);
 private:
     void StopAll();
-    void RetireProcess(Process& process);
+    static void RetireProcess(Process& process, std::vector<Process>& retiring);
     bool ApplyToAll(CommandCode command);
     bool ApplyCommandServerMessage(const CommandMessage& message);
     bool ProcessMessage(const std::vector<zmq::message_t>& messages);

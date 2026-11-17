@@ -1663,3 +1663,205 @@ TEST(ProcessTest, UsageBeforeFirstStartIsReadRelativeToTheWorkingDirectory)
     EXPECT_EQ(process.GetMemoryUsageInBytes(), 4242u);
     EXPECT_EQ(process.GetCpuUsageInUsec(), 777u);
 }
+
+// ---- A reload's definition, waiting for the next start
+
+TEST(ProcessTest, DeferredDefinitionLeavesTheRunningChildAlone)
+{
+    const ScratchDirectory scratch{};
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("waits", "pmt_env", "Args: [--show, PMT_OLD]\n" +
+                                                               scratch.FileSettings("out.txt"))),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(WaitForText(scratch.Path() / "out.txt", "env PMT_OLD"));
+    const pid_t pid = process.GetPid();
+    const Clock::time_point started = process.GetRuntimeStats().startTime;
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("waits", "pmt_env", "Args: [--show, PMT_NEW]\n" + scratch.FileSettings("out.txt"))),
+              1);
+    process.DeferDefinition(next);
+    EXPECT_TRUE(process.HasDeferredDefinition());
+    EXPECT_EQ(process.GetPid(), pid);
+    EXPECT_TRUE(IsAlive(pid));
+    EXPECT_EQ(process.GetRuntimeStats().startTime, started);
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 0);
+    EXPECT_EQ(process.ReapExit(), -1);
+}
+
+TEST(ProcessTest, HealthReportMarksADeferredDefinition)
+{
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("marked", "pmt_steady", "")), 1);
+    EXPECT_EQ(process.GetHealthReport().runtimeHealth.restartToApply, 0);
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("marked", "pmt_steady", "Args: [--period-ms, 50]\n")), 1);
+    process.DeferDefinition(next);
+    EXPECT_EQ(process.GetHealthReport().runtimeHealth.restartToApply, 1);
+}
+
+TEST(ProcessTest, NextStartUsesTheDeferredDefinitionAndClearsTheMark)
+{
+    const ScratchDirectory scratch{};
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("applies", "pmt_env", "Args: [--show, PMT_OLD]\n" +
+                                                                 scratch.FileSettings("out.txt"))),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(WaitForText(scratch.Path() / "out.txt", "env PMT_OLD"));
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("applies", "pmt_env", "Args: [--show, PMT_NEW]\n" +
+                                                              scratch.FileSettings("out.txt"))),
+              1);
+    process.DeferDefinition(next);
+    ASSERT_TRUE(StopAndWait(process));
+    EXPECT_TRUE(process.HasDeferredDefinition());
+
+    process.StartProcess();
+    ASSERT_TRUE(WaitForText(scratch.Path() / "out.txt", "env PMT_NEW"));
+    EXPECT_FALSE(process.HasDeferredDefinition());
+    EXPECT_EQ(process.GetHealthReport().runtimeHealth.restartToApply, 0);
+}
+
+TEST(ProcessTest, AutomaticRestartUsesTheDeferredDefinition)
+{
+    const ScratchDirectory scratch{};
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("restarted", "pmt_exit",
+                                         "Args: [--code, 1, --after-ms, 300]\nRestartDelayMs: 0\nWorkMode: Auto\n")),
+              1);
+    process.StartProcess();
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("restarted", "pmt_env", "Args: [--show, PMT_NEW]\nWorkMode: Auto\n" +
+                                                                scratch.FileSettings("out.txt"))),
+              1);
+    process.DeferDefinition(next);
+    ASSERT_TRUE(WaitForExit(process));
+    ASSERT_TRUE(WaitUntil([&process]() { return process.NeedsRestart(); }));
+    process.AutoRestart();
+    EXPECT_TRUE(WaitForText(scratch.Path() / "out.txt", "env PMT_NEW"));
+    EXPECT_FALSE(process.HasDeferredDefinition());
+    EXPECT_EQ(process.GetRuntimeStats().restartCount, 1);
+}
+
+TEST(ProcessTest, DeferredDefinitionKeepsAStoppedServiceStopped)
+{
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("stopped", "pmt_steady", "WorkMode: Auto\nRestartMode: Always\nRestartDelayMs: 0\n")),
+              1);
+    process.StartProcess();
+    // What --kill does: Manual, then the stop.
+    process.SetWorkMode(process_manager::WorkMode::Manual);
+    ASSERT_TRUE(StopAndWait(process));
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("stopped", "pmt_steady", "WorkMode: Auto\nRestartMode: Always\nArgs: [--period-ms, 50]\n")),
+              1);
+    process.DeferDefinition(next);
+    EXPECT_FALSE(process.HasPid());
+    EXPECT_FALSE(process.IsStopping());
+    EXPECT_TRUE(process.IsWorkingManually());
+    EXPECT_TRUE(process.HasDeferredDefinition());
+}
+
+TEST(ProcessTest, DeferredWorkModeComesWithTheDefinition)
+{
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("mode", "pmt_steady", "WorkMode: Manual\n")), 1);
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("mode", "pmt_steady", "WorkMode: Auto\n")), 1);
+    process.DeferDefinition(next);
+    EXPECT_TRUE(process.IsWorkingManually());
+    process.StartProcess();
+    EXPECT_FALSE(process.IsWorkingManually());
+}
+
+TEST(ProcessTest, RestartRequestKeepsTheWorkModeItWasGiven)
+{
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("kept", "pmt_steady", "WorkMode: Auto\n")), 1);
+    process.StartProcess();
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("kept", "pmt_steady", "WorkMode: Manual\n")), 1);
+    process.DeferDefinition(next);
+    // What --restart does with a running service: Auto, then the restart.
+    process.SetWorkMode(process_manager::WorkMode::Auto);
+    process.Restart();
+    ASSERT_TRUE(WaitForStop(process));
+    ASSERT_TRUE(process.IsRestartRequested());
+    process.StartProcess();
+    EXPECT_TRUE(process.HasPid());
+    EXPECT_FALSE(process.HasDeferredDefinition());
+    EXPECT_FALSE(process.IsWorkingManually());
+}
+
+TEST(ProcessTest, ApplyDeferredDefinitionTakesItWithoutStarting)
+{
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("now", "pmt_steady", "DependsOn: [old]\n")), 1);
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("now", "pmt_steady", "DependsOn: [new]\n")), 1);
+    process.DeferDefinition(next);
+    process.ApplyDeferredDefinition();
+    EXPECT_EQ(process.GetDependencyList(), std::vector<std::string>{"new"});
+    EXPECT_FALSE(process.HasDeferredDefinition());
+    EXPECT_FALSE(process.HasPid());
+}
+
+TEST(ProcessTest, LaterDeferredDefinitionReplacesAnEarlierOne)
+{
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("twice", "pmt_steady", "DependsOn: [old]\n")), 1);
+
+    process_manager::Process first{};
+    ASSERT_EQ(Configure(first, Service("twice", "pmt_steady", "DependsOn: [first]\n")), 1);
+    process_manager::Process second{};
+    ASSERT_EQ(Configure(second, Service("twice", "pmt_steady", "DependsOn: [second]\n")), 1);
+    process.DeferDefinition(first);
+    process.DeferDefinition(second);
+    process.ApplyDeferredDefinition();
+    EXPECT_EQ(process.GetDependencyList(), std::vector<std::string>{"second"});
+}
+
+TEST(ProcessTest, OverrideStartupArgsReachesTheDeferredDefinition)
+{
+    const ScratchDirectory scratch{};
+    process_manager::Process process{};
+    ASSERT_EQ(Configure(process, Service("override", "pmt_env", "Args: [--show, PMT_OLD]\n" +
+                                                                  scratch.FileSettings("out.txt"))),
+              1);
+
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("override", "pmt_env", "Args: [--show, PMT_NEW]\n" +
+                                                               scratch.FileSettings("out.txt"))),
+              1);
+    process.DeferDefinition(next);
+    process.OverrideStartupArgs({"--show", "PMT_OVERRIDE"});
+    process.StartProcess();
+    ASSERT_TRUE(WaitForText(scratch.Path() / "out.txt", "env PMT_OVERRIDE"));
+    EXPECT_EQ(ReadFile(scratch.Path() / "out.txt").find("PMT_NEW"), std::string::npos);
+}
+
+TEST(ProcessTest, MoveConstructionCarriesTheDeferredDefinition)
+{
+    process_manager::Process source{};
+    ASSERT_EQ(Configure(source, Service("carried", "pmt_steady", "")), 1);
+    source.StartProcess();
+    const pid_t pid = source.GetPid();
+    process_manager::Process next{};
+    ASSERT_EQ(Configure(next, Service("carried", "pmt_steady", "Args: [--period-ms, 50]\n")), 1);
+    source.DeferDefinition(next);
+
+    process_manager::Process target{std::move(source)};
+    EXPECT_TRUE(target.HasDeferredDefinition());
+    EXPECT_FALSE(source.HasDeferredDefinition());
+    EXPECT_EQ(target.GetPid(), pid);
+    EXPECT_TRUE(IsAlive(pid));
+}

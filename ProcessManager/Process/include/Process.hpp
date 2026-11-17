@@ -2,6 +2,7 @@
 #include "ProcessConfigParams.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/types.h>
@@ -69,6 +70,14 @@ public:
     void OverrideStartupArgs(std::vector<std::string> args);
     void SetWorkMode(WorkMode workMode);
 
+    // A reload's new definition of the service, from a Process built from it: it waits for the next start and replaces
+    // the definition then. Until it does, the health report marks the service. Nothing is started or stopped here.
+    void DeferDefinition(const Process& next);
+    bool HasDeferredDefinition() const;
+    // Takes the waiting definition now, work mode included. For a service that is not running: a start command
+    // calls it before it chooses the work mode.
+    void ApplyDeferredDefinition();
+
 private:
     static auto Now()
     {
@@ -115,6 +124,7 @@ private:
 
     ProcessRuntimeParams runtime;
     ProcessConfigParams config;
+    std::optional<ProcessConfigParams> deferredConfig; // DeferDefinition()
 };
 
 } // namespace process_manager

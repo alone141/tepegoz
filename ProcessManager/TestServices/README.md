@@ -18,7 +18,7 @@ Each program prints `HH:MM:SS.mmm name[pid]: message` lines and takes `--help`.
 | `pmt_chatty` | Writes numbered lines to stdout and stderr | `--rate`, `--line-bytes`, `--stderr-every`, `--no-newline`, `--duration-ms` |
 | `pmt_env` | Prints its arguments, working directory, ids and environment, then waits | `--show NAME`, `--all-env`, `--exit-after-ms` |
 | `pmt_hog` | Keeps threads busy and holds memory | `--cpu-percent`, `--threads`, `--memory-mb` |
-| `pmt_watch` | Prints the manager's health reports as text, one line per service | `--once`, `--timeout-ms`, `--endpoint` |
+| `pmt_watch` | Prints the manager's health reports as text, one line per service; `pending=1` marks a service whose reloaded definition waits for its next start | `--once`, `--timeout-ms`, `--endpoint` |
 
 `pmt_heartbeat` only counts for a service with `CheckHealth: true` and a `--name` equal to its `ProcessName`.
 
@@ -39,6 +39,7 @@ puts copies with the installed paths in `share/processmanager/test-setup/`.
 | `resources` | The CPU and memory figures (they need cgroups) |
 | `everything` | One service of each kind, for watching in the monitor GUI |
 | `registered` | A service that only a file in `services.d` defines, between two of the config's services in the start order, and `--start all` |
+| `reload` | `reload` while the manager runs: a new file, an edited file (the mark, then `--restart`), a reformatted file, a deleted file, a broken file, a broken main file, `--no-wait`, and the exit codes |
 
 `validate` reports one error for `environment` on purpose: `cwd_missing` names a working directory that does not
 exist, to show that the service still starts.
@@ -47,6 +48,13 @@ exist, to show that the service still starts.
 into the scenario's run folder and writes `services.d/registered.yaml` next to it, together with a dot file, a
 `.txt` file and a subfolder that the manager ignores. To run it by hand, make such a folder next to a copy of the
 config.
+
+`reload` is placed the same way, with `edited.yaml` (`pmt_env`, which prints `PMT_MARK`), `doomed.yaml` and
+`fragile.yaml` in `services.d`. The driver then changes these files and the copied config while the manager
+runs, and runs `reload` after each change. It checks that unchanged services keep their pids, that an edited
+service keeps running with the mark until `--restart` starts it with its new definition, and that a broken main
+file makes `reload` exit with 1 and changes nothing. Exit code 2, no answer within 10 s, is covered by the unit
+tests only, since a running manager always answers.
 
 Run one by hand and watch it:
 

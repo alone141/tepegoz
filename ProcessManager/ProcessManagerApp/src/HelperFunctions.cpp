@@ -155,7 +155,7 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
         ("d,disable", "Disable a service", cxxopts::value<std::string>()->default_value(""))
         ("k,kill", "Kill a service", cxxopts::value<std::string>()->default_value(""))
         ("r,restart", "Restart a service", cxxopts::value<std::string>()->default_value(""))
-        ("no-wait", "With --start, --kill, --restart or --disable: send the command and exit at once")
+        ("no-wait", "With --start, --kill, --restart, --disable or reload: send the command and exit at once")
         ("once", "With status: print the table once and exit")
         ("c,config", "Path to the YAML config file", cxxopts::value<std::string>()->default_value(""));
     //("ctl-endpoint", "ZMQ control endpoint (ipc://... or tcp://...)", cxxopts::value<std::string>()->default_value(""))
@@ -164,7 +164,7 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
 
 // Positional: command + rest (e.g. start --only A B)
     options.add_options("Commands")
-        ("command", "Command: validate|graph|status|generate", cxxopts::value<std::string>()->default_value(""));
+        ("command", "Command: validate|graph|status|generate|reload", cxxopts::value<std::string>()->default_value(""));
 
     options.parse_positional({ "command" }); // first non-option becomes command
     options.positional_help("COMMAND [OPTIONS]");
@@ -199,10 +199,14 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
             << "  graph      Print dependency order\n"
             << "  status     Live table of every service, redrawn each second; --once prints it once\n"
             << "  generate   Generates an example config (ProcessManagerConfig.yaml)\n"
+            << "  reload     The running manager reads its configuration again: it adds new services, removes\n"
+            << "             deleted ones, and a changed one takes its new definition at its next start\n"
             << "\n"
             << "--start, --kill, --restart and --disable follow the reports for up to 10 s and print\n"
             << "what the command did. Exit code 0: done; 1: failed, unknown service or manager not\n"
             << "reachable; 2: not done within 10 s. With --no-wait the command is only sent.\n"
+            << "reload waits up to 10 s for the manager's answer and prints what it did. Exit code 0:\n"
+            << "applied, also when nothing changed; 1: refused or manager not reachable; 2: no answer.\n"
             << "\n";
 
         return 0;
@@ -241,6 +245,11 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
     {
         ProcessManagerApp::PrintDependencyGraph(config);
         return 0;
+    }
+    else if (cmd == "reload")
+    {
+        const bool wait = result.count("no-wait") == 0;
+        return status_client::ExitCode(status_client::SendReload(LocalManager(), wait, status_client::default_command_timeout));
     }
     else if (!cmd.empty())
     {

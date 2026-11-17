@@ -1,0 +1,4 @@
+include(GoogleTest)
+add_executable(reload_plan_tests ReloadPlanTest.cpp)
+target_link_libraries(reload_plan_tests PRIVATE reload_plan config_source GTest::gtest_main)
+gtest_discover_tests(reload_plan_tests)

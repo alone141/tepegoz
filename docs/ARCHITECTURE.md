@@ -40,15 +40,16 @@ The manager is a single process that runs the services as its children. All comm
 | Path | What it is |
 |---|---|
 | `ProcessManager/` | The C++20 CMake project: the manager, its modules and tests. |
-| `ProcessManager/ProcessManagerApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `--start` …). `tests/keepalive.cpp` is a heartbeat example. |
-| `ProcessManager/StatusTable/` | The `status` table, drawn from the health reports. |
+| `ProcessManager/ProcessManagerApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `reload`, `--start` …). `tests/keepalive.cpp` is a heartbeat example. |
+| `ProcessManager/StatusTable/` | The `status` table, drawn from the health reports, with the restart-to-apply mark. |
 | `ProcessManager/CommandWatch/` | Follows a command in the health reports: where each service stands. |
-| `ProcessManager/StatusClient/` | The command line's ZeroMQ side: reads the reports for `status`, and sends a command and follows it. |
+| `ProcessManager/StatusClient/` | The command line's ZeroMQ side: reads the reports for `status`, sends a command and follows it, and sends a reload and tells its answer. |
 | `ProcessManager/ProcessManager/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `ProcessManagerCommands.hpp` holds the command format and the endpoints. |
 | `ProcessManager/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealth.hpp`). |
 | `ProcessManager/NetworkManager/` | The ZeroMQ message broker. |
 | `ProcessManager/ConfigSection/` | Reads the YAML configuration (the only code that uses fkYAML) and reports problems. |
-| `ProcessManager/ConfigSource/` | Reads the main configuration file and the `services.d` folder next to it into one document, and keeps where each service was defined. |
+| `ProcessManager/ConfigSource/` | Reads the main configuration file and the `services.d` folder next to it into one document, and keeps where each service was defined and whether the folder could be listed. |
+| `ProcessManager/ReloadPlan/` | Compares the services the manager has with a configuration read again: added, removed, changed, kept, unchanged, or why the reload is refused. |
 | `ProcessManager/Logger/` | Logging to the console, the journal and rotating files. |
 | `ProcessManager/GpuMonitor/` | GPU sampling through NVML, loaded at run time. |
 | `ProcessManager/JournalServer/` | Answers journal reads for a remote GUI. |
@@ -89,7 +90,7 @@ receives them; services start with no signal blocked.
 2. **Logger:** opened, with the log file directory.
 3. **Configuration:** loaded with `ConfigSource`: the main file, then each file of `services.d`, whose service is
    appended to the main file's `Services`. The merged document is kept, because `--start all` rebuilds the
-   services from it. So are the loader and where each service was defined, for reading the folder again later.
+   services from it. So are the loader and where each service was defined, for a reload.
 4. **Services:** `ProcessManager::GenerateConfig` turns the document into a list of `Process` objects. Unknown
    keys and bad values are logged.
 5. **Sockets and cgroups:** the `ProcessManager` constructor binds 6667 and connects its DEALER to the
@@ -112,10 +113,10 @@ take the newest GPU sample
 for each service:  check heartbeats → advance a stop in progress → reap an exit (waitpid WNOHANG)
                    → read piped output → build its health report (with its GPU use)
 for each service being retired (--disable, --start all): advance its stop, reap it
-if 500 ms have passed since the last report, or a service's state, pid or restart count changed:
+if 500 ms have passed since the last report, or a service's state, pid, restart count or mark changed:
                    publish the detailed reports on 6667
 wait for messages on the DEALER, until the next report is due (at most 50 ms while a stop is in progress)
-handle up to 64 messages: commands from PMC or GUI, heartbeats from services
+handle up to 64 messages: commands from PMC or GUI (a reload among them), heartbeats from services
 ```
 
 The start step goes through the services in start order. A service in its grace period, or being stopped, ends
@@ -183,9 +184,29 @@ Each service is reaped with
 | 80 | Disable |
 | 81 | Restart |
 | 82 | Version information (answered with a `VersionReport`) |
+| 83 | Reload the configuration (answered with a `ReloadReport`); `serviceName` is not used |
 
 The manager answers the `GUI` identity only, with one frame: `1` for accepted, `0` for refused. The command line
-gets no answer.
+gets no answer, except to a reload.
+
+A reload is answered to whoever sent it, `PMC` or `GUI`, with one frame: a packed 16-byte `ReloadReport`. When
+`args` is `no-reply` (`reload --no-wait`), no answer is sent, so the broker has nothing to drop.
+
+| Offset | Field | Type | Notes |
+|---|---|---|---|
+| 0 | `command` | `uint8` | 83 |
+| 1 | `result` | `uint8` | 0 applied; refused: 1 not read from a file, 2 main file not opened, 3 not valid YAML, 4 no `Services` list, 5 `services.d` not listable, 6 dependency cycle, 7 two services of one name |
+| 2 | `added` | `uint16` | Each count in the machine's byte order, 0 unless applied |
+| 4 | `removed` | `uint16` | |
+| 6 | `changed` | `uint16` | Their new definition waits for their next start |
+| 8 | `kept` | `uint16` | Their new definition could not be read |
+| 10 | `skipped` | `uint16` | New, but their definition could not be read |
+| 12 | `unchanged` | `uint16` | |
+| 14 | reserved | `uint8[2]` | Zero |
+
+`reload` waits up to 10 s for the answer. When it is applied, it takes the first health report made after the
+answer and names the services added, removed and marked, by comparing it with the last report before the
+reload. The kept and skipped services are only counted; the manager's log names them.
 
 Every GUI has the identity `GUI`. Because of the takeover, a GUI whose connection another GUI took over, or whose
 idle connection a firewall dropped without a word, would send into a connection that goes nowhere. So the GUI
@@ -213,6 +234,8 @@ Sampled. The GUI shows a frame that fails these checks as a parse error in its s
 | 72 | `memoryUsageInBytes` | `uint64` | `memory.current` of its cgroup |
 | 80 | `cpuUsageInUsec` | `uint64` | `usage_usec` of its cgroup's `cpu.stat`; the readers take differences |
 | 88 | `state` | `uint8` | 0 Unknown, 1 Starting, 2 Running, 3 Stopped, 4 Unhealthy |
+| 89 | `restartToApply` | `uint8` | 1 while a reloaded definition waits for the service's next start, else 0 |
+| 90 | padding | `uint8[6]` | Zero |
 | 96 | `startTime` | `int64` | ns since the epoch |
 | 104 | `lastSeen` | `int64` | ns since the epoch: the last heartbeat, or the last start if later |
 | 112 | `missedBeats` | `int32` | |
@@ -225,7 +248,8 @@ Sampled. The GUI shows a frame that fails these checks as a parse error in its s
 
 The C++ layout is `DetailedHealthReport` in `Process/include/RuntimeHealth.hpp`. The Python
 layout is `DetailedHealthReport` in `ProcessManagerGui/health_structs.py`. A `static_assert` and a Python
-`assert` keep both at 144 bytes.
+`assert` keep both at 144 bytes, and further `static_assert`s keep every field at its offset. `restartToApply`
+took a byte that was padding after `state`, so an older reader still parses the report and ignores the mark.
 
 ### Journal reads and cgroup PIDs (port 6670)
 
@@ -365,8 +389,33 @@ The configuration is read in four steps:
    numbers, and old spellings of renamed keys (`RenamedKey`).
 4. **Reporting:** `validate` prints the problems, and the manager logs them at start-up.
 
-The manager reads the file and its `services.d` once, at start-up. `--start all` rebuilds the services from the
-document it kept then.
+The manager reads the file and its `services.d` at start-up and on every reload. `--start all` rebuilds the
+services from the document it kept the last time.
+
+### Reloading
+
+A reload (command 83) runs in the supervision loop, between two passes, like any command, so it needs no lock:
+1. **Reading:** `ConfigSource` reads the file and `services.d` again. A file that cannot be opened or is not
+   valid YAML refuses the reload.
+2. **Building:** `GenerateConfig` and `SortByDependencies` build the new services as start-up would. A dependency
+   cycle refuses the reload.
+3. **Planning:** `reload_plan::PlanReload` compares, by `ProcessName`, the services the manager has with the
+   ones built, using the drop-in results to tell a deleted file from one that cannot be read. It refuses a
+   folder that could not be listed, a main file without a `Services` list, and two services of one name. A
+   service is changed when its own entry differs from the one in the document kept last; key order, comments and
+   layout do not count.
+4. **Applying:** the removed services are retired as `--disable` retires them. A changed one keeps running and
+   gets the new definition through `Process::DeferDefinition`. The new list is the kept services, then the new
+   start order with each existing `Process` moved into it and each added one appended. Only move construction is
+   used, so no running service is stopped: `Process`'s move assignment would stop what its target runs. Then the
+   document, the origins, `Mode` and `LogLevel` are the new ones, and the log level takes effect.
+5. **Answering:** the counts go back in a `ReloadReport`, and the log names each service.
+
+A deferred definition replaces the service's definition at its next launch, whatever starts it, and sets the
+health report's `restartToApply` until then. It brings its own work mode, except at a launch a restart command
+asked for, which keeps the Auto the command set; a start or restart command for a service that is not running
+takes the definition before it sets Auto. `OverrideStartupArgs` also changes the waiting definition, so a start
+with other arguments keeps them.
 
 ## Logging
 
@@ -433,22 +482,23 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 | Suite | Tests | Covers |
 |---|---|---|
 | `config_section_tests` | 26 | YAML reading, defaults, problems, renamed keys |
-| `config_source_tests` | 24 | The main file with `services.d`: order, skipped and ignored files, origins, reading again |
-| `process_manager_tests` | 5 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all` |
-| `process_tests` | 86 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health |
+| `config_source_tests` | 34 | The main file with `services.d`: order, skipped and ignored files, origins, reading again, the folder's state, whether the main file takes services |
+| `reload_plan_tests` | 33 | The reload plan: added, removed, changed, kept, unchanged and skipped services, what counts as a change, and the refusals |
+| `process_manager_tests` | 25 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all`; the reload of the manager's services without its sockets |
+| `process_tests` | 97 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health, a deferred definition |
 | `logger_tests` | 13 | Levels, files, rotation, journald prefixes |
 | `network_manager_tests` | 35 | Routing, identities, status and events |
 | `gpu_monitor_tests` | 27 | NVML stand-in: sampling, process lists, stuck calls |
 | `journal_server_tests` | 42 | Argument building, the request protocol, stand-in `journalctl` scripts, cgroup listing |
 | `test_service_tests` | 10 | The TestServices helpers |
-| `status_table_tests` | 19 | The `status` table: columns, CPU figures, header, colours |
+| `status_table_tests` | 22 | The `status` table: columns, CPU figures, header, colours, the restart-to-apply mark |
 | `command_watch_tests` | 17 | Following start, stop, restart and disable, for one service and for all |
-| `status_client_tests` | 13 | Report decoding, `status --once` and commands against a stand-in manager |
+| `status_client_tests` | 27 | Report decoding, `status --once`, commands and `reload` against a stand-in manager |
 
 `ctest` runs all of them. Two more checks run outside ctest:
-- `TestServices/scripts/run_scenarios.py` runs the real manager against ten scenario configurations, covering
-  start order, restarts, stopping, health checks, process trees, output, environment, resource figures and a
-  service registered in `services.d`. It needs the manager's fixed ports, so ctest does not run it.
+- `TestServices/scripts/run_scenarios.py` runs the real manager against eleven scenario configurations, covering
+  start order, restarts, stopping, health checks, process trees, output, environment, resource figures, a
+  service registered in `services.d`, and reloads. It needs the manager's fixed ports, so ctest does not run it.
 - The GUI is checked against `mock_publisher.py` or a running manager.
 
 ## Known limits
@@ -457,8 +507,15 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 - **Fixed ports:** they are compile-time constants, so one manager per machine.
 - **GUIs share one identity:** when two GUIs send commands at the same moment, an answer can reach the other
   GUI.
-- **Configuration at start-up only:** the file and its `services.d` are read once; restart the manager after
-  changing them.
+- **A reload compares text, not effect:** a definition is changed when its keys or values differ, even when the
+  service would run the same (`Enabled: true` added, `Args` as a list instead of a text).
+- **A reverted edit still waits:** a definition changed and then changed back before the service restarted is
+  compared with the waiting one, not the running one, so the mark stays until the next start.
+- **Kept services are not in the kept document:** after a reload kept a service whose new definition could not
+  be read, the document the manager keeps has no usable entry for it. `--start all` then removes it, and a later
+  reload that can read it again counts it as changed.
+- **A reload names only what the reports show:** the command line names the added, removed and marked
+  services; the kept and skipped ones are only counted, and the log names them.
 - **Dependencies only order starts:** stopping or losing a service does not stop the services that depend on it,
   and `--start` starts only direct dependencies.
 - **Heartbeats count from the start:** a service that sends no heartbeat within the longer of `GracePeriodMs` and

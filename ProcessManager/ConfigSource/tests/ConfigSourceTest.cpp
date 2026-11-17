@@ -7,6 +7,7 @@
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -68,7 +69,12 @@ public:
 
     std::filesystem::path DropIn(const std::string& name) const
     {
-        return path / "services.d" / name;
+        return DropInFolder() / name;
+    }
+
+    std::filesystem::path DropInFolder() const
+    {
+        return path / "services.d";
     }
 
 private:
@@ -399,6 +405,98 @@ TEST(ConfigSourceTest, FolderThatIsAFileIsReported)
     const config_source::LoadedConfig loaded = Load(folder);
     EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"main"}));
     EXPECT_TRUE(HasProblemWith(loaded, "services.d: is not a folder; no registered service is read"));
+}
+
+TEST(ConfigSourceTest, MissingFolderIsMissing)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    EXPECT_EQ(Load(folder).folder, config_source::FolderCode::Missing);
+}
+
+TEST(ConfigSourceTest, EmptyFolderIsListed)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    std::filesystem::create_directories(folder.DropInFolder());
+    const config_source::LoadedConfig loaded = Load(folder);
+    EXPECT_EQ(loaded.folder, config_source::FolderCode::Listed);
+    EXPECT_TRUE(loaded.dropIns.empty());
+    EXPECT_TRUE(loaded.problems.empty());
+}
+
+TEST(ConfigSourceTest, FolderWithFilesIsListed)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    folder.Write("services.d/extra.yaml", Service("extra"));
+    EXPECT_EQ(Load(folder).folder, config_source::FolderCode::Listed);
+}
+
+TEST(ConfigSourceTest, FolderThatIsAFileIsNotFolder)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    folder.Write("services.d", "not a folder\n");
+    EXPECT_EQ(Load(folder).folder, config_source::FolderCode::NotFolder);
+}
+
+TEST(ConfigSourceTest, FolderThatCannotBeReadIsNotReadable)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    // A link to itself: asking what it is fails, as it does for a folder that cannot be reached.
+    std::filesystem::create_symlink("services.d", folder.DropInFolder());
+    const config_source::LoadedConfig loaded = Load(folder);
+    EXPECT_EQ(loaded.folder, config_source::FolderCode::NotReadable);
+    EXPECT_TRUE(loaded.dropIns.empty());
+    EXPECT_TRUE(HasProblemWith(loaded, "services.d: cannot be read ("));
+}
+
+TEST(ConfigSourceTest, FolderThatCannotBeListedIsNotReadable)
+{
+    if (::geteuid() == 0)
+    {
+        GTEST_SKIP() << "root lists a folder without read permission";
+    }
+
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    folder.Write("services.d/extra.yaml", Service("extra"));
+    std::filesystem::permissions(folder.DropInFolder(), std::filesystem::perms::none);
+    const config_source::LoadedConfig loaded = Load(folder);
+    std::filesystem::permissions(folder.DropInFolder(), std::filesystem::perms::owner_all);
+    EXPECT_EQ(loaded.folder, config_source::FolderCode::NotReadable);
+    EXPECT_TRUE(loaded.dropIns.empty());
+    EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"main"}));
+}
+
+TEST(ConfigSourceTest, MainFileWithAServicesListTakesServices)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", main_text);
+    EXPECT_TRUE(Load(folder).takesServices);
+}
+
+TEST(ConfigSourceTest, EmptyMainFileTakesServices)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", "# nothing yet\n");
+    EXPECT_TRUE(Load(folder).takesServices);
+}
+
+TEST(ConfigSourceTest, ServicesThatIsNotAListCannotTakeServices)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", "Services:\n  ProcessName: main\n");
+    EXPECT_FALSE(Load(folder).takesServices);
+}
+
+TEST(ConfigSourceTest, TopLevelThatIsNotAMappingCannotTakeServices)
+{
+    const ScratchFolder folder{};
+    folder.Write("main.yaml", "- ProcessName: main\n  ExecutablePath: /bin/true\n");
+    EXPECT_FALSE(Load(folder).takesServices);
 }
 
 TEST(ConfigSourceTest, LoadingAgainSeesTheFolderAsItIsNow)

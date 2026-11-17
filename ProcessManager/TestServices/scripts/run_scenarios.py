@@ -48,6 +48,7 @@ class Report:
     mem: int
     started_ms: int
     at: float  # time.monotonic() when it arrived
+    pending: int = 0  # 1 while a reloaded definition waits for the service's next start
 
 
 @dataclass
@@ -59,7 +60,7 @@ class Paths:
 
 REPORT_LINE = re.compile(
     r"service pid=(-?\d+) state=(\w+) restarts=(-?\d+) missed=(-?\d+) cpu_us=(\d+) mem=(\d+) "
-    r"started_ms=(-?\d+) name=(.*)$"
+    r"started_ms=(-?\d+) pending=(\d+) name=(.*)$"
 )
 
 
@@ -71,6 +72,9 @@ class Watch:
         self.latest: Dict[str, Report] = {}
         self.history: Dict[str, List[Report]] = {}
         self.reports = 0
+        self.names: List[str] = []  # the services of the last whole report
+        self.expected = 0
+        self.collected: List[str] = []
         self.process = subprocess.Popen([exe], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                         universal_newlines=True)
         self.thread = threading.Thread(target=self._read, daemon=True)
@@ -82,15 +86,22 @@ class Watch:
             if line.startswith("report "):
                 with self.lock:
                     self.reports += 1
+                    self.expected = int(line.split()[2])
+                    self.collected = []
+                    if self.expected == 0:
+                        self.names = []
                 continue
             match = REPORT_LINE.match(line)
             if not match:
                 continue
             report = Report(int(match[1]), match[2], int(match[3]), int(match[4]), int(match[5]), int(match[6]),
-                            int(match[7]), time.monotonic())
+                            int(match[7]), time.monotonic(), int(match[8]))
             with self.lock:
-                self.latest[match[8]] = report
-                seen = self.history.setdefault(match[8], [])
+                self.latest[match[9]] = report
+                self.collected.append(match[9])
+                if len(self.collected) == self.expected:
+                    self.names = list(self.collected)
+                seen = self.history.setdefault(match[9], [])
                 if not seen or (seen[-1].pid, seen[-1].state, seen[-1].restarts) != \
                         (report.pid, report.state, report.restarts):
                     seen.append(report)
@@ -111,6 +122,21 @@ class Watch:
                 return report
             time.sleep(0.05)
         return None
+
+    def reported(self) -> List[str]:
+        """The services of the last whole report."""
+        with self.lock:
+            return list(self.names)
+
+    def wait_gone(self, name: str, timeout: float) -> bool:
+        """Waits until a whole report comes without the service."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.lock:
+                if self.reports > 0 and name not in self.names and len(self.collected) == self.expected:
+                    return True
+            time.sleep(0.05)
+        return False
 
     def wait_reports(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -142,6 +168,7 @@ class Manager:
 
     def __init__(self, paths: Paths, config: str, workdir: str):
         self.paths = paths
+        self.config = config
         self.log_path = os.path.join(workdir, "manager.log")
         self.log_file = open(self.log_path, "w")
         self.process = subprocess.Popen([paths.manager, "--config", config], cwd=workdir, stdout=self.log_file,
@@ -152,6 +179,17 @@ class Manager:
         result = subprocess.run([self.paths.manager, "--" + flag, name, "--no-wait"], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, timeout=10)
         return result.returncode
+
+    def reload(self, wait: bool = True) -> Tuple[int, str]:
+        """The reload command line: its exit code, and what it printed."""
+        result = subprocess.run([self.paths.manager, "reload"] + ([] if wait else ["--no-wait"]),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=30)
+        return result.returncode, result.stdout
+
+    def status(self) -> str:
+        result = subprocess.run([self.paths.manager, "status", "--once"], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, universal_newlines=True, timeout=30)
+        return result.stdout
 
     def log(self) -> str:
         with open(self.log_path, errors="replace") as log:
@@ -556,6 +594,122 @@ def scenario_registered(c: Context) -> None:
                     "--start all builds it again with the others and starts it with a new pid")
 
 
+def steady_service(paths: Paths, name: str) -> str:
+    return ("ProcessName: %s\n"
+            "ExecutablePath: '%s'\n"
+            "Args: [--period-ms, 2000]\n"
+            "StdioMode: Pipe\n"
+            "GracePeriodMs: 500\n" % (name, os.path.abspath(os.path.join(paths.bin_dir, "pmt_steady"))))
+
+
+def marked_service(paths: Paths, mark: str) -> str:
+    """edited: pmt_env, which prints PMT_MARK as its definition sets it."""
+    return ("ProcessName: edited\n"
+            "ExecutablePath: '%s'\n"
+            "Args: [--show, PMT_MARK]\n"
+            "EnvironmentVariables:\n"
+            "  PMT_MARK: %s\n"
+            "StdioMode: Pipe\n"
+            "GracePeriodMs: 500\n" % (os.path.abspath(os.path.join(paths.bin_dir, "pmt_env")), mark))
+
+
+def write(path: str, text: str) -> None:
+    with open(path, "w") as file:
+        file.write(text)
+
+
+def scenario_reload(c: Context) -> None:
+    folder = os.path.join(os.path.dirname(c.manager.config), "services.d")
+    names = ["anchor", "edited", "doomed", "fragile"]
+    running = wait_all(c, names, is_running, 15)
+    if not c.results.check(len(running) == 4, "anchor, and edited, doomed and fragile from services.d, run"):
+        return
+    pids = {name: running[name].pid for name in names}
+
+    write(os.path.join(folder, "added.yaml"), steady_service(c.paths, "added"))
+    code, out = c.manager.reload()
+    c.results.check(code == 0 and "added: added" in out,
+                    "a new file, then reload: exit code 0, and it names the service it added (%d: %s)" %
+                    (code, out.strip().replace("\n", " / ")))
+    c.results.check(c.watch.wait("added", is_running, 10) is not None, "the new service runs")
+    same = [name for name in names if c.watch.get(name).pid == pids[name]]
+    c.results.check(len(same) == 4, "the services that were there keep their pids (%d of 4)" % len(same))
+
+    write(os.path.join(folder, "edited.yaml"), marked_service(c.paths, "two"))
+    # The same definition as before, with a comment, its keys in another order and other spacing.
+    write(os.path.join(folder, "fragile.yaml"),
+          "# reformatted, not changed\nGracePeriodMs:   500\nStdioMode: Pipe\nArgs:\n  - --period-ms\n  - 2000\n" +
+          "ExecutablePath: '%s'\nProcessName: fragile\n" %
+          os.path.abspath(os.path.join(c.paths.bin_dir, "pmt_steady")))
+    code, out = c.manager.reload()
+    c.results.check(code == 0 and "restart to apply their new definition: edited" in out,
+                    "an edited file, then reload: exit code 0, and it names edited as waiting for a restart (%s)" %
+                    out.strip().replace("\n", " / "))
+    edited = c.watch.wait("edited", lambda r: r.pending == 1, 5)
+    c.results.check(edited is not None and edited.pid == pids["edited"] and is_running(edited),
+                    "edited keeps running with the same pid, marked restart to apply")
+    c.results.check(any("env PMT_MARK='one'" in line for line in c.manager.said("edited")) and
+                    not any("env PMT_MARK='two'" in line for line in c.manager.said("edited")),
+                    "it still runs its old definition: it printed PMT_MARK='one' and not 'two'")
+    fragile = c.watch.get("fragile")
+    c.results.check(fragile.pid == pids["fragile"] and fragile.pending == 0,
+                    "fragile, only reformatted, keeps its pid and is not marked")
+    status = c.manager.status()
+    c.results.check("edited *" in status and "* restart to apply" in status,
+                    "status marks edited and explains the mark")
+
+    c.manager.command("restart", "edited")
+    edited = c.watch.wait("edited", lambda r: is_running(r) and r.pid != pids["edited"], 10)
+    c.results.check(edited is not None and c.watch.wait("edited", lambda r: r.pending == 0, 5) is not None,
+                    "--restart edited starts it with a new pid and clears the mark")
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and \
+            not any("env PMT_MARK='two'" in line for line in c.manager.said("edited")):
+        time.sleep(0.1)
+    c.results.check(any("env PMT_MARK='two'" in line for line in c.manager.said("edited")),
+                    "the new run has the new definition: it prints PMT_MARK='two'")
+    pids["edited"] = edited.pid if edited else -1
+
+    os.remove(os.path.join(folder, "doomed.yaml"))
+    code, out = c.manager.reload()
+    c.results.check(code == 0 and "removed: doomed" in out,
+                    "a deleted file, then reload: exit code 0, and it names doomed as removed")
+    c.results.check(c.watch.wait_gone("doomed", 5), "doomed is no longer in the reports")
+    time.sleep(0.5)
+    c.results.check(not pid_alive(pids["doomed"]), "its process is stopped")
+
+    write(os.path.join(folder, "fragile.yaml"), "ProcessName: fragile\n  ExecutablePath: [\n")
+    code, out = c.manager.reload()
+    c.results.check(code == 0 and "kept as they were" in out,
+                    "a broken file for running fragile, then reload: exit code 0, and it says one service was kept")
+    time.sleep(1)
+    fragile = c.watch.get("fragile")
+    c.results.check(fragile is not None and fragile.pid == pids["fragile"] and is_running(fragile) and
+                    "fragile" in c.watch.reported(), "fragile keeps running with its pid")
+    c.results.check("fragile.yaml: not valid YAML" in c.manager.log(), "the manager logs the broken file")
+
+    current = {name: c.watch.get(name).pid for name in c.watch.reported()}
+    with open(c.manager.config) as main:
+        main_text = main.read()
+    write(c.manager.config, "ProcessManager:\n  Mode: Auto\n Services: []\n")
+    write(os.path.join(folder, "late.yaml"), steady_service(c.paths, "late"))
+    code, out = c.manager.reload()
+    c.results.check(code == 1 and "Reload refused" in out,
+                    "a broken main file, then reload: exit code 1, and it says the reload was refused (%d)" % code)
+    time.sleep(1.5)
+    after = {name: c.watch.get(name).pid for name in c.watch.reported()}
+    c.results.check(after == current, "and nothing changes: the same services with the same pids, late is not added")
+
+    write(c.manager.config, main_text)
+    started = time.monotonic()
+    code, out = c.manager.reload(wait=False)
+    took = time.monotonic() - started
+    c.results.check(code == 0 and out == "", "reload --no-wait exits with 0 and prints nothing (%.1f s)" % took)
+    c.results.check(c.watch.wait("late", is_running, 10) is not None, "and the reload happens: late runs")
+    c.results.check(not re.search(r"-> PMC.*not delivered", c.manager.log()),
+                    "the manager does not answer a reload that asked for no answer")
+
+
 def prepare_stdio(paths: Paths) -> None:
     for path in ("/tmp/pmt_to_file.txt", "/tmp/pmt_to_file_append.txt"):
         if os.path.exists(path):
@@ -582,6 +736,18 @@ def place_registered(paths: Paths, config: str, workdir: str) -> str:
     return placed
 
 
+def place_reload(paths: Paths, config: str, workdir: str) -> str:
+    """Copies the config into the run folder and writes a services.d next to it with three services."""
+    placed = os.path.join(workdir, os.path.basename(config))
+    shutil.copyfile(config, placed)
+    folder = os.path.join(workdir, "services.d")
+    os.makedirs(folder)
+    write(os.path.join(folder, "edited.yaml"), marked_service(paths, "one"))
+    write(os.path.join(folder, "doomed.yaml"), steady_service(paths, "doomed"))
+    write(os.path.join(folder, "fragile.yaml"), steady_service(paths, "fragile"))
+    return placed
+
+
 SCENARIOS: Dict[str, Callable[[Context], None]] = {
     "basic": scenario_basic,
     "restarts": scenario_restarts,
@@ -593,11 +759,12 @@ SCENARIOS: Dict[str, Callable[[Context], None]] = {
     "resources": scenario_resources,
     "everything": scenario_everything,
     "registered": scenario_registered,
+    "reload": scenario_reload,
 }
 PREPARE: Dict[str, Callable[[Paths], None]] = {"stdio": prepare_stdio}
 # Scenarios whose config needs files next to it: the config is copied into the scenario's run folder with them, and
 # the copy is what validate and the manager read.
-PLACE: Dict[str, Callable[[Paths, str, str], str]] = {"registered": place_registered}
+PLACE: Dict[str, Callable[[Paths, str, str], str]] = {"registered": place_registered, "reload": place_reload}
 # Errors 'validate' reports on purpose.
 EXPECTED_VALIDATE_ERRORS: Dict[str, Tuple[str, ...]] = {"environment": ("cwd_missing Cwd",)}
 

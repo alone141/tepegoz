@@ -17,6 +17,11 @@ constexpr std::chrono::milliseconds min_cpu_interval{300};
 constexpr std::chrono::milliseconds heartbeat_after_start{1};
 constexpr int gpu_percent_unknown = -1;
 constexpr std::string_view no_value = "-";
+// After the name of a service whose reloaded definition waits for its next start.
+constexpr std::string_view restart_mark = " *";
+// Under the table when a service is marked.
+constexpr std::string_view restart_note =
+    "* restart to apply: a reloaded definition takes effect at the service's next start";
 
 // The manager's RuntimeState, value for value.
 enum class ServiceState
@@ -55,6 +60,8 @@ struct ServiceSample
     GpuState gpuState = GpuState::NotSampled;
     int gpuPercent = gpu_percent_unknown;
     std::uint64_t vramBytes = 0;
+    // A reloaded definition waits for the service's next start.
+    bool restartToApply = false;
 };
 
 // How a table is drawn.
@@ -106,7 +113,7 @@ public:
     void Update(const std::vector<ServiceSample>& report);
 
     /**
-     * @brief Draw the newest report: a header line, then a row per service.
+     * @brief Draw the newest report: a header line, then a row per service, then restart_note when one is marked.
      * @param options The machine, a notice and whether to colour.
      * @return The table, one line per row, each ending in a newline.
      */

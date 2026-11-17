@@ -117,11 +117,13 @@ Process::~Process()
 
 Process::Process(Process&& other) noexcept
     : runtime(std::move(other.runtime)),
-    config(std::move(other.config))
+    config(std::move(other.config)),
+    deferredConfig(std::move(other.deferredConfig))
 {
     other.runtime.processHandle = ProcessHandle{};
     other.runtime.stopPhase = StopPhase::None; // the stop in progress moves with the child
     other.runtime.stopGroup = -1;
+    other.deferredConfig.reset();
 }
 
 Process& Process::operator=(Process&& other) noexcept
@@ -134,6 +136,8 @@ Process& Process::operator=(Process&& other) noexcept
         }
         runtime = std::move(other.runtime);
         config = std::move(other.config);
+        deferredConfig = std::move(other.deferredConfig);
+        other.deferredConfig.reset();
         other.runtime.processHandle = ProcessHandle{};
         other.runtime.stopPhase = StopPhase::None;
         other.runtime.stopGroup = -1;
@@ -168,6 +172,14 @@ void Process::AutoRestart()
 
 void Process::Launch()
 {
+    if (deferredConfig)
+    {
+        // A restart command chose Auto; otherwise the new definition's work mode comes with it.
+        const WorkMode workMode = config.workMode;
+        const bool commanded = runtime.restartRequested;
+        ApplyDeferredDefinition();
+        if (commanded) config.workMode = workMode;
+    }
     logger::Debug("[%s] Starting service...", config.processName.c_str());
     if (config.useDisplay)
     {
@@ -408,12 +420,36 @@ void Process::FinishStop()
 
 void Process::OverrideStartupArgs(std::vector<std::string> args)
 {
+    if (deferredConfig) deferredConfig->args = args; // the start these are for may be the one that applies it
     config.args = args;
 }
 
 void Process::SetWorkMode(WorkMode workMode)
 {
     config.workMode = workMode;
+}
+
+void Process::DeferDefinition(const Process& next)
+{
+    deferredConfig = next.config;
+    logger::Info("[%s] New definition waits for the next start", config.processName.c_str());
+}
+
+bool Process::HasDeferredDefinition() const
+{
+    return deferredConfig.has_value();
+}
+
+void Process::ApplyDeferredDefinition()
+{
+    if (!deferredConfig) return;
+    if (config.createProcessGroup && !deferredConfig->createProcessGroup && !runtime.cgroupPath.empty())
+    {
+        RemoveProcessGroup(); // its cgroup is not used again
+    }
+    config = std::move(*deferredConfig);
+    deferredConfig.reset();
+    logger::Info("[%s] New definition takes effect", config.processName.c_str());
 }
 
 void Process::HeartbeatReceived()
@@ -811,6 +847,7 @@ DetailedHealthReport Process::GetHealthReport() const
     healthReport.runtimeHealth.lastSeen = health.lastSeen;
     healthReport.runtimeHealth.missedBeats = health.missedBeats;
     healthReport.runtimeHealth.restartCount = health.restartCount;
+    healthReport.runtimeHealth.restartToApply = deferredConfig ? 1 : 0;
     healthReport.pid = GetPid();
     healthReport.memoryUsageInBytes = GetMemoryUsageInBytes();
     healthReport.cpuUsageInUsec = GetCpuUsageInUsec();

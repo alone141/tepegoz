@@ -13,15 +13,18 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <unistd.h>
 #include <vector>
 
 #include "ProcessGroupBuilder.hpp"
 #include "ConfigSection.hpp"
+#include "ConfigSource.hpp"
 #include "GpuMonitor.hpp"
 #include "JournalServer.hpp"
 #include "Logger.hpp"
+#include "ReloadPlan.hpp"
 
 namespace process_manager
 {
@@ -45,6 +48,7 @@ bool SameStates(const std::vector<DetailedHealthReport>& a, const std::vector<De
         {
             return x.pid == y.pid && x.runtimeHealth.state == y.runtimeHealth.state
                 && x.runtimeHealth.restartCount == y.runtimeHealth.restartCount
+                && x.runtimeHealth.restartToApply == y.runtimeHealth.restartToApply
                 && std::strncmp(x.processName, y.processName, sizeof(x.processName)) == 0;
         });
 }
@@ -52,6 +56,33 @@ bool SameStates(const std::vector<DetailedHealthReport>& a, const std::vector<De
 std::string FixedString(const char* text, size_t capacity)
 {
     return std::string(text, ::strnlen(text, capacity));
+}
+
+std::vector<std::string> NamesOf(const std::vector<Process>& processes)
+{
+    std::vector<std::string> names;
+    for (const auto& process : processes) names.push_back(process.GetProcessName());
+    return names;
+}
+
+bool Contains(const std::vector<std::string>& names, const std::string& name)
+{
+    return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+uint16_t Count(const std::vector<std::string>& names)
+{
+    return static_cast<uint16_t>(std::min<size_t>(names.size(), std::numeric_limits<uint16_t>::max()));
+}
+
+// A warning for names whose new definition could not be read, otherwise an information.
+void LogNames(bool warning, const char* what, const std::vector<std::string>& names)
+{
+    if (names.empty()) return;
+    std::string joined;
+    for (const auto& name : names) joined += (joined.empty() ? "" : ", ") + name;
+    if (warning) logger::Warning("Reload: %s: %s", what, joined.c_str());
+    else logger::Info("Reload: %s: %s", what, joined.c_str());
 }
 
 // The manager's unit, and the cgroup that holds task_pm and every task_<name>, as journald records them.
@@ -344,7 +375,7 @@ void ProcessManager::StopAll()
         for (auto& process : retiring) process.AdvanceStop();
     }
 }
-void ProcessManager::RetireProcess(Process& process)
+void ProcessManager::RetireProcess(Process& process, std::vector<Process>& retiring)
 {
     process.SuspendHealthCheck();
     process.Stop();
@@ -434,6 +465,118 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::RebuildConfig(const Proces
     rebuilt->source = params.source;
     rebuilt->origins = params.origins;
     return rebuilt;
+}
+ReloadReport ProcessManager::Reload(ProcessManagerParams& params, std::vector<Process>& retiring)
+{
+    ReloadReport report{};
+    report.command = CommandCode::ReloadConfig;
+    const auto refuse = [&report](ReloadResult result, const std::string& why)
+    {
+        logger::Error("Reload refused, nothing changed: %s", why.c_str());
+        report.result = result;
+        return report;
+    };
+    const std::string mainFile = params.source.MainFile().string();
+    if (mainFile.empty()) return refuse(ReloadResult::NoSource, "the configuration was not read from a file");
+
+    config_source::LoadedConfig loaded;
+    std::string error;
+    const config_source::LoadCode read = params.source.Load(loaded, error);
+    if (read == config_source::LoadCode::MainFileNotOpened) return refuse(ReloadResult::MainFileNotOpened, mainFile + " could not be opened");
+    if (read == config_source::LoadCode::MainFileSyntaxError) return refuse(ReloadResult::MainFileSyntaxError, mainFile + " is not valid YAML: " + error);
+
+    // What start-up would make of the new configuration.
+    std::vector<std::string> problems = loaded.problems;
+    auto next = GenerateConfig(loaded.document, &problems);
+    std::vector<std::string> orderErrors;
+    if (!SortByDependencies(orderErrors, next->processList))
+    {
+        for (const auto& orderError : orderErrors) logger::Error("%s", orderError.c_str());
+        return refuse(ReloadResult::DependencyCycle, "the new configuration has a dependency cycle");
+    }
+
+    reload_plan::ReloadPlan plan;
+    switch (reload_plan::PlanReload(NamesOf(params.processList), params.document, loaded, NamesOf(next->processList), plan))
+    {
+    case reload_plan::PlanCode::FolderNotReadable:
+        return refuse(ReloadResult::FolderNotReadable, params.source.DropInFolder().string() + " exists but could not be listed");
+    case reload_plan::PlanCode::NoServicesList:
+        return refuse(ReloadResult::NoServicesList, mainFile + " has no Services list for the services: its top level must be a mapping, and its Services a list");
+    case reload_plan::PlanCode::DuplicateName:
+        return refuse(ReloadResult::DuplicateName, "the new configuration has two services of the same name");
+    default:
+        break;
+    }
+
+    problems.insert(problems.end(), orderErrors.begin(), orderErrors.end()); // missing dependencies
+    for (const auto& process : next->processList)
+    {
+        const std::string name = process.GetProcessName();
+        if (Contains(plan.added, name) || Contains(plan.changed, name)) process.CheckConfig(problems);
+    }
+    for (const auto& problem : problems) logger::Error("%s", problem.c_str());
+
+    // The new list is built by moving each Process into it: a move hands its child over, and nothing is stopped.
+    // Kept services come first, in their order, then the new configuration's start order.
+    std::vector<Process>& current = params.processList;
+    std::unordered_map<std::string, size_t> index;
+    for (size_t i = 0; i < current.size(); ++i) index.emplace(current[i].GetProcessName(), i);
+    std::vector<char> placed(current.size(), 0);
+    std::vector<Process> list;
+    list.reserve(current.size() + next->processList.size());
+    for (const auto& name : plan.kept)
+    {
+        const size_t i = index.at(name);
+        list.push_back(std::move(current[i]));
+        placed[i] = 1;
+    }
+    for (auto& process : next->processList)
+    {
+        const auto found = index.find(process.GetProcessName());
+        if (found == index.end())
+        {
+            list.push_back(std::move(process)); // added: started by its work mode, as at start-up
+            continue;
+        }
+        Process& existing = current[found->second];
+        if (Contains(plan.changed, process.GetProcessName())) existing.DeferDefinition(process);
+        list.push_back(std::move(existing));
+        placed[found->second] = 1;
+    }
+    for (size_t i = 0; i < current.size(); ++i)
+    {
+        if (placed[i]) continue;
+        if (Contains(plan.removed, current[i].GetProcessName())) RetireProcess(current[i], retiring);
+        else list.push_back(std::move(current[i])); // a second service of the same name, from start-up: kept
+    }
+    current = std::move(list);
+
+    params.document = std::move(loaded.document);
+    params.origins = std::move(loaded.origins);
+    params.workMode = next->workMode;
+    params.logLevel = next->logLevel;
+    logger::Logger::Instance().SetMinimum(params.logLevel);
+
+    logger::Info("Configuration reloaded from %s: %zu added, %zu removed, %zu changed, %zu kept, %zu not added, %zu unchanged",
+        mainFile.c_str(), plan.added.size(), plan.removed.size(), plan.changed.size(), plan.kept.size(), plan.skipped.size(), plan.unchanged.size());
+    LogNames(false, "added", plan.added);
+    LogNames(false, "removed", plan.removed);
+    LogNames(false, "changed, the new definition waits for the next start", plan.changed);
+    LogNames(true, "kept as they are, their new definition could not be read", plan.kept);
+    LogNames(true, "not added, their definition could not be read", plan.skipped);
+    if (plan.unnamedEntry)
+    {
+        logger::Warning("Reload: a Services entry has no ProcessName that can be read and could be any service, so none was removed");
+    }
+
+    report.result = ReloadResult::Applied;
+    report.added = Count(plan.added);
+    report.removed = Count(plan.removed);
+    report.changed = Count(plan.changed);
+    report.kept = Count(plan.kept);
+    report.skipped = Count(plan.skipped);
+    report.unchanged = Count(plan.unchanged);
+    return report;
 }
 bool ProcessManager::SortByDependencies(std::vector<std::string>& errors, std::vector<Process>& pList)
 {
@@ -549,7 +692,7 @@ bool ProcessManager::ApplyToAll(CommandCode command)
         logger::Debug("--start all received, resetting config");
         for (auto& process : processParams->processList)
         {
-            RetireProcess(process); // the new instances start once these have exited
+            RetireProcess(process, retiring); // the new instances start once these have exited
         }
         processParams = RebuildConfig(*processParams); //reset the runtime params
 
@@ -599,6 +742,8 @@ bool ProcessManager::ApplyCommandServerMessage(const CommandMessage& message)
     }
     else if (command == CommandCode::StartService)
     {
+        // A waiting definition is taken before the start, so that the start keeps it Auto.
+        if (!it->HasPid() && !it->IsStopping()) it->ApplyDeferredDefinition();
         StartDependencies(*it);
         it->SetWorkMode(WorkMode::Auto);
         if (it->IsStopping())
@@ -631,6 +776,7 @@ bool ProcessManager::ApplyCommandServerMessage(const CommandMessage& message)
     }
     else if (command == CommandCode::RestartService)
     {
+        if (!it->HasPid() && !it->IsStopping()) it->ApplyDeferredDefinition(); // as for StartService
         StartDependencies(*it);
         it->SetWorkMode(WorkMode::Auto);
         if (it->HasPid())
@@ -644,7 +790,7 @@ bool ProcessManager::ApplyCommandServerMessage(const CommandMessage& message)
     }
     else if (command == CommandCode::DisableService)
     {
-        RetireProcess(*it);
+        RetireProcess(*it, retiring);
         processParams->processList.erase(it);
     }
     else
@@ -679,6 +825,19 @@ bool ProcessManager::ProcessMessage(const std::vector<zmq::message_t>& messages)
             auto result = reinterpret_cast<char*>(&version);
             listener.send(zmq::buffer(comm::gui_id), zmq::send_flags::sndmore);
             listener.send(zmq::buffer(result, sizeof(VersionReport)), zmq::send_flags::none);
+            return true;
+        }
+        else if (command == CommandCode::ReloadConfig)
+        {
+            CommandMessage message{};
+            std::memcpy(&message, payload.data(), std::min(payload.size(), sizeof(message)));
+            logger::Info("Reload asked by %s", std::string(receivedFrom).c_str());
+            const ReloadReport report = Reload(*processParams, retiring);
+            if (FixedString(message.args, sizeof(message.args)) != reload_without_reply)
+            {
+                listener.send(zmq::buffer(receivedFrom), zmq::send_flags::sndmore); // the sender: PMC or GUI
+                listener.send(zmq::buffer(&report, sizeof(report)), zmq::send_flags::none);
+            }
             return true;
         }
         else

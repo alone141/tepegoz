@@ -286,3 +286,36 @@ TEST(StatusTableTest, PlainTableHasNoEscapes)
     options.notice = "No report for 7s";
     EXPECT_EQ(table.Render(options).find('\033'), std::string::npos);
 }
+
+TEST(StatusTableTest, MarkedServiceShowsTheMarkAfterItsName)
+{
+    status_table::StatusTable table{};
+    status_table::ServiceSample sample = Sample("server", status_table::ServiceState::Running, 10);
+    sample.restartToApply = true;
+    table.Update({sample, Sample("other", status_table::ServiceState::Running, 11)});
+    const std::string text = table.Render(status_table::TableOptions{});
+    EXPECT_EQ(RowOf(text, "server").rfind("server *", 0), 0u);
+    EXPECT_EQ(RowOf(text, "other").rfind("other ", 0), 0u);
+    EXPECT_EQ(RowOf(text, "other").find('*'), std::string::npos);
+}
+
+TEST(StatusTableTest, MarkIsExplainedUnderTheTable)
+{
+    status_table::StatusTable table{};
+    status_table::ServiceSample sample = Sample("server", status_table::ServiceState::Stopped, -1);
+    sample.restartToApply = true;
+    table.Update({sample});
+    const std::vector<std::string> lines = Lines(table.Render(status_table::TableOptions{}));
+    ASSERT_EQ(lines.size(), 4u);
+    EXPECT_EQ(lines.back(), std::string{status_table::restart_note});
+}
+
+TEST(StatusTableTest, TableWithoutAMarkHasNoNote)
+{
+    status_table::StatusTable table{};
+    table.Update({Sample("server", status_table::ServiceState::Running, 10)});
+    const std::string text = table.Render(status_table::TableOptions{});
+    EXPECT_EQ(Lines(text).size(), 3u);
+    EXPECT_EQ(text.find("restart to apply"), std::string::npos);
+    EXPECT_EQ(text.find('*'), std::string::npos);
+}

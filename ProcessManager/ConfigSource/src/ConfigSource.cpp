@@ -77,28 +77,29 @@ bool IsDropInName(const std::filesystem::path& name)
 }
 
 // problems is a second output: a folder that cannot be read is reported, and the load goes on without it.
-// The drop-in files of folder, in sorted name order. A folder that is missing has none, and says nothing.
-std::vector<std::filesystem::path> ListDropIns(const std::filesystem::path& folder, std::vector<std::string>& problems)
+// Puts the drop-in files of folder into files, in sorted name order. A folder that is missing has none, and says
+// nothing.
+FolderCode ListDropIns(const std::filesystem::path& folder, std::vector<std::filesystem::path>& files,
+                       std::vector<std::string>& problems)
 {
-    std::vector<std::filesystem::path> files;
     std::error_code error{};
     const std::filesystem::file_status status = std::filesystem::status(folder, error);
     if (status.type() == std::filesystem::file_type::not_found)
     {
-        return files;
+        return FolderCode::Missing;
     }
 
     if (error)
     {
         problems.push_back(folder.string() + ": cannot be read (" + error.message() +
                            "); no registered service is read");
-        return files;
+        return FolderCode::NotReadable;
     }
 
     if (status.type() != std::filesystem::file_type::directory)
     {
         problems.push_back(folder.string() + ": is not a folder; no registered service is read");
-        return files;
+        return FolderCode::NotFolder;
     }
 
     std::filesystem::directory_iterator entry{folder, error};
@@ -116,7 +117,7 @@ std::vector<std::filesystem::path> ListDropIns(const std::filesystem::path& fold
         problems.push_back(folder.string() + ": cannot be listed (" + error.message() +
                            "); no registered service is read");
         files.clear();
-        return files;
+        return FolderCode::NotReadable;
     }
 
     std::sort(files.begin(), files.end(),
@@ -124,7 +125,7 @@ std::vector<std::filesystem::path> ListDropIns(const std::filesystem::path& fold
               {
                   return a.filename().string() < b.filename().string();
               });
-    return files;
+    return FolderCode::Listed;
 }
 
 // problem is a second out-parameter: why the file is skipped, worded for whoever edits it.
@@ -239,8 +240,10 @@ LoadCode ConfigSource::Load(LoadedConfig& out, std::string& error) const
     }
 
     const std::filesystem::path folder = DropInFolder();
-    const std::vector<std::filesystem::path> files = ListDropIns(folder, loaded.problems);
-    if (!files.empty() && !CanTakeServices(loaded.document))
+    std::vector<std::filesystem::path> files;
+    loaded.folder = ListDropIns(folder, files, loaded.problems);
+    loaded.takesServices = CanTakeServices(loaded.document);
+    if (!files.empty() && !loaded.takesServices)
     {
         // The main file's own problem is reported where its document is read.
         loaded.problems.push_back(folder.string() +

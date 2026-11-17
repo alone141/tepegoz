@@ -76,8 +76,21 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   mapping, has a `ProcessName` other than its file name, or names a service the main file already has is
   reported by `validate` and at start-up, and skipped. `validate`, `graph` and `--start all` include the
   registered services. `cmake --install` creates the empty folder next to the installed configuration and keeps
-  an existing one. The folder is read at start-up only, like the main file. The new module `ConfigSource/` reads
-  both and keeps where each service was defined.
+  an existing one. The folder is read at start-up and on a reload, like the main file. The new module
+  `ConfigSource/` reads both and keeps where each service was defined.
+- `iltaren-ProcessManager reload`, and `systemctl reload processmanager` through the unit's new `ExecReload`,
+  make the running manager read its configuration file and `services.d` again and touch only what changed. A new
+  service is added and started by its work mode; a service with no entry and no file, or with `Enabled: false`,
+  is stopped and removed; a service whose new definition cannot be read is kept as it is; a changed service keeps
+  running, and its new definition takes effect at its next start, whatever starts it; an unchanged one is left
+  alone. Comments, key order and layout are no change. A main file that cannot be opened or parsed, has no
+  `Services` list, a `services.d` that cannot be listed, a dependency cycle or two services of one name refuse the
+  reload, and nothing changes. `LogLevel` takes effect at once, and a service removed with `--disable` comes back.
+  The command prints what was done and exits with 0 when applied, 1 when refused, 2 without an answer within
+  10 s; `--no-wait` only sends. A service whose new definition waits is marked: a byte that was padding in the
+  144-byte health report (offset 89, `restartToApply`) carries the mark, and `status` shows `*` after its name.
+  The reload is command 83 and is answered with a 16-byte `ReloadReport`. The new module `ReloadPlan/` compares
+  the two configurations, and `ConfigSource` now tells an empty `services.d` from one it could not list.
 - An exit whose status was lost, because something else in the manager's process reaped it, no longer counts
   as a failure. `OnFailure` used to restart such a service even when it had ended cleanly; `Always` and
   `UnlessStopped` still restart it.

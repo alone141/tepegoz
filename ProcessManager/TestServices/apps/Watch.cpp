@@ -41,11 +41,13 @@ void PrintReports(const zmq::message_t& message)
         std::memcpy(&report, static_cast<const char*>(message.data()) + i * size, size);
         report.processName[sizeof(report.processName) - 1] = '\0';
         const process_manager::RuntimeHealth& health = report.runtimeHealth;
-        std::printf("service pid=%d state=%s restarts=%d missed=%d cpu_us=%llu mem=%llu started_ms=%lld name=%s\n",
+        // pending: 1 while a reloaded definition waits for the service's next start.
+        std::printf("service pid=%d state=%s restarts=%d missed=%d cpu_us=%llu mem=%llu started_ms=%lld pending=%d "
+                    "name=%s\n",
                     static_cast<int>(report.pid), process_manager::RuntimeStateToString(health.state), health.restartCount,
                     health.missedBeats, static_cast<unsigned long long>(report.cpuUsageInUsec),
                     static_cast<unsigned long long>(report.memoryUsageInBytes), EpochMs(health.startTime),
-                    report.processName);
+                    static_cast<int>(health.restartToApply), report.processName);
     }
 
     std::fflush(stdout);

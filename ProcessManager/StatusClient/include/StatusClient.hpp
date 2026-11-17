@@ -42,6 +42,7 @@ enum class ParseCode
 {
     Ok,
     BadSize,
+    WrongCommand,
 };
 
 enum class StatusCode
@@ -58,6 +59,30 @@ enum class CommandCode
     BadTarget,
     NotReachable,
     TimedOut,
+};
+
+enum class ReloadCode
+{
+    Applied,
+    Refused,
+    NotReachable,
+    TimedOut,
+    // Sent without waiting for the answer.
+    Sent,
+};
+
+// The manager's answer to a reload.
+struct ReloadReply
+{
+    bool applied = false;
+    // Why the manager refused it, worded for the command line; empty when it was applied.
+    std::string refusal;
+    int added = 0;
+    int removed = 0;
+    int changed = 0;
+    int kept = 0;
+    int skipped = 0;
+    int unchanged = 0;
 };
 
 /**
@@ -100,5 +125,40 @@ CommandCode SendCommand(command_watch::Command command, std::string_view target,
  * @return 0 for Done, 2 for TimedOut, otherwise 1.
  */
 int ExitCode(CommandCode code);
+
+/**
+ * @brief Decode the manager's answer to a reload: one 16-byte record.
+ * @param bytes The answer.
+ * @param out Receives the answer on success.
+ * @return ParseCode::Ok, BadSize for another size, or WrongCommand for an answer to another command.
+ */
+ParseCode ParseReloadReply(std::string_view bytes, ReloadReply& out);
+
+/**
+ * @brief Describe what a reload did, for the command line.
+ * @param reply The manager's answer.
+ * @param before The services in the last report before the reload.
+ * @param after The services in the first report after it.
+ * @param named Whether @p before and @p after are real reports; without them only the counts are told.
+ * @return One line per fact: the outcome and counts first, then the names the reports show.
+ */
+std::vector<std::string> DescribeReload(const ReloadReply& reply, const std::vector<status_table::ServiceSample>& before,
+                                        const std::vector<status_table::ServiceSample>& after, bool named);
+
+/**
+ * @brief Ask the manager to read its configuration again and, when waiting, print what it did.
+ * @param endpoints Where the reports come from and the commands go.
+ * @param wait Wait up to @p timeout for the answer; without it the request is sent and nothing printed.
+ * @param timeout How long the answer is waited for.
+ * @return ReloadCode::Applied or Refused as the manager answered, Sent without waiting, otherwise the failure.
+ */
+ReloadCode SendReload(const Endpoints& endpoints, bool wait, std::chrono::seconds timeout);
+
+/**
+ * @brief Turn a reload's outcome into the command line's exit code.
+ * @param code The outcome.
+ * @return 0 for Applied and Sent, 2 for TimedOut, otherwise 1.
+ */
+int ExitCode(ReloadCode code);
 
 } // namespace status_client

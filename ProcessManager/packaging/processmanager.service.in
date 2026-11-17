@@ -6,6 +6,9 @@ After=network-online.target
 [Service]
 Type=simple
 ExecStart=@INSTALLED_MANAGER@
+# systemctl reload: the manager reads its configuration and services.d again and applies what changed. A service
+# that changed keeps running and takes its new definition at its next start.
+ExecReload=@INSTALLED_MANAGER@ reload
 # The manager moves itself into a task_pm cgroup and gives each service a task_<name> cgroup next to it.
 Delegate=yes
 # SIGTERM goes to the manager alone, which stops its services itself: each within twice its ForceKillTimeoutMs.

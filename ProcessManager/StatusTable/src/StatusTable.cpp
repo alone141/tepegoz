@@ -359,7 +359,7 @@ std::string StatusTable::Render(const TableOptions& options) const
         const bool alive = IsAlive(sample.state) && sample.pid > 0;
         const std::optional<double> percent = CpuPercent(sample.name);
         std::vector<Cell> row{};
-        row.push_back(Cell{sample.name, {}});
+        row.push_back(Cell{sample.restartToApply ? sample.name + std::string{restart_mark} : sample.name, {}});
         row.push_back(Cell{std::string{StateName(sample.state)}, StateColor(sample.state)});
         row.push_back(alive ? Cell{std::to_string(sample.pid), {}} : none);
         row.push_back(alive && sample.startNs > 0
@@ -414,6 +414,13 @@ std::string StatusTable::Render(const TableOptions& options) const
             text.pop_back();
         }
         out += text + "\n";
+    }
+
+    const bool marked = std::any_of(report.begin(), report.end(),
+                                    [](const ServiceSample& sample) { return sample.restartToApply; });
+    if (marked)
+    {
+        out += std::string{restart_note} + "\n";
     }
     return out;
 }

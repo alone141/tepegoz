@@ -61,7 +61,8 @@ The paths are built into the manager and the unit when you configure, so set the
 ```bash
 sudo systemctl start processmanager
 sudo systemctl stop processmanager
-sudo systemctl restart processmanager          # also how a changed configuration is read
+sudo systemctl restart processmanager          # stops every service and starts the manager again
+sudo systemctl reload processmanager           # reads a changed configuration without a restart
 systemctl status processmanager
 journalctl -u processmanager -f
 ```
@@ -73,6 +74,8 @@ The installed unit has these settings:
 - **`TimeoutStopSec=180`:** after 180 s, systemd kills whatever is still running.
 - **`Restart=on-failure`:** systemd restarts the manager if it exits with an error or crashes. A manager that
   stops because its broker failed exits with 0, so it is not restarted.
+- **`ExecReload`:** `systemctl reload` runs `iltaren-ProcessManager reload`. See
+  [Reloading the configuration](#reloading-the-configuration). A refused reload makes `systemctl reload` fail.
 
 ### By hand
 
@@ -123,16 +126,18 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 | `generate` | Writes `ProcessManagerConfig.yaml` with every key documented, in the current folder. |
 | `status` | Shows a live table, redrawn every second. See [The status table](#the-status-table). Ctrl+C leaves. |
 | `status --once` | Prints the table once and exits. It follows the reports for a second first, so CPU has a figure. Exits with 1 if no report comes within 3 s. |
+| `reload` | The running manager reads its configuration and `services.d` again and applies what changed. See [Reloading the configuration](#reloading-the-configuration). |
+| `reload --no-wait` | Sends the reload and exits at once, with 0, or with 1 when the manager is not reachable. |
 | `--start NAME`, `-s NAME` | Starts `NAME` and the services in its `DependsOn`. Sets it to Auto, so it is restarted by its `RestartMode`. |
 | `--kill NAME`, `-k NAME` | Stops `NAME` and sets it to Manual, so it stays stopped. |
 | `--restart NAME`, `-r NAME` | Stops `NAME` and starts it again, with its dependencies started first. Sets it to Auto. |
-| `--disable NAME`, `-d NAME` | Stops `NAME` and removes it from the manager until the manager restarts. |
+| `--disable NAME`, `-d NAME` | Stops `NAME` and removes it from the manager until the manager restarts, or until a reload finds it in the configuration again. |
 | `--kill all` | Stops every service and sets each to Manual. |
-| `--start all`, `--restart all` | Stops every service, rebuilds all of them from the configuration read at startup (registered services included, as they were then), and starts every one, Manual ones included. Disabled services come back. |
+| `--start all`, `--restart all` | Stops every service, rebuilds all of them from the configuration last read, at startup or by the last applied reload (registered services included, as they were then), and starts every one, Manual ones included. Disabled services come back, and every definition that waited for a restart takes effect. |
 | `--help`, `-h` | Lists the options. |
 
-- **Where commands go:** `--start`, `--kill`, `--restart` and `--disable` go to the manager on the same machine,
-  through `tcp://localhost:5557`.
+- **Where commands go:** `--start`, `--kill`, `--restart`, `--disable` and `reload` go to the manager on the
+  same machine, through `tcp://localhost:5557`.
 - **Checking the name:** the command line reads the manager's reports first. A name the manager does not have
   is not sent; the message lists the names it has.
 - **Following the command:** after sending, the command line follows the reports for up to 10 s and prints what
@@ -166,6 +171,8 @@ vision_pipeline   Stopped        -         -      -         -      -         -  
 - **HEARTBEAT:** how long ago the last heartbeat came, or the missed beats in red. It shows `-` for a service
   without `CheckHealth`, or before its first heartbeat.
 - **Stopped services:** `-` for the process figures.
+- **`*` after a name:** the service's new definition from a reload waits for its next start ("restart to
+  apply"). A line under the table explains the mark when a service has it.
 - **Colours:** the states are coloured on a terminal. `NO_COLOR`, `TERM=dumb` or output to a pipe turn them off.
 
 ## Configuration
@@ -259,8 +266,48 @@ DependsOn: [server]
   `ProcessName` other than its file name, or names a service the main file already has, enabled or not (the main
   file's service is used). A file that cannot be read is reported too. Such a file is skipped, and everything
   else is loaded.
-- **When the folder is read:** at startup only, like the main file, so restart the manager after changing it.
-  `validate --config FILE` and `graph --config FILE` read the folder next to `FILE`.
+- **When the folder is read:** at startup and on every reload, like the main file. `validate --config FILE` and
+  `graph --config FILE` read the folder next to `FILE`.
+
+### Reloading the configuration
+
+`iltaren-ProcessManager reload` (or `systemctl reload processmanager`) makes the running manager read its
+configuration file and its `services.d` folder again, and touch only what changed. It works service by service,
+by `ProcessName`:
+
+| The service | What the reload does |
+|---|---|
+| New: in the configuration, not in the manager | Adds it and starts it by its work mode, as at startup, in dependency order. |
+| Gone: no entry in the main file and no file in `services.d`, or `Enabled: false` | Stops it and removes it, as `--disable` does. |
+| Present, but its new definition cannot be read | Keeps it exactly as it is, running or not, and logs the problem. |
+| Changed | Keeps it running with its old definition. The new one waits for its next start, whatever starts it. |
+| Unchanged | Leaves it alone: same pid, same restart count, same start time. |
+
+- **What a change is:** the service's own keys and values. Comments, the order of the keys, the layout of the
+  file and a move between the main file and `services.d` with the same keys are no change.
+- **Cannot be read:** a file in `services.d` that is skipped for a problem (see
+  [Registered services](#registered-services-servicesd)), or an entry the manager ignores, such as one without
+  `ExecutablePath`. An entry whose `ProcessName` itself cannot be read could be any service, so while there is
+  one, no service is removed.
+- **Restart to apply:** a changed service is marked until its new definition takes effect, with `*` in
+  `status`. The new definition takes effect at the service's next start: `--start`, `--restart`, an automatic
+  restart, or `--start all`. Taking effect starts and stops nothing by itself, and a service stopped with
+  `--kill` stays stopped. It brings its own `WorkMode`, except that `--start` and `--restart` still make the
+  service Auto.
+- **Refused as a whole:** the manager logs an error and changes nothing when the main file cannot be opened or
+  is not valid YAML, its top level is not a mapping or its `Services` is not a list, the `services.d` folder
+  exists but cannot be listed, or the new configuration has two services of the same name or a dependency
+  cycle. A folder that cannot be listed is never taken for an empty one.
+- **`ProcessManager` settings:** `LogLevel` takes effect at once. A changed `Mode` applies to services the
+  reload adds from then on, and to new definitions when they take effect; running services keep their work mode.
+- **Disabled services:** one removed with `--disable` comes back on a reload if the configuration still has it.
+- **After the reload:** `--start all` builds from the configuration this reload read.
+- **What the command prints:** whether the reload was applied or refused, how many services were added,
+  removed, changed, kept and unchanged, and the names the health reports show: the added and removed ones, and
+  the ones that wait for a restart. The manager's log names every service.
+- **Exit codes:** 0 when applied, also when nothing changed; 1 when refused or the manager is not reachable;
+  2 when no answer comes within 10 s. `--no-wait` only sends the reload, and the manager does not answer it: 0
+  once it is sent, 1 when the manager is not reachable.
 
 ## How services are run
 
