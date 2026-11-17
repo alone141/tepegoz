@@ -67,7 +67,7 @@ The version the manager logs at start is the one in the root `project()` call.
 `iltaren-ProcessManager validate --config FILE` reports YAML errors with their line, unknown keys,
 values of the wrong kind, reserved names, missing dependencies and cycles.
 
-### Unreleased
+### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of
   services (the INI format stopped at 10), and `Enabled: false` instead of renaming a section to `[x]`.
   INI files need converting.
