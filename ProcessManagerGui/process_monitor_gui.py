@@ -17,12 +17,16 @@ state band and the Graphs / cgroup PIDs / Journal tabs for a process,
 systemctl status and the unit journal for the manager, or who is connected to
 the network manager and what happened there (from its status publisher, see
 network_status). The widgets live in process_views.py and network_view.py;
-this module owns the workers and wires them to the views.
+this module owns the workers and wires them to the views. Services are
+registered, changed and removed through the manager's service registry
+(service_registry, and the dialog in registry_view).
 """
 
 from __future__ import annotations
 
 import argparse
+import html
+import itertools
 import os
 import statistics
 import sys
@@ -30,7 +34,7 @@ import threading
 import time
 from collections import deque
 from queue import Empty, SimpleQueue
-from typing import Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Deque, Dict, List, Optional, Sequence, Tuple
 
 import zmq
 from PyQt6.QtCore import QObject, QSize, QThread, QTimer, pyqtSignal, pyqtSlot, Qt
@@ -89,6 +93,7 @@ from process_views import (  # noqa: F401  re-exported
     TEXT,
     TEXT_DIM,
     TEXT_MUTED,
+    REGISTRY_BUTTON_STYLE,
     ElidedLabel,
     ProcessDetailPage,
     ProcessSidebar,
@@ -97,6 +102,31 @@ from process_views import (  # noqa: F401  re-exported
     pill_style,
     service_active_text,
     uptime_text,
+)
+from registry_view import ADD_MODE, DUPLICATE_MODE, EDIT_MODE, ServiceDialog
+from service_registry import (
+    ADD,
+    DUPLICATE,
+    EDIT,
+    ERROR,
+    REFUSED,
+    REGISTRY_ENDPOINT,
+    REGISTRY_PORT,
+    REMOVE,
+    UNREACHABLE,
+    RegistryClient,
+    RegistryReply,
+    ServiceEntry,
+    browse_allowed,
+    dependents_of,
+    form_from_definition,
+    list_failed_reason,
+    parse_services,
+    registry_actions,
+    remove_request,
+    show_request,
+    unreachable,
+    unreachable_reason,
 )
 from remote_journal import (
     JOURNAL_ENDPOINT,
@@ -138,6 +168,8 @@ MAX_REPORTS_PER_READ = 100
 REPORT_PORT = 6667
 COMMAND_PORT = 5557
 NETWORK_PORT = endpoint_port(NETWORK_ENDPOINT) or 6669
+# How often the window asks the service registry what is registered; it also asks after each change it makes.
+REGISTRY_POLL_MS = 5000
 # A worker round waits for the journal server in 100 ms steps and stops waiting
 # when asked to stop (a local journalctl call takes at most 5 s), so waiting this
 # long never has to fall back to QThread.terminate() in practice.
@@ -765,6 +797,63 @@ class LogRecordWorker(JournalWorkerBase):
         self.finished.emit()
 
 
+class RegistryWorker(QObject):
+    """Asks the manager's service registry (service_registry), one request at a time, off the UI thread.
+
+    Each answer comes as reply_ready with the id request() returned. A registry that cannot be reached, or does not
+    answer in 10 s, gives an UNREACHABLE reply, so every request is answered once. The endpoint can change while it
+    runs; the next request goes to the new one.
+    """
+
+    reply_ready = pyqtSignal(int, object)  # request id, RegistryReply
+
+    def __init__(self, endpoint: str = REGISTRY_ENDPOINT, parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self._running = True  # cleared by stop() only, which may come before start()
+        self._endpoint = endpoint
+        self._queue: SimpleQueue = SimpleQueue()  # (id, operation, parameters or None)
+        self._ids = itertools.count(1)
+
+    def set_endpoint(self, endpoint: str) -> None:
+        """Thread-safe: a single attribute write, read before each request."""
+        self._endpoint = endpoint
+
+    def endpoint(self) -> str:
+        return self._endpoint
+
+    def request(self, operation: str, params: Optional[dict] = None) -> int:
+        """Thread-safe: queue a request. Its answer comes as reply_ready with the id returned."""
+        request_id = next(self._ids)
+        self._queue.put((request_id, operation, params))
+        return request_id
+
+    def stop(self):
+        self._running = False
+
+    @pyqtSlot()
+    def start(self):
+        client: Optional[RegistryClient] = None
+        while self._running:
+            try:
+                request_id, operation, params = self._queue.get(timeout=0.1)
+            except Empty:
+                continue
+            endpoint = self._endpoint
+            if client is None or client.endpoint != endpoint:
+                if client is not None:
+                    client.close()
+                client = RegistryClient(endpoint)
+            try:
+                reply = client.request(operation, params, cancelled=lambda: not self._running)
+            except Exception as e:  # a bug must not end the loop: every later request would go unanswered
+                client.close()
+                reply = RegistryReply(ERROR, {"message": f"the request could not be made: {e}"}, operation)
+            if self._running:
+                self.reply_ready.emit(request_id, reply)
+        if client is not None:
+            client.close()
+
+
 class ProcessLogWindow(QMainWindow):
     """A journal window for one PID (or, kept for scripts, one cgroup)."""
 
@@ -994,12 +1083,17 @@ class ProcessMonitorWindow(FramelessMainWindow):
         network_endpoint: str = NETWORK_ENDPOINT,
         parent: Optional[QWidget] = None,
         journal_endpoint: str = JOURNAL_ENDPOINT,
+        registry_endpoint: Optional[str] = None,
     ):
         super().__init__(parent)
         self.sub_endpoint    = sub_endpoint
         self.dealer_endpoint = dealer_endpoint
         self.network_endpoint = network_endpoint
         self.journal_endpoint = journal_endpoint
+        # Without one of its own, the registry is on the machine of the health reports.
+        self.registry_endpoint = registry_endpoint or endpoint_on(
+            endpoint_host(sub_endpoint).strip("[]"), REGISTRY_PORT
+        )
 
         self.setWindowTitle("Process Monitor")
         fit_to_screen(self, QSize(1180, 760), minimum=QSize(900, 600))
@@ -1027,6 +1121,14 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self._manager_clock_offset_ns = 0
         self._recording: Tuple[str, ...] = ()  # the services being recorded
         self._record_dialog: Optional[RecordLogsDialog] = None
+        # The service registry: what it listed (None while it does not answer), and why its actions are off
+        # ("" while it answers, or before its first answer).
+        self._registry_services: Optional[Dict[str, ServiceEntry]] = None
+        self._registry_unavailable = ""
+        self._registry_callbacks: Dict[int, Callable[[RegistryReply], None]] = {}
+        self._registry_lists = 0  # list requests not answered yet
+        self._service_dialog: Optional[ServiceDialog] = None
+        self._select_when_reported = ""  # a service just added: shown once its reports arrive
 
         self._build_ui()
         self._feed_timer = QTimer(self)
@@ -1039,6 +1141,12 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self._start_cgroup_members_worker()
         self._start_detail_journal_worker()
         self._start_log_record_worker()
+        self._start_registry_worker()
+        self._registry_timer = QTimer(self)
+        self._registry_timer.setInterval(REGISTRY_POLL_MS)
+        self._registry_timer.timeout.connect(self._poll_registry)
+        self._registry_timer.start()
+        self._refresh_registry()
         self._show_connecting()
 
     # ── UI ────────────────────────────────────────────────────────────────
@@ -1126,11 +1234,17 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self.sidebar.network_selected.connect(self._on_network_selected)
         self.sidebar.process_selected.connect(self._on_process_selected)
         self.sidebar.command_requested.connect(self._send_cmd)
+        self.sidebar.registry_requested.connect(self._on_registry_action)
         side_layout.addWidget(self.sidebar, stretch=1)
+        self.btn_add_service = QPushButton("Add service…")
+        self.btn_add_service.setStyleSheet(REGISTRY_BUTTON_STYLE)
+        self.btn_add_service.clicked.connect(lambda _checked=False: self._on_registry_action(ADD, ""))
+        side_layout.addWidget(self.btn_add_service)
 
         # Detail: one page per kind of selection
         self.detail = ProcessDetailPage(self._usage)
         self.detail.command_requested.connect(self._send_cmd)
+        self.detail.registry_requested.connect(self._on_registry_action)
         self.detail.pid_activated.connect(self._on_pid_activated)
         self.detail.pop_out_requested.connect(self._open_usage_graphs)
         self.service_page = ServiceDetailPage()
@@ -1175,6 +1289,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
 
         self._show_endpoints()
         self._show_network_state()
+        self._show_registry()
         # Start on the manager page; the first report selects a process.
         self.sidebar.blockSignals(True)
         self.sidebar.select_manager()
@@ -1183,8 +1298,11 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self.sidebar.setFocus()
 
     def _machine(self) -> Optional[str]:
-        """The machine all four endpoints are on, or None when they are on several."""
-        endpoints = (self.sub_endpoint, self.dealer_endpoint, self.network_endpoint, self.journal_endpoint)
+        """The machine all five endpoints are on, or None when they are on several."""
+        endpoints = (
+            self.sub_endpoint, self.dealer_endpoint, self.network_endpoint, self.journal_endpoint,
+            self.registry_endpoint,
+        )
         hosts = {endpoint_host(endpoint).strip("[]") for endpoint in endpoints}
         return next(iter(hosts)) if len(hosts) == 1 else None
 
@@ -1194,13 +1312,14 @@ class ProcessMonitorWindow(FramelessMainWindow):
         self.lbl_machine.setToolTip(
             f"SUB {self.sub_endpoint}\nDEALER {self.dealer_endpoint}"
             f"\nNET {self.network_endpoint}\nJOURNAL {self.journal_endpoint}"
+            f"\nREGISTRY {self.registry_endpoint}"
         )
-        # HOST shows the machine when all four are on one; it stays empty otherwise.
+        # HOST shows the machine when all five are on one; it stays empty otherwise.
         self.edit_host.setText(machine or "")
         self.edit_host.setPlaceholderText("several machines" if machine is None else "machine")
 
     def _apply_host(self) -> None:
-        """Put the machine typed in HOST in all four endpoints, keeping their ports, and reconnect.
+        """Put the machine typed in HOST in all five endpoints, keeping their ports, and reconnect.
 
         An empty HOST reconnects to the endpoints as they are, which may be on several machines.
         """
@@ -1214,6 +1333,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
             self.dealer_endpoint = endpoint_on(host, endpoint_port(self.dealer_endpoint) or COMMAND_PORT)
             self.network_endpoint = endpoint_on(host, endpoint_port(self.network_endpoint) or NETWORK_PORT)
             self.journal_endpoint = endpoint_on(host, endpoint_port(self.journal_endpoint) or JOURNAL_PORT)
+            self.registry_endpoint = endpoint_on(host, endpoint_port(self.registry_endpoint) or REGISTRY_PORT)
         self._reconnect()
 
     def _show_status(self, message: str) -> None:
@@ -1229,6 +1349,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         report = self._current.get(name)
         self.detail.set_process(name, report, *self._members_of(name))
         self.detail.set_stale(self._stale)
+        self._show_registry()
         worker = getattr(self, "detail_journal_worker", None)
         if worker is not None:
             worker.set_process(name)
@@ -1299,7 +1420,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         worker = getattr(self, worker_attr, None)
         thread = getattr(self, thread_attr, None)
         if worker is not None:
-            for name in ("snapshot_ready", "members_ready", "lines_ready", "states_ready", "failed"):
+            for name in ("snapshot_ready", "members_ready", "lines_ready", "states_ready", "failed", "reply_ready"):
                 signal = getattr(worker, name, None)
                 if signal is None:
                     continue
@@ -1429,6 +1550,9 @@ class ProcessMonitorWindow(FramelessMainWindow):
         if self._auto_select and self._current:
             self._auto_select = False
             self.sidebar.select_process(sorted(self._current)[0])
+        if self._select_when_reported in self._current:
+            self.sidebar.select_process(self._select_when_reported)
+            self._select_when_reported = ""
         self.lbl_last_update.setText(
             f"Last update: {time.strftime('%H:%M:%S')}"
         )
@@ -1670,12 +1794,246 @@ class ProcessMonitorWindow(FramelessMainWindow):
                 window.set_journal_endpoint(self.journal_endpoint)
             except RuntimeError:
                 pass
+        # The registry worker too; what it listed was another machine's, perhaps.
+        registry_worker = getattr(self, "registry_worker", None)
+        if registry_worker is not None:
+            registry_worker.set_endpoint(self.registry_endpoint)
+        self._registry_services = None
+        self._registry_unavailable = ""
+        self._show_registry()
+        self._refresh_registry()
         self.btn_reconnect.setEnabled(True)
         self._show_connecting()
 
     def _show_connecting(self) -> None:
         machine = self._machine()
         self._show_status(f"Connecting to {'several machines' if machine is None else machine}")
+
+    # ── service registry ──────────────────────────────────────────────────
+
+    def _start_registry_worker(self):
+        self.registry_thread = QThread()
+        self.registry_worker = RegistryWorker(self.registry_endpoint)
+        self.registry_worker.moveToThread(self.registry_thread)
+        self.registry_thread.started.connect(self.registry_worker.start)
+        self.registry_worker.reply_ready.connect(self._on_registry_reply)
+        self.registry_thread.start()
+
+    def _ask_registry(
+        self, operation: str, params: Optional[dict], callback: Callable[[RegistryReply], None]
+    ) -> bool:
+        """Send a request through the registry worker; ``callback`` gets its answer on this thread."""
+        worker = getattr(self, "registry_worker", None)
+        if worker is None:
+            return False
+        self._registry_callbacks[worker.request(operation, params)] = callback
+        return True
+
+    @pyqtSlot(int, object)
+    def _on_registry_reply(self, request_id: int, reply: RegistryReply) -> None:
+        callback = self._registry_callbacks.pop(request_id, None)
+        if callback is not None:
+            callback(reply)
+
+    def _poll_registry(self) -> None:
+        # One list at a time: a registry that does not answer must not pile them up.
+        if self._registry_lists == 0:
+            self._refresh_registry()
+
+    def _refresh_registry(self) -> None:
+        """Ask the registry what the manager has; after a change, at once, even with a list on its way."""
+        endpoint = self.registry_endpoint
+        if self._ask_registry("list", None, lambda reply, e=endpoint: self._on_registry_list(e, reply)):
+            self._registry_lists += 1
+
+    def _on_registry_list(self, endpoint: str, reply: RegistryReply) -> None:
+        self._registry_lists = max(0, self._registry_lists - 1)
+        if endpoint != self.registry_endpoint:
+            return  # an answer from the machine before the last reconnect
+        if reply.ok:
+            services: Optional[Dict[str, ServiceEntry]] = parse_services(reply)
+            unavailable = ""
+        elif reply.status == UNREACHABLE:
+            services, unavailable = None, unreachable_reason(self.registry_endpoint)
+        else:
+            services, unavailable = None, list_failed_reason(reply)
+        if services == self._registry_services and unavailable == self._registry_unavailable:
+            return
+        self._registry_services = services
+        self._registry_unavailable = unavailable
+        self._show_registry()
+
+    def _registry_actions(self, name: Optional[str]) -> Dict[str, Tuple[bool, str]]:
+        return registry_actions(name, self._registry_services, self._registry_unavailable)
+
+    def _show_registry(self) -> None:
+        """The registry's state on the Add button, the sidebar's menu and the service page."""
+        enabled, tip = self._registry_actions(None)[ADD]
+        self.btn_add_service.setEnabled(enabled)
+        self.btn_add_service.setToolTip(tip)
+        self.sidebar.set_registry(self._registry_services, self._registry_unavailable)
+        name = self.detail.name
+        if name:
+            entry = (self._registry_services or {}).get(name)
+            self.detail.set_registry(entry, self._registry_actions(name))
+
+    def _on_registry_action(self, kind: str, name: str) -> None:
+        """Add, Edit, Duplicate or Remove, from the Add button, the sidebar's menu or the service page."""
+        enabled, why = self._registry_actions(name or None)[kind]
+        if not enabled:
+            self._show_status(why)
+            return
+        if kind == ADD:
+            self._open_service_dialog(ADD_MODE)
+        elif kind in (EDIT, DUPLICATE):
+            self._open_from_definition(name, EDIT_MODE if kind == EDIT else DUPLICATE_MODE)
+        elif kind == REMOVE:
+            self._remove_service(name)
+
+    def _open_from_definition(self, name: str, mode: str) -> None:
+        """Edit and Duplicate: read the service's definition with show, then open the dialog filled from it."""
+        if self._raise_service_dialog():
+            return
+        self._show_status(f"Reading the definition of {name}…")
+
+        def opened(reply: RegistryReply) -> None:
+            if not reply.ok:
+                self._show_status(f"The definition of {name} could not be read: {reply.message}")
+                return
+            definition = reply.get("definition")
+            notice = ""
+            if not isinstance(definition, dict):
+                # A file of services.d that the manager skipped: start from nothing but its name.
+                definition = None
+                notice = f"The manager skipped {reply.get('file', 'its file')}: {reply.get('problem', '')}"
+                text = str(reply.get("fileText") or "")
+                if text:
+                    notice += "\n\nIt reads:\n" + text.rstrip()
+            self._show_status(f"{'Editing' if mode == EDIT_MODE else 'Duplicating'} {name}")
+            self._open_service_dialog(mode, definition, name, notice)
+
+        operation, params = show_request(name)
+        if not self._ask_registry(operation, params, opened):
+            self._show_status("Not connected to the service registry")
+
+    def _raise_service_dialog(self) -> bool:
+        """Show the service dialog already open, if there is one: one change at a time."""
+        if self._service_dialog is None:
+            return False
+        try:
+            self._service_dialog.raise_()
+            self._service_dialog.activateWindow()
+            return True
+        except RuntimeError:  # already deleted
+            self._service_dialog = None
+            return False
+
+    def _open_service_dialog(
+        self, mode: str, definition: Optional[dict] = None, source: str = "", notice: str = ""
+    ) -> Optional[ServiceDialog]:
+        if self._raise_service_dialog():
+            return None
+        form = form_from_definition(definition, source if mode == EDIT_MODE else "")
+        dialog = ServiceDialog(
+            mode,
+            form,
+            sorted(self._registry_services or {}),
+            base=definition,
+            browse=browse_allowed(self.registry_endpoint),
+            source=source,
+            notice=notice,
+            parent=self,
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.request_wanted.connect(
+            lambda operation, params, dry_run, d=dialog: self._send_dialog_request(d, operation, params, dry_run)
+        )
+        dialog.registered.connect(self._on_service_registered)
+        dialog.finished.connect(lambda _result: setattr(self, "_service_dialog", None))
+        self._service_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
+
+    def _send_dialog_request(self, dialog: ServiceDialog, operation: str, params: dict, dry_run: bool) -> None:
+        name = str(params.get("name", ""))
+
+        def answered(reply: RegistryReply) -> None:
+            if not dry_run:
+                self._refresh_registry()  # also after no answer: the change may have been made
+            try:
+                dialog.show_reply(reply)
+            except RuntimeError:  # the dialog was closed meanwhile: the status bar says what came of it
+                if not dry_run:
+                    self._show_status(f"{operation} {name}: {reply.message}")
+
+        if not self._ask_registry(operation, params, answered):
+            dialog.show_reply(unreachable("not connected to the service registry", operation))
+
+    def _on_service_registered(self, reply: RegistryReply) -> None:
+        message = reply.message
+        self._show_status(message[:1].upper() + message[1:])
+        if reply.operation == "add":
+            self._select_when_reported = str(reply.get("name", ""))
+
+    def _remove_service(self, name: str) -> None:
+        entry = (self._registry_services or {}).get(name)
+        where = entry.file if entry is not None else "its file in services.d"
+        answer = QMessageBox.question(
+            self,
+            "Remove service",
+            f"Remove <b>{html.escape(name)}</b>?<br><br>The manager deletes <b>{html.escape(where)}</b> and "
+            "reloads: the service stops and is removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._send_remove(name, force=False)
+
+    def _send_remove(self, name: str, force: bool) -> None:
+        operation, params = remove_request(name, force)
+        if self._ask_registry(operation, params, lambda reply: self._on_removed(name, force, reply)):
+            self._show_status(f"Removing {name}…")
+        else:
+            self._show_status("Not connected to the service registry")
+
+    def _on_removed(self, name: str, force: bool, reply: RegistryReply) -> None:
+        self._refresh_registry()
+        if reply.ok:
+            self._show_status(reply.message[:1].upper() + reply.message[1:])
+            return
+        self._show_status(f"{name} was not removed: {reply.message}")
+        box, anyway = self.removal_refused_box(name, force, reply)
+        box.exec()
+        if anyway is not None and box.clickedButton() is anyway:
+            self._send_remove(name, force=True)
+
+    def removal_refused_box(
+        self, name: str, force: bool, reply: RegistryReply
+    ) -> Tuple[QMessageBox, Optional[QPushButton]]:
+        """Why a remove was refused; with a "Remove anyway" button when other services need the one removed."""
+        dependents = dependents_of(reply.problems, name) if reply.status == REFUSED and not force else []
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Remove service")
+        if dependents:
+            box.setText(
+                f"<b>{html.escape(name)}</b> is needed by other services:<br><br>"
+                + "<br>".join(f"• {html.escape(dependent)}" for dependent in dependents)
+            )
+            box.setInformativeText(
+                "Removed anyway, they keep running, and their next start misses it. "
+                "Or change their dependencies first."
+            )
+            anyway = box.addButton("Remove anyway", QMessageBox.ButtonRole.DestructiveRole)
+            cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+            box.setDefaultButton(cancel)
+            return box, anyway
+        lines = [html.escape(reply.message)] + [f"• {html.escape(problem)}" for problem in reply.problems]
+        box.setText(f"<b>{html.escape(name)}</b> was not removed:<br><br>" + "<br>".join(lines))
+        box.addButton(QMessageBox.StandardButton.Ok)
+        return box, None
 
     # ── recording logs ────────────────────────────────────────────────────
 
@@ -1769,8 +2127,10 @@ class ProcessMonitorWindow(FramelessMainWindow):
             ("cgroup_members_worker", "cgroup_members_thread"),
             ("detail_journal_worker", "detail_journal_thread"),
             ("systemd_worker", "systemd_thread"),
+            ("registry_worker", "registry_thread"),
         ):
             pairs.append(self._detach_background_worker(worker_attr, thread_attr))
+        self._registry_timer.stop()
         pairs.append(self._detach_zmq_worker())
         pairs.append(self._detach_network_worker())
         stop_workers(pairs)
@@ -1788,6 +2148,11 @@ class ProcessMonitorWindow(FramelessMainWindow):
                 pass
         if self._record_dialog is not None:
             self._record_dialog.close()
+        if self._service_dialog is not None:
+            try:
+                self._service_dialog.close()
+            except RuntimeError:
+                pass
         super().closeEvent(event)
 
 
@@ -1820,6 +2185,10 @@ def main():
         "--journal",
         help=f"ZMQ endpoint of the manager's journal server (default: tcp://HOST:{JOURNAL_PORT})",
     )
+    parser.add_argument(
+        "--registry",
+        help=f"ZMQ endpoint of the manager's service registry (default: tcp://HOST:{REGISTRY_PORT})",
+    )
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
@@ -1830,6 +2199,7 @@ def main():
         args.dealer or endpoint_on(args.host, COMMAND_PORT),
         args.network or endpoint_on(args.host, NETWORK_PORT),
         journal_endpoint=args.journal or endpoint_on(args.host, JOURNAL_PORT),
+        registry_endpoint=args.registry or endpoint_on(args.host, REGISTRY_PORT),
     )
     win.show()
     sys.exit(app.exec())

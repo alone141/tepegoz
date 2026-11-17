@@ -190,6 +190,7 @@ def report_to_dict(report: DetailedHealthReport) -> dict:
         "memoryUsageInBytes": int(report.memoryUsageInBytes),
         "cpuUsageInUsec":     int(report.cpuUsageInUsec),
         "state":              RuntimeState.from_byte(rh.state),
+        "restartToApply":     bool(rh.restartToApply),
         "start_time":         int(rh.start_time),
         "lastSeen":           int(rh.lastSeen),
         "missedBeats":        int(rh.missedBeats),

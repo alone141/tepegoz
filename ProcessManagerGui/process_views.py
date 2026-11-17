@@ -56,6 +56,7 @@ from PyQt6.QtWidgets import (
 
 from health_structs import CommandEnum, RuntimeState, format_bytes, format_duration_ns
 from journal_view import JournalView
+from service_registry import ADD, DUPLICATE, EDIT, REMOVE, ServiceEntry, origin_text, registry_actions
 from systemd_logs import SERVICE_UNIT, task_cgroup_name
 from ui_scale import MONO_FONT_FAMILIES, ui_font, ui_point_size
 from usage_graphs import (
@@ -87,6 +88,12 @@ TEXT_DIM = "#aaaaaa"
 TEXT_MUTED = "#888888"
 DANGER = "#f44336"
 STALE_COLOR = QColor("#777777")
+# A service whose new definition waits for its next start; the status table marks it with * too.
+RESTART_TO_APPLY_COLOR = "#ffb300"
+RESTART_TO_APPLY_TIP = (
+    "Restart to apply: the manager has a new definition for this service, from a reload or a change through the "
+    "registry. The service keeps running with its old one until its next start; Restart applies it now."
+)
 
 STATE_COLORS: Dict[RuntimeState, str] = {
     RuntimeState.UNKNOWN: "#9c27b0",
@@ -138,6 +145,12 @@ COMMAND_LABELS: Tuple[Tuple[CommandEnum, str], ...] = (
     (CommandEnum.STOP, "Stop"),
     (CommandEnum.RESTART, "Restart"),
 )
+# The registry actions on a service, in the order of its page's buttons and of the sidebar's menu.
+REGISTRY_LABELS: Tuple[Tuple[str, str], ...] = (
+    (EDIT, "Edit…"),
+    (DUPLICATE, "Duplicate…"),
+    (REMOVE, "Remove…"),
+)
 
 TAB_STYLE = f"""
     QTabWidget::pane {{ border: 1px solid {BORDER}; background: {BG}; }}
@@ -174,6 +187,8 @@ SMALL_BUTTON_STYLE = f"""
     QPushButton:hover {{ background: #455a64; }}
     QPushButton:pressed {{ background: #263238; }}
 """
+# A small button that greys out when the registry does not answer; its tooltip says why.
+REGISTRY_BUTTON_STYLE = SMALL_BUTTON_STYLE + "QPushButton:disabled { background: #333; color: #777; }"
 # The dark palette leaves disabled text as bright as the rest: the menu greys it.
 MENU_STYLE = f"""
     QMenu {{ background: #2d2d2d; color: {TEXT}; border: 1px solid #444; padding: 4px 0; }}
@@ -346,6 +361,7 @@ class SidebarDelegate(QStyledItemDelegate):
         elif option.state & QStyle.StateFlag.State_MouseOver:
             painter.fillRect(rect, QColor(ROW_HOVER_BG))
 
+        mark = ""  # after the name: "*" while a new definition waits for a restart, as in the status table
         if kind in ("manager", "network"):
             dot = QColor(index.data(DOT_ROLE) or ACCENT)
             hint, hint_kind = (index.data(HINT_ROLE) or ""), (index.data(HINT_KIND_ROLE) or "muted")
@@ -356,8 +372,10 @@ class SidebarDelegate(QStyledItemDelegate):
             dot = QColor(state_color(state))
             hint, hint_kind = row_hint(report) if report else ("", "muted")
             name_color = QColor(TEXT_DIM if state == RuntimeState.STOPPED else TEXT)
+            mark = " *" if report.get("restartToApply") else ""
+        mark_color = QColor(RESTART_TO_APPLY_COLOR)
         if self.stale:
-            dot, name_color, hint_kind = STALE_COLOR, STALE_COLOR, "muted"
+            dot, name_color, hint_kind, mark_color = STALE_COLOR, STALE_COLOR, "muted", STALE_COLOR
 
         radius = fm.height() * 0.28
         cx = rect.left() + pad * 2 + radius
@@ -399,7 +417,8 @@ class SidebarDelegate(QStyledItemDelegate):
         painter.setFont(option.font)
         painter.setPen(name_color)
         x0 = cx + radius + pad
-        avail = max(0.0, right - hint_w - pad - x0)
+        mark_w = fm.horizontalAdvance(mark) if mark else 0
+        avail = max(0.0, right - hint_w - pad - x0 - mark_w)
         text = fm.elidedText(
             index.data(Qt.ItemDataRole.DisplayRole), Qt.TextElideMode.ElideMiddle, int(avail)
         )
@@ -408,17 +427,29 @@ class SidebarDelegate(QStyledItemDelegate):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             text,
         )
+        if mark:
+            mark_font = QFont(option.font)
+            mark_font.setBold(True)
+            painter.setFont(mark_font)
+            painter.setPen(mark_color)
+            painter.drawText(
+                QRectF(x0 + fm.horizontalAdvance(text), rect.top(), mark_w * 2, rect.height()),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                mark,
+            )
         painter.restore()
 
 
 class ProcessSidebar(QListWidget):
     """The manager unit and its network manager, then one row per reported process, sorted by name.
-    Right-clicking a process offers Start, Stop and Restart."""
+    Right-clicking a process offers Start, Stop and Restart, then Edit, Duplicate and Remove through the
+    manager's service registry; right-clicking anywhere offers Add service."""
 
     manager_selected = pyqtSignal()
     network_selected = pyqtSignal()
     process_selected = pyqtSignal(str)
     command_requested = pyqtSignal(object, str)  # CommandEnum, process name
+    registry_requested = pyqtSignal(str, str)  # registry action (service_registry.ADD …), process name or ""
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -439,6 +470,9 @@ class ProcessSidebar(QListWidget):
         self._process_header = self._add_header("Processes")
         self._items: Dict[str, QListWidgetItem] = {}
         self._filter = ""
+        # What the service registry listed (None: no answer), and why its actions are off.
+        self._registry: Optional[Dict[str, ServiceEntry]] = None
+        self._registry_unavailable = ""
         self.currentItemChanged.connect(self._on_current_changed)
 
     def _add_header(self, text: str) -> QListWidgetItem:
@@ -465,6 +499,7 @@ class ProcessSidebar(QListWidget):
                 self.insertItem(position, item)
                 self._items[name] = item
             item.setData(REPORT_ROLE, reports[name])
+            item.setToolTip(RESTART_TO_APPLY_TIP if reports[name].get("restartToApply") else "")
             item.setHidden(not self._matches(name))
         self._process_header.setText(f"Processes · {len(names)}")
         self.viewport().update()
@@ -509,6 +544,14 @@ class ProcessSidebar(QListWidget):
         item = self._network_item
         return item.data(HINT_ROLE) or "", item.data(HINT_KIND_ROLE) or "", item.data(DOT_ROLE) or ""
 
+    def set_registry(self, services: Optional[Dict[str, ServiceEntry]], unavailable: str) -> None:
+        """What the service registry listed (None while it does not answer), and why its actions are off."""
+        self._registry = services
+        self._registry_unavailable = unavailable
+
+    def registry_actions(self, name: Optional[str]) -> Dict[str, Tuple[bool, str]]:
+        return registry_actions(name, self._registry, self._registry_unavailable)
+
     # ── selection ─────────────────────────────────────────────────────────
 
     def select_manager(self) -> None:
@@ -541,24 +584,45 @@ class ProcessSidebar(QListWidget):
 
     # ── commands ──────────────────────────────────────────────────────────
 
-    def contextMenuEvent(self, event) -> None:
-        item = self.itemAt(event.pos())
-        if item is None or item.data(KIND_ROLE) != "svc":
-            return
-        # Like a click: the row's page shows, so the command's effect is in view.
-        self.setCurrentItem(item)
-        name = item.text()  # the row may leave while the menu is open
-        state = (item.data(REPORT_ROLE) or {}).get("state", RuntimeState.UNKNOWN)
+    def context_menu(self, item: Optional[QListWidgetItem]) -> Tuple[QMenu, dict, dict]:
+        """The menu for a row (None: no service row): (menu, action -> command, action -> registry action)."""
         menu = QMenu(self)
         menu.setStyleSheet(MENU_STYLE)
+        menu.setToolTipsVisible(True)  # a greyed registry action says why
         commands = {}
-        for command, label in COMMAND_LABELS:
+        registry = {}
+        name = item.text() if item is not None else None
+        if item is not None:
+            state = (item.data(REPORT_ROLE) or {}).get("state", RuntimeState.UNKNOWN)
+            for command, label in COMMAND_LABELS:
+                action = menu.addAction(label)
+                action.setEnabled(action_enabled(command, state))
+                commands[action] = command
+            menu.addSeparator()
+        allowed = self.registry_actions(name)
+        labels = (REGISTRY_LABELS if item is not None else ()) + ((ADD, "Add service…"),)
+        for kind, label in labels:
+            enabled, tip = allowed[kind]
             action = menu.addAction(label)
-            action.setEnabled(action_enabled(command, state))
-            commands[action] = command
+            action.setEnabled(enabled)
+            action.setToolTip(tip)
+            registry[action] = kind
+        return menu, commands, registry
+
+    def contextMenuEvent(self, event) -> None:
+        item = self.itemAt(event.pos())
+        if item is not None and item.data(KIND_ROLE) != "svc":
+            item = None
+        if item is not None:
+            # Like a click: the row's page shows, so the command's effect is in view.
+            self.setCurrentItem(item)
+        name = item.text() if item is not None else ""  # the row may leave while the menu is open
+        menu, commands, registry = self.context_menu(item)
         chosen = menu.exec(event.globalPos())
         if chosen in commands:
             self.command_requested.emit(commands[chosen], name)
+        elif chosen in registry:
+            self.registry_requested.emit(registry[chosen], name)
 
 
 # ── generic widgets ──────────────────────────────────────────────────────────
@@ -882,6 +946,7 @@ class ProcessDetailPage(QWidget):
     metric tiles, the state band and the Graphs / cgroup PIDs / Journal tabs."""
 
     command_requested = pyqtSignal(object, str)  # CommandEnum, process name
+    registry_requested = pyqtSignal(str, str)  # registry action (service_registry.EDIT …), process name
     pid_activated = pyqtSignal(int, str)  # pid, comm
     pop_out_requested = pyqtSignal()
 
@@ -928,6 +993,12 @@ class ProcessDetailPage(QWidget):
         header.addWidget(self.lbl_name)
         self.pill = StatePill()
         header.addWidget(self.pill)
+        self.pill_apply = QLabel("restart to apply")
+        self.pill_apply.setFont(ui_font(0.9, QFont.Weight.Bold))
+        self.pill_apply.setStyleSheet(pill_style(RESTART_TO_APPLY_COLOR))
+        self.pill_apply.setToolTip(RESTART_TO_APPLY_TIP)
+        self.pill_apply.setVisible(False)
+        header.addWidget(self.pill_apply)
         header.addStretch()
         self.buttons: Dict[CommandEnum, QPushButton] = {}
         for command, label in COMMAND_LABELS:
@@ -949,6 +1020,26 @@ class ProcessDetailPage(QWidget):
         self.lbl_meta.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.lbl_meta.setWordWrap(True)
         root.addWidget(self.lbl_meta)
+
+        # Where the service is defined, from the service registry, and what can be done with its definition.
+        origin_row = QHBoxLayout()
+        origin_row.setSpacing(8)
+        self.lbl_origin = QLabel()
+        self.lbl_origin.setStyleSheet(mono_style(TEXT_DIM))
+        self.lbl_origin.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lbl_origin.setWordWrap(True)
+        self.lbl_origin.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        origin_row.addWidget(self.lbl_origin, 1)
+        self.registry_buttons: Dict[str, QPushButton] = {}
+        for kind, label in REGISTRY_LABELS:
+            button = QPushButton(label)
+            button.setStyleSheet(REGISTRY_BUTTON_STYLE)
+            button.setEnabled(False)
+            button.clicked.connect(lambda _checked=False, k=kind: self._request_registry(k))
+            origin_row.addWidget(button)
+            self.registry_buttons[kind] = button
+        root.addLayout(origin_row)
+        self.set_registry(None, registry_actions(None, None, ""))
 
         tiles = QGridLayout()
         tiles.setSpacing(8)
@@ -1030,6 +1121,7 @@ class ProcessDetailPage(QWidget):
         self.report = report
         state: RuntimeState = report["state"]
         self.pill.set_state(state, self._stale)
+        self.pill_apply.setVisible(bool(report.get("restartToApply")))
         self.lbl_meta.setText(meta_text(report))
         gpu_pct, vram = gpu_texts(report)
         values = {
@@ -1048,6 +1140,7 @@ class ProcessDetailPage(QWidget):
     def _show_no_report(self) -> None:
         self.report = None
         self.pill.set_state(RuntimeState.UNKNOWN, self._stale)
+        self.pill_apply.setVisible(False)
         self.lbl_meta.setText("Waiting for a health report…")
         for tile in self.tiles.values():
             tile.set_value("—")
@@ -1056,6 +1149,20 @@ class ProcessDetailPage(QWidget):
 
     def tile_values(self) -> Dict[str, str]:
         return {key: tile.val.text() for key, tile in self.tiles.items()}
+
+    def set_registry(self, entry: Optional[ServiceEntry], actions: Dict[str, Tuple[bool, str]]) -> None:
+        """Where the service is defined (None: not known), and the registry actions with why each is off."""
+        text, problem = origin_text(entry)
+        self.lbl_origin.setText(text)
+        self.lbl_origin.setToolTip(text)
+        self.lbl_origin.setStyleSheet(mono_style(DANGER if problem else TEXT_DIM))
+        for kind, button in self.registry_buttons.items():
+            enabled, tip = actions.get(kind, (False, ""))
+            button.setEnabled(enabled)
+            button.setToolTip(tip)
+
+    def origin(self) -> str:
+        return self.lbl_origin.text()
 
     def set_members(self, members: Sequence, has_cgroup: Optional[bool] = None, error: str = "") -> None:
         """The processes in the service's cgroup; has_cgroup is None while unknown, error why they are."""
@@ -1087,6 +1194,7 @@ class ProcessDetailPage(QWidget):
             tile.set_stale(stale)
         state = self.report["state"] if self.report else RuntimeState.UNKNOWN
         self.pill.set_state(state, stale)
+        self.pill_apply.setStyleSheet(pill_style(STALE_COLOR.name() if stale else RESTART_TO_APPLY_COLOR))
         self.lbl_meta.setStyleSheet(mono_style(STALE_COLOR.name() if stale else TEXT_DIM))
         self.band.set_stale(stale)
 
@@ -1106,6 +1214,10 @@ class ProcessDetailPage(QWidget):
     def _request(self, command: CommandEnum) -> None:
         if self.name:
             self.command_requested.emit(command, self.name)
+
+    def _request_registry(self, kind: str) -> None:
+        if self.name:
+            self.registry_requested.emit(kind, self.name)
 
     def _on_tab_changed(self, _index: int) -> None:
         self.tick(time.monotonic(), time.time())
