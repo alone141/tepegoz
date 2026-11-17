@@ -68,6 +68,7 @@ foreach(vendored IN ITEMS libzmq-static cppzmq-static cxxopts fkYAML)
 endforeach()
 
 add_subdirectory(ConfigSection)
+add_subdirectory(ConfigSource)
 add_subdirectory(Logger)
 add_subdirectory(NetworkManager)
 add_subdirectory(GpuMonitor)

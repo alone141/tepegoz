@@ -6,12 +6,12 @@
 #include <string>
 #include <vector>
 
-namespace config_section
+namespace config_source
 {
 
-struct ConfigValue;
+struct LoadedConfig;
 
-} // namespace config_section
+} // namespace config_source
 
 namespace process_manager
 {
@@ -28,14 +28,15 @@ public:
     void Run();
     void ShutdownSignalReceived(int signum);
 
-    // allowFallback: try the share directory's copy when configPath cannot be read.
-    static bool LoadConfig(const std::string& configPath, bool allowFallback, config_section::ConfigValue& document);
+    // allowFallback: try the share directory's copy when configPath cannot be read. The services.d folder beside
+    // the file that was read is read with it.
+    static bool LoadConfig(const std::string& configPath, bool allowFallback, config_source::LoadedConfig& loaded);
 
     static bool ValidateConfig(std::string config); // true when no problem was found
     static void PrintDependencyGraph(std::string config);
 private:
     static void InitializeLogger();
-    bool InitializeProcessManager(const config_section::ConfigValue& document);
+    bool InitializeProcessManager(const config_source::LoadedConfig& loaded);
     static void PrintErrors(const std::vector<std::string>& errList);
 
     std::unique_ptr<IProcessManager> processManager;

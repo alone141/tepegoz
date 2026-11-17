@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -536,10 +537,49 @@ def scenario_everything(c: Context) -> None:
     c.results.note("after the start: " + ", ".join(summary))
 
 
+def scenario_registered(c: Context) -> None:
+    order = ["anchor", "registered", "follower"]
+    running = wait_all(c, order, is_running, 15)
+    if c.results.check(len(running) == 3,
+                       "registered, which only services.d/registered.yaml defines, runs with anchor and follower"):
+        starts = [running[name].started_ms for name in order]
+        c.results.check(starts[0] < starts[1] < starts[2],
+                        "it starts after anchor, its DependsOn in the main file, and before follower, which "
+                        "depends on it, %d and %d ms apart" % (starts[1] - starts[0], starts[2] - starts[1]))
+    c.results.check("services.d: registered" in c.manager.log(),
+                    "the manager logs that it read registered from services.d")
+
+    before = c.watch.get("registered")
+    pid = before.pid if before else -1
+    c.manager.command("start", "all")
+    c.results.check(c.watch.wait("registered", lambda r: is_running(r) and r.pid != pid, 15) is not None,
+                    "--start all builds it again with the others and starts it with a new pid")
+
+
 def prepare_stdio(paths: Paths) -> None:
     for path in ("/tmp/pmt_to_file.txt", "/tmp/pmt_to_file_append.txt"):
         if os.path.exists(path):
             os.remove(path)
+
+
+def place_registered(paths: Paths, config: str, workdir: str) -> str:
+    """Copies the config into the run folder and writes a services.d next to it, which registers one service."""
+    placed = os.path.join(workdir, os.path.basename(config))
+    shutil.copyfile(config, placed)
+    folder = os.path.join(workdir, "services.d")
+    os.makedirs(os.path.join(folder, "subfolder"))
+    with open(os.path.join(folder, "registered.yaml"), "w") as service:
+        service.write("ProcessName: registered\n"
+                      "ExecutablePath: '%s'\n"
+                      "Args: [--period-ms, 2000]\n"
+                      "StdioMode: Pipe\n"
+                      "GracePeriodMs: 500\n"
+                      "DependsOn: [anchor]\n" % os.path.abspath(os.path.join(paths.bin_dir, "pmt_steady")))
+    # The manager ignores these; each would be a problem if it read them.
+    for ignored in (".registered.yaml.tmp", ".hidden.yaml", "notes.txt", os.path.join("subfolder", "other.yaml")):
+        with open(os.path.join(folder, ignored), "w") as junk:
+            junk.write("ProcessName: [not valid\n")
+    return placed
 
 
 SCENARIOS: Dict[str, Callable[[Context], None]] = {
@@ -552,8 +592,12 @@ SCENARIOS: Dict[str, Callable[[Context], None]] = {
     "environment": scenario_environment,
     "resources": scenario_resources,
     "everything": scenario_everything,
+    "registered": scenario_registered,
 }
 PREPARE: Dict[str, Callable[[Paths], None]] = {"stdio": prepare_stdio}
+# Scenarios whose config needs files next to it: the config is copied into the scenario's run folder with them, and
+# the copy is what validate and the manager read.
+PLACE: Dict[str, Callable[[Paths, str, str], str]] = {"registered": place_registered}
 # Errors 'validate' reports on purpose.
 EXPECTED_VALIDATE_ERRORS: Dict[str, Tuple[str, ...]] = {"environment": ("cwd_missing Cwd",)}
 
@@ -602,6 +646,8 @@ def run_scenario(name: str, paths: Paths, run_dir: str) -> Results:
     config = os.path.join(paths.configs, name + ".yaml")
     workdir = os.path.join(run_dir, name)
     os.makedirs(workdir)
+    if name in PLACE:
+        config = PLACE[name](paths, config, workdir)
     validate(paths, name, config, results)
     if name in PREPARE:
         PREPARE[name](paths)

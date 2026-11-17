@@ -31,7 +31,8 @@ sudo systemctl start processmanager
   An existing file, which may have been edited, is kept, and the new one is put next to it as
   `ProcessManagerConfig.yaml.new`. The share directory gets the same file, which the manager reads when the
   config directory has none. By default this is a starter configuration with no services;
-  `-DPM_CONFIG_SOURCE=FILE` installs your own file instead.
+  `-DPM_CONFIG_SOURCE=FILE` installs your own file instead. Next to it goes an empty `services.d` folder for
+  registered services; an existing one is kept with its files.
 - **The log directory:** `ProcessManagerLog`, for the log files.
 - **The systemd unit:** `processmanager.service` runs the manager with `Delegate=yes`, which its cgroups
   need. Installing as root on a running systemd also enables the unit, so the manager starts at boot. It is not
@@ -68,6 +69,15 @@ The version the manager logs at start is the one in the root `project()` call.
 values of the wrong kind, reserved names, missing dependencies and cycles.
 
 ### Unreleased
+- Services can be registered one per file, in the `services.d` folder next to the configuration file the manager
+  reads. Each `<ProcessName>.yaml` holds the keys of one `Services` entry. The files are read in file name order,
+  and their services come after the main file's; otherwise they are ordinary services. Subfolders, dot files and
+  other extensions are ignored, and a missing folder is no problem. A file that is not valid YAML, is not a
+  mapping, has a `ProcessName` other than its file name, or names a service the main file already has is
+  reported by `validate` and at start-up, and skipped. `validate`, `graph` and `--start all` include the
+  registered services. `cmake --install` creates the empty folder next to the installed configuration and keeps
+  an existing one. The folder is read at start-up only, like the main file. The new module `ConfigSource/` reads
+  both and keeps where each service was defined.
 - An exit whose status was lost, because something else in the manager's process reaped it, no longer counts
   as a failure. `OnFailure` used to restart such a service even when it had ended cleanly; `Always` and
   `UnlessStopped` still restart it.

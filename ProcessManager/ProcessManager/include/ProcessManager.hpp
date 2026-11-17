@@ -28,6 +28,12 @@ public:
     static bool SortByDependencies(std::vector<std::string>& err, std::vector<Process>& pList);
     // Problems in the configuration go to errors when given, else to the log.
     static std::unique_ptr<ProcessManagerParams> GenerateConfig(const config_section::ConfigValue& document, std::vector<std::string>* errors = nullptr);
+    /**
+     * @brief Build the services again from the document @p params was built from, as --start all does.
+     * @param params The current parameters. Their document, source and origins are kept.
+     * @return New parameters, with services that have not been started.
+     */
+    static std::unique_ptr<ProcessManagerParams> RebuildConfig(const ProcessManagerParams& params);
 private:
     void StopAll();
     void RetireProcess(Process& process);

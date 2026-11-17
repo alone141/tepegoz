@@ -22,5 +22,5 @@ target_compile_definitions(ProcessManager
 		PROCESS_MANAGER_VERSION_MINOR=${PROJECT_VERSION_MINOR}
 		PROCESS_MANAGER_VERSION_PATCH=${PROJECT_VERSION_PATCH}
 )
-target_link_libraries(ProcessManager PUBLIC Process cppzmq-static config_section logger)
+target_link_libraries(ProcessManager PUBLIC Process cppzmq-static config_section config_source logger)
 target_link_libraries(ProcessManager PRIVATE gpu_monitor journal_server)

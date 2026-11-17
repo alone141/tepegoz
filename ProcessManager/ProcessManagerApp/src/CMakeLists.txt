@@ -22,7 +22,7 @@ target_sources(ProcessManagerApp
 )
 
 target_include_directories(ProcessManagerApp PUBLIC "${CMAKE_CURRENT_LIST_DIR}/../include")
-target_link_libraries(ProcessManagerApp PUBLIC ProcessManager network_manager cxxopts::cxxopts config_section logger)
+target_link_libraries(ProcessManagerApp PUBLIC ProcessManager network_manager cxxopts::cxxopts config_section config_source logger)
 # status and the commands: the live table, and following what a command does.
 target_link_libraries(ProcessManagerApp PRIVATE status_client command_watch)
 

@@ -1,0 +1,4 @@
+include(GoogleTest)
+add_executable(config_source_tests ConfigSourceTest.cpp)
+target_link_libraries(config_source_tests PRIVATE config_source GTest::gtest_main)
+gtest_discover_tests(config_source_tests)

@@ -11,6 +11,8 @@ namespace process_manager
 {
 
 const char* config_template = R"yaml(# Process manager configuration (YAML)
+# More services can be registered one per file in the services.d folder next to this file: <ProcessName>.yaml,
+# holding the keys of one Services entry below. They come after the services listed here, in file name order.
 
 # Settings of the manager itself.
 ProcessManager:

@@ -48,6 +48,7 @@ The manager is a single process that runs the services as its children. All comm
 | `ProcessManager/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealth.hpp`). |
 | `ProcessManager/NetworkManager/` | The ZeroMQ message broker. |
 | `ProcessManager/ConfigSection/` | Reads the YAML configuration (the only code that uses fkYAML) and reports problems. |
+| `ProcessManager/ConfigSource/` | Reads the main configuration file and the `services.d` folder next to it into one document, and keeps where each service was defined. |
 | `ProcessManager/Logger/` | Logging to the console, the journal and rotating files. |
 | `ProcessManager/GpuMonitor/` | GPU sampling through NVML, loaded at run time. |
 | `ProcessManager/JournalServer/` | Answers journal reads for a remote GUI. |
@@ -86,8 +87,9 @@ receives them; services start with no signal blocked.
 1. **Command line:** read with cxxopts. `validate`, `graph`, `generate`, `status` and the command options do their
    work and exit here.
 2. **Logger:** opened, with the log file directory.
-3. **Configuration:** loaded with `ConfigSection`. The YAML document is kept, because `--start all` rebuilds the
-   services from it.
+3. **Configuration:** loaded with `ConfigSource`: the main file, then each file of `services.d`, whose service is
+   appended to the main file's `Services`. The merged document is kept, because `--start all` rebuilds the
+   services from it. So are the loader and where each service was defined, for reading the folder again later.
 4. **Services:** `ProcessManager::GenerateConfig` turns the document into a list of `Process` objects. Unknown
    keys and bad values are logged.
 5. **Sockets and cgroups:** the `ProcessManager` constructor binds 6667 and connects its DEALER to the
@@ -352,14 +354,19 @@ The installed systemd unit has `Delegate=yes`, so the manager may manage the cgr
 
 The configuration is read in four steps:
 1. **YAML:** `ConfigSection` reads the file with fkYAML into a `ConfigValue` tree. Syntax errors carry their line
-   and column.
+   and column. `ConfigSource` reads the main file this way, then each `*.yaml` file of the `services.d` folder next
+   to it, in file name order, and appends each one's service to the main file's `Services`. It skips, and
+   reports, a file that is not valid YAML or not a mapping, whose `ProcessName` is not its file name, or whose
+   name the main file already has. For each service it records where it was defined: the main file, or which file
+   of `services.d`. For each file of `services.d` it records whether its service was added or why not.
 2. **Keys:** each part of the program reads its own keys through a `ConfigSection`. `ProcessConfigParams`,
    `RestartPolicy`, `HealthPolicy` and `StdioPolicy` give the defaults and the limits.
 3. **Problems:** the `ConfigSection` records what it found: unknown keys, values of the wrong kind, clamped
    numbers, and old spellings of renamed keys (`RenamedKey`).
 4. **Reporting:** `validate` prints the problems, and the manager logs them at start-up.
 
-The manager reads the file once, at start-up. `--start all` rebuilds the services from the document it kept then.
+The manager reads the file and its `services.d` once, at start-up. `--start all` rebuilds the services from the
+document it kept then.
 
 ## Logging
 
@@ -418,14 +425,16 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 - **Each module's `CMakeLists.txt`:** owns its targets.
 - **Linking:** libzmq is linked statically, so the installed programs need no shared libraries beyond the C and
   C++ runtimes.
-- **`packaging/`:** installs the configuration (keeping an existing one), the log directory, the systemd unit and
-  the GUI. Last, it enables the unit when that is possible.
+- **`packaging/`:** installs the configuration (keeping an existing one), an empty `services.d` next to it
+  (keeping an existing one), the log directory, the systemd unit and the GUI. Last, it enables the unit when that is possible.
 
 ## Tests
 
 | Suite | Tests | Covers |
 |---|---|---|
 | `config_section_tests` | 26 | YAML reading, defaults, problems, renamed keys |
+| `config_source_tests` | 24 | The main file with `services.d`: order, skipped and ignored files, origins, reading again |
+| `process_manager_tests` | 5 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all` |
 | `process_tests` | 86 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health |
 | `logger_tests` | 13 | Levels, files, rotation, journald prefixes |
 | `network_manager_tests` | 35 | Routing, identities, status and events |
@@ -437,9 +446,9 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 | `status_client_tests` | 13 | Report decoding, `status --once` and commands against a stand-in manager |
 
 `ctest` runs all of them. Two more checks run outside ctest:
-- `TestServices/scripts/run_scenarios.py` runs the real manager against nine scenario configurations, covering
-  start order, restarts, stopping, health checks, process trees, output, environment and resource figures. It
-  needs the manager's fixed ports, so ctest does not run it.
+- `TestServices/scripts/run_scenarios.py` runs the real manager against ten scenario configurations, covering
+  start order, restarts, stopping, health checks, process trees, output, environment, resource figures and a
+  service registered in `services.d`. It needs the manager's fixed ports, so ctest does not run it.
 - The GUI is checked against `mock_publisher.py` or a running manager.
 
 ## Known limits
@@ -448,7 +457,8 @@ stop, and keeps a 15-minute history for the state band and the graphs.
 - **Fixed ports:** they are compile-time constants, so one manager per machine.
 - **GUIs share one identity:** when two GUIs send commands at the same moment, an answer can reach the other
   GUI.
-- **Configuration at start-up only:** the file is read once; restart the manager after changing it.
+- **Configuration at start-up only:** the file and its `services.d` are read once; restart the manager after
+  changing them.
 - **Dependencies only order starts:** stopping or losing a service does not stop the services that depend on it,
   and `--start` starts only direct dependencies.
 - **Heartbeats count from the start:** a service that sends no heartbeat within the longer of `GracePeriodMs` and

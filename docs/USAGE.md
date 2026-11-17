@@ -31,6 +31,7 @@ ZeroMQ library.
 |---|---|---|
 | Manager | `/usr/bin/iltaren-ProcessManager` | |
 | Configuration | `/etc/processmanager/ProcessManagerConfig.yaml` | Only if missing. An existing file is kept; if the new one differs, it is put next to it as `ProcessManagerConfig.yaml.new`. |
+| Registered services | `/etc/processmanager/services.d/` | Made empty if missing. An existing folder is kept with its files. See [Registered services](#registered-services-servicesd). |
 | Fallback configuration | `/usr/share/processmanager/ProcessManagerConfig.yaml` | Read when the file above is missing. |
 | Log directory | `/var/log/processmanager/ProcessManagerLog/` | |
 | systemd unit | `/usr/lib/systemd/system/processmanager.service` | Enabled when installed as root on a running systemd. Not started. |
@@ -81,7 +82,8 @@ iltaren-ProcessManager --config ./my.yaml            # reads this file, with no 
 ```
 
 Without `--config`, the manager reads `PM_CONFIG_DIR/ProcessManagerConfig.yaml`. If that file is missing, it
-reads `PM_SHARE_DIR/ProcessManagerConfig.yaml`. With `--config`, a missing file is an error.
+reads `PM_SHARE_DIR/ProcessManagerConfig.yaml`. With `--config`, a missing file is an error. In every case it
+also reads the `services.d` folder next to the file it read.
 
 ### Stopping
 
@@ -116,8 +118,8 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 |---|---|
 | *(nothing)* | Runs the manager with the installed configuration. |
 | `--config FILE`, `-c FILE` | Runs the manager with `FILE`. Also names the file for `validate` and `graph`. |
-| `validate --config FILE` | Checks `FILE`: YAML syntax with line numbers, unknown keys, wrong values, reserved names, missing executables and folders, missing dependencies, duplicates, cycles. Exits 1 if it finds a problem. |
-| `graph --config FILE` | Prints the order in which the services start. |
+| `validate --config FILE` | Checks `FILE` and the `services.d` folder next to it: YAML syntax with line numbers, unknown keys, wrong values, reserved names, missing executables and folders, missing dependencies, duplicates, cycles, and the rules for registered services. Exits 1 if it finds a problem. |
+| `graph --config FILE` | Prints the order in which the services of `FILE` and its `services.d` start. |
 | `generate` | Writes `ProcessManagerConfig.yaml` with every key documented, in the current folder. |
 | `status` | Shows a live table, redrawn every second. See [The status table](#the-status-table). Ctrl+C leaves. |
 | `status --once` | Prints the table once and exits. It follows the reports for a second first, so CPU has a figure. Exits with 1 if no report comes within 3 s. |
@@ -126,7 +128,7 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 | `--restart NAME`, `-r NAME` | Stops `NAME` and starts it again, with its dependencies started first. Sets it to Auto. |
 | `--disable NAME`, `-d NAME` | Stops `NAME` and removes it from the manager until the manager restarts. |
 | `--kill all` | Stops every service and sets each to Manual. |
-| `--start all`, `--restart all` | Stops every service, rebuilds all of them from the configuration read at startup, and starts every one, Manual ones included. Disabled services come back. |
+| `--start all`, `--restart all` | Stops every service, rebuilds all of them from the configuration read at startup (registered services included, as they were then), and starts every one, Manual ones included. Disabled services come back. |
 | `--help`, `-h` | Lists the options. |
 
 - **Where commands go:** `--start`, `--kill`, `--restart` and `--disable` go to the manager on the same machine,
@@ -169,7 +171,8 @@ vision_pipeline   Stopped        -         -      -         -      -         -  
 ## Configuration
 
 The file is YAML with two parts: `ProcessManager` holds the manager's own settings, and `Services` lists the
-programs to run.
+programs to run. More services can be registered one per file, in the `services.d` folder next to it (see
+[Registered services](#registered-services-servicesd)).
 
 ```yaml
 ProcessManager:
@@ -230,6 +233,34 @@ Each entry is one service. `ProcessName` and `ExecutablePath` are required; ever
 | `Display` | `":1"` | The `DISPLAY` value, with `UseDisplay`. |
 | `XAuthority` | `/home/user/.Xauthority` | The `XAUTHORITY` value, with `UseDisplay`. |
 | `CreateProcessGroup` | `true` | Gives the service a cgroup of its own, for CPU and memory figures and a complete stop. |
+
+### Registered services (`services.d`)
+
+A service can also have a file of its own in the `services.d` folder next to the configuration file the manager
+read: `/etc/processmanager/services.d/` with prefix `/usr`, or the share directory's when the manager fell back to
+the copy there. `cmake --install` makes the folder empty if it is missing, and keeps an existing one.
+
+```yaml
+# /etc/processmanager/services.d/viewer.yaml
+ProcessName: viewer
+ExecutablePath: /opt/app/bin/viewer
+DependsOn: [server]
+```
+
+- **One service per file:** the file is a mapping with the keys of one `Services` entry, and it is named
+  `<ProcessName>.yaml`.
+- **Order:** the files are read in file name order, and their services come after those of the main file.
+  `DependsOn` works both ways between the two.
+- **Otherwise an ordinary service:** `Enabled: false`, the `Mode` default and every check apply as in the main
+  file.
+- **Ignored without a word:** subfolders, names that start with a dot, and names that do not end in `.yaml`
+  (`.YAML` included). A missing folder is no problem either.
+- **Problems:** `validate` and the startup check report a file that is not valid YAML, is not a mapping, has a
+  `ProcessName` other than its file name, or names a service the main file already has, enabled or not (the main
+  file's service is used). A file that cannot be read is reported too. Such a file is skipped, and everything
+  else is loaded.
+- **When the folder is read:** at startup only, like the main file, so restart the manager after changing it.
+  `validate --config FILE` and `graph --config FILE` read the folder next to `FILE`.
 
 ## How services are run
 

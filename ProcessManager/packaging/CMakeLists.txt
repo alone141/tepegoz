@@ -28,6 +28,10 @@ install(FILES ${config_source} DESTINATION ${PM_SHARE_DIR} RENAME ProcessManager
 configure_file(InstallConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/InstallConfig.cmake @ONLY)
 install(SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/InstallConfig.cmake)
 
+# The folder of registered services, one <ProcessName>.yaml each, next to the configuration. Made empty when
+# missing; an existing one is kept with what it holds.
+install(DIRECTORY DESTINATION ${PM_CONFIG_DIR}services.d)
+
 # The manager writes PMLog_*.log files here.
 install(DIRECTORY DESTINATION ${PM_LOG_DIR}ProcessManagerLog)
 

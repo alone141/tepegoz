@@ -428,6 +428,13 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const confi
 
     return processManagerParams;
 }
+std::unique_ptr<ProcessManagerParams> ProcessManager::RebuildConfig(const ProcessManagerParams& params)
+{
+    std::unique_ptr<ProcessManagerParams> rebuilt = GenerateConfig(params.document);
+    rebuilt->source = params.source;
+    rebuilt->origins = params.origins;
+    return rebuilt;
+}
 bool ProcessManager::SortByDependencies(std::vector<std::string>& errors, std::vector<Process>& pList)
 {
     std::unordered_map<std::string, size_t> idx;
@@ -544,7 +551,7 @@ bool ProcessManager::ApplyToAll(CommandCode command)
         {
             RetireProcess(process); // the new instances start once these have exited
         }
-        processParams = GenerateConfig(processParams->document); //reset the runtime params
+        processParams = RebuildConfig(*processParams); //reset the runtime params
 
         std::vector<std::string> errors;
         SortByDependencies(errors, processParams->processList);

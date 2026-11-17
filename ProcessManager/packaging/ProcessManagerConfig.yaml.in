@@ -1,5 +1,7 @@
 # Process manager configuration, installed by cmake --install. It starts no service yet.
-# List your services under Services, then check the file and restart the manager:
+# List your services under Services, or give each one a file in the services.d folder next to this file:
+# <ProcessName>.yaml, with the keys of one Services entry. Those come after the ones listed here, in file name order.
+# Then check the configuration and restart the manager:
 #   @INSTALLED_MANAGER@ validate --config @PM_CONFIG_DIR@ProcessManagerConfig.yaml
 #   systemctl restart @UNIT_NAME@
 # '@INSTALLED_MANAGER@ generate' writes a template that documents every key.

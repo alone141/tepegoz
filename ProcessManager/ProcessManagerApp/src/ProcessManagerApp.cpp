@@ -1,7 +1,9 @@
 #include "ProcessManagerApp.hpp"
 #include "ProcessManager.hpp"
 #include "ConfigSection.hpp"
+#include "ConfigSource.hpp"
 #include "Logger.hpp"
+#include <filesystem>
 #include <iostream>
 #include <zmq.hpp>
 
@@ -17,10 +19,10 @@ bool ProcessManagerApp::StartUp(const std::string& configPath)
 
     // A file named with --config is used as given; only the installed one may fall back to the share directory.
     const bool givenPath = !configPath.empty();
-    config_section::ConfigValue document;
-    if (!LoadConfig(givenPath ? configPath : PROCESS_MANAGER_CONFIG_FILE, !givenPath, document)) return false;
+    config_source::LoadedConfig loaded;
+    if (!LoadConfig(givenPath ? configPath : PROCESS_MANAGER_CONFIG_FILE, !givenPath, loaded)) return false;
 
-    if (!InitializeProcessManager(document))
+    if (!InitializeProcessManager(loaded))
     {
         logger::Error("Process Manager failed to start");
         return false;
@@ -42,37 +44,56 @@ void ProcessManagerApp::ShutdownSignalReceived(int signum)
     if (processManager) processManager->RequestStop();
 }
 
-bool ProcessManagerApp::LoadConfig(const std::string& configPath, bool allowFallback, config_section::ConfigValue& document)
+bool ProcessManagerApp::LoadConfig(const std::string& configPath, bool allowFallback, config_source::LoadedConfig& loaded)
 {
     std::string path = configPath;
     std::string error;
-    auto loaded = config_section::LoadConfigFile(path, document, error);
-    if (loaded == config_section::LoadCode::FileNotOpened && allowFallback)
+    config_source::LoadCode read = config_source::ConfigSource{path}.Load(loaded, error);
+    if (read == config_source::LoadCode::MainFileNotOpened && allowFallback)
     {
         logger::Warning("Config file could not found at %s", path.c_str());
         path = PROCESS_MANAGER_SHARE_DIR"ProcessManagerConfig.yaml";
         logger::Warning("Searching config file at %s", path.c_str());
-        loaded = config_section::LoadConfigFile(path, document, error);
+        read = config_source::ConfigSource{path}.Load(loaded, error); // its services.d is the one in the share directory
     }
 
-    if (loaded == config_section::LoadCode::FileNotOpened)
+    if (read == config_source::LoadCode::MainFileNotOpened)
     {
         logger::Error("Config file %s could not be opened. Use --help flag for more information", path.c_str());
         return false;
     }
-    if (loaded == config_section::LoadCode::SyntaxError)
+    if (read == config_source::LoadCode::MainFileSyntaxError)
     {
         logger::Error("Config file %s is not valid YAML: %s", path.c_str(), error.c_str());
         return false;
     }
 
     logger::Info("Configuration read from %s", path.c_str());
+    std::string registered;
+    for (const config_source::ServiceOrigin& origin : loaded.origins)
+    {
+        if (origin.kind == config_source::OriginKind::DropIn)
+        {
+            registered += (registered.empty() ? "" : ", ") + origin.processName;
+        }
+    }
+    if (!registered.empty())
+    {
+        const std::filesystem::path folder = config_source::ConfigSource{path}.DropInFolder();
+        logger::Info("Registered services read from %s: %s", folder.c_str(), registered.c_str());
+    }
     return true;
 }
 
-bool ProcessManagerApp::InitializeProcessManager(const config_section::ConfigValue& document)
+bool ProcessManagerApp::InitializeProcessManager(const config_source::LoadedConfig& loaded)
 {
-    auto config = ProcessManager::GenerateConfig(document);
+    for (const std::string& problem : loaded.problems) // services.d and its files, logged like the problems below
+    {
+        logger::Error("%s", problem.c_str());
+    }
+    auto config = ProcessManager::GenerateConfig(loaded.document);
+    config->source = config_source::ConfigSource{loaded.mainFile};
+    config->origins = loaded.origins;
     logger::Logger::Instance().SetMinimum(config->logLevel);
     try
     {
@@ -111,10 +132,10 @@ void ProcessManagerApp::TearDown()
 
 bool ProcessManagerApp::ValidateConfig(std::string config)
 {
-    std::vector<std::string> err;
-    config_section::ConfigValue document;
-    if (!LoadConfig(config, false, document)) { return false; }
-    auto params = ProcessManager::GenerateConfig(document, &err); // keys, values and service names
+    config_source::LoadedConfig loaded;
+    if (!LoadConfig(config, false, loaded)) { return false; }
+    std::vector<std::string> err = loaded.problems; // services.d and its files
+    auto params = ProcessManager::GenerateConfig(loaded.document, &err); // keys, values and service names
     ProcessManager::SortByDependencies(err, params->processList); // duplicates, missing dependencies, cycles
     for (const auto& process : params->processList)
     {
@@ -126,11 +147,11 @@ bool ProcessManagerApp::ValidateConfig(std::string config)
 
 void ProcessManagerApp::PrintDependencyGraph(std::string config)
 {
-    std::vector<std::string> err;
-    config_section::ConfigValue document;
-    if (!LoadConfig(config, false, document)) return;
+    config_source::LoadedConfig loaded;
+    if (!LoadConfig(config, false, loaded)) return;
 
-    auto params = ProcessManager::GenerateConfig(document, &err);
+    std::vector<std::string> err = loaded.problems; // services.d and its files
+    auto params = ProcessManager::GenerateConfig(loaded.document, &err);
     ProcessManager::SortByDependencies(err, params->processList);
 
     PrintErrors(err);

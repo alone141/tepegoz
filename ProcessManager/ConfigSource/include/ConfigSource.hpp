@@ -1,0 +1,119 @@
+#pragma once
+
+#include "ConfigSection.hpp"
+
+#include <filesystem>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace config_source
+{
+
+// The folder beside the main configuration file that holds one file per registered service.
+constexpr std::string_view drop_in_folder = "services.d";
+// The extension of the files read from that folder; anything else there is ignored.
+constexpr std::string_view drop_in_extension = ".yaml";
+
+enum class OriginKind
+{
+    MainFile,
+    DropIn,
+};
+
+// Where one item of the merged Services list was defined.
+struct ServiceOrigin
+{
+    // Its ProcessName; empty when the item has none.
+    std::string processName;
+    OriginKind kind = OriginKind::MainFile;
+    // The main file, or the drop-in file.
+    std::filesystem::path file;
+};
+
+enum class DropInCode
+{
+    Ok,
+    NotReadable,
+    SyntaxError,
+    NotMapping,
+    NameMismatch,
+    NameTaken,
+};
+
+// A drop-in file that was read, whether its service was added or the file was skipped.
+struct DropInFile
+{
+    std::filesystem::path file;
+    // The file name without its extension: the ProcessName the file must define.
+    std::string serviceName;
+    DropInCode code = DropInCode::Ok;
+};
+
+// The configuration as the manager uses it: the main file and its drop-in folder, read together.
+struct LoadedConfig
+{
+    // The main file that was read.
+    std::filesystem::path mainFile;
+    // The main file's document, with the service of every drop-in file that was added appended to its Services.
+    config_section::ConfigValue document;
+    // One per item of the merged Services list, in the same order.
+    std::vector<ServiceOrigin> origins;
+    // Every drop-in file that was read, in the order it was read.
+    std::vector<DropInFile> dropIns;
+    // Problems with the drop-in folder and its files. Problems inside the services are left to their readers.
+    std::vector<std::string> problems;
+};
+
+enum class LoadCode
+{
+    Ok,
+    MainFileNotOpened,
+    MainFileSyntaxError,
+};
+
+// Reads the main configuration file and the drop-in folder beside it, as often as asked.
+class ConfigSource
+{
+public:
+    /**
+     * @brief Store the path of the main configuration file.
+     * @param mainFile The main file. Its folder holds the drop-in folder.
+     */
+    explicit ConfigSource(std::filesystem::path mainFile);
+
+    // error is a second out-parameter: the reason the main file failed, worded for whoever edits it.
+    /**
+     * @brief Read the main file and the drop-in folder beside it into @p out.
+     * @param out Receives the merged configuration on success. A drop-in problem skips that file only.
+     * @param error Receives why the main file could not be read or parsed.
+     * @return LoadCode::Ok, otherwise MainFileNotOpened or MainFileSyntaxError.
+     */
+    LoadCode Load(LoadedConfig& out, std::string& error) const;
+
+    /**
+     * @brief Return the path of the main configuration file.
+     * @return The path given to the constructor.
+     */
+    const std::filesystem::path& MainFile() const;
+
+    /**
+     * @brief Return the drop-in folder: services.d in the main file's folder.
+     * @return The folder's path. It need not exist.
+     */
+    std::filesystem::path DropInFolder() const;
+
+private:
+    std::filesystem::path mainFile;
+};
+
+// A pointer, not std::optional: callers read the origin in place instead of copying it.
+/**
+ * @brief Find the origin of the service named @p processName.
+ * @param origins The origins of a merged Services list.
+ * @param processName The ProcessName to look for.
+ * @return The first origin with that name, or nullptr when there is none.
+ */
+const ServiceOrigin* FindOrigin(const std::vector<ServiceOrigin>& origins, std::string_view processName);
+
+} // namespace config_source

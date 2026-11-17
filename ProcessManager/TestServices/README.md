@@ -38,9 +38,15 @@ puts copies with the installed paths in `share/processmanager/test-setup/`.
 | `environment` | Args as a list and as text, environment variables, a cleared environment, the display, `Cwd` |
 | `resources` | The CPU and memory figures (they need cgroups) |
 | `everything` | One service of each kind, for watching in the monitor GUI |
+| `registered` | A service that only a file in `services.d` defines, between two of the config's services in the start order, and `--start all` |
 
 `validate` reports one error for `environment` on purpose: `cwd_missing` names a working directory that does not
 exist, to show that the service still starts.
+
+`registered` needs a `services.d` folder next to it, which the build does not write. The driver copies the config
+into the scenario's run folder and writes `services.d/registered.yaml` next to it, together with a dot file, a
+`.txt` file and a subfolder that the manager ignores. To run it by hand, make such a folder next to a copy of the
+config.
 
 Run one by hand and watch it:
 
