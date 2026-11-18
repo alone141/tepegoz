@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mock process-manager for testing the GUI.
+A stand-in Tepegöz manager for testing the GUI.
 
 PUB  (bind)  – broadcasts array of DetailedHealthReport, GPU use included
                (--no-gpu: as a manager on a machine without the NVIDIA driver)

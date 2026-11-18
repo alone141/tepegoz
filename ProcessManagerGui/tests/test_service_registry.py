@@ -391,7 +391,7 @@ class ClientTest(unittest.TestCase):
 
 class WorkerTest(unittest.TestCase):
     def start_worker(self, endpoint: str):
-        from process_monitor_gui import RegistryWorker, stop_workers
+        from goz import RegistryWorker, stop_workers
 
         thread = QThread()
         worker = RegistryWorker(endpoint)
@@ -434,9 +434,9 @@ class WorkerTest(unittest.TestCase):
 
 class WindowTest(unittest.TestCase):
     def open_window(self, registry_endpoint: str):
-        from process_monitor_gui import ProcessMonitorWindow
+        from goz import GozWindow
 
-        window = ProcessMonitorWindow(
+        window = GozWindow(
             closed_endpoint(), closed_endpoint(), closed_endpoint(),
             journal_endpoint=closed_endpoint(), registry_endpoint=registry_endpoint,
         )
@@ -628,9 +628,9 @@ class DialogTest(unittest.TestCase):
 
 class MessageBoxesDoNotBlock(unittest.TestCase):
     def test_remove_confirmation_names_the_file(self):
-        from process_monitor_gui import ProcessMonitorWindow
+        from goz import GozWindow
 
-        window = ProcessMonitorWindow(closed_endpoint(), closed_endpoint(), closed_endpoint(),
+        window = GozWindow(closed_endpoint(), closed_endpoint(), closed_endpoint(),
                                       journal_endpoint=closed_endpoint(), registry_endpoint=closed_endpoint())
         self.addCleanup(window.close)
         window._registry_services = {"cam": sr.ServiceEntry(

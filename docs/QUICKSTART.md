@@ -1,7 +1,7 @@
 # Quick start
 
 Tepegöz, the process manager, starts the programs listed in `tepegoz.yaml`, keeps them running and stops them.
-The monitor GUI shows their state, resource use and logs, and starts, stops or restarts them. The GUI can run on
+Its monitor GUI, Göz, shows their state, resource use and logs, and starts, stops or restarts them. The GUI can run on
 the manager's machine or on another one.
 
 This page covers the everyday steps. [USAGE.md](USAGE.md) has every option, and [ARCHITECTURE.md](ARCHITECTURE.md)
@@ -26,7 +26,7 @@ The install puts these in place:
 | Its configuration | `/etc/tepegoz/tepegoz.yaml` (an existing one is kept) |
 | Its log files | `/var/log/tepegoz/TepegozLog/` |
 | The systemd service | `tepegoz.service`, enabled so it starts at boot |
-| The monitor GUI | `/usr/share/tepegoz/gui/`, started with `process-monitor` |
+| The monitor GUI | `/usr/share/tepegoz/gui/`, started with `goz` |
 
 The installed configuration starts no service yet. To install your own file instead, add
 `-DTEPEGOZ_CONFIG_SOURCE=/path/to/tepegoz.yaml` to the first command.
@@ -105,14 +105,14 @@ The GUI needs Python 3 with PyQt6 and pyzmq: `python3 -m pip install PyQt6 pyzmq
 On the manager's machine:
 
 ```bash
-process-monitor
+goz
 ```
 
 From another machine, point it at the manager's machine. Copy the `ProcessManagerGui` folder there, or install
 the project there too:
 
 ```bash
-python3 ProcessManagerGui/process_monitor_gui.py --host 10.0.0.5
+python3 ProcessManagerGui/goz.py --host 10.0.0.5
 ```
 
 Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to be reachable.
@@ -123,7 +123,7 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 ┌ toolbar: Live · machine · Network pill · GPU pill · [Record logs] · [Connection] · – □ ✕ ──────┐
 │ sidebar            │ the page of the selected row                                             │
 │  Manager           │  process: state, Start / Stop / Restart, CPU · Memory · GPU · VRAM ·      │
-│   processmanager   │           Missed beats · Restarts, a 15-minute state band, and the tabs   │
+│   tepegoz          │           Missed beats · Restarts, a 15-minute state band, and the tabs   │
 │   network manager  │           Graphs / cgroup PIDs / Journal                                  │
 │  Processes         │  manager: systemctl status and the manager's own log                     │
 │   server   12 %    │  network manager: who is connected to the message broker, and its events │
@@ -140,7 +140,7 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 | See its processes | Open **cgroup PIDs**. Double-click a PID for that process's own log. |
 | See its use over time | Open the **Graphs** tab. |
 | Compare services over time | Click **Pop out** on the **Graphs** tab and tick the services. |
-| See the manager's own log | Click **processmanager** at the top of the sidebar. |
+| See the manager's own log | Click **tepegoz** at the top of the sidebar. |
 | Change the machine it watches | Click **Connection**, type the machine in **HOST**, and press Enter. |
 
 ## 6. When something is wrong

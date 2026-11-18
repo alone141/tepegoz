@@ -1,6 +1,6 @@
 # Usage guide
 
-The complete reference for running Tepegöz, the process manager, and its monitor GUI. For the short version, see
+The complete reference for running Tepegöz, the process manager, and its monitor GUI, Göz. For the short version, see
 [QUICKSTART.md](QUICKSTART.md). For how the parts fit together, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - [Installing](#installing)
@@ -35,7 +35,7 @@ ZeroMQ library.
 | Fallback configuration | `/usr/share/tepegoz/tepegoz.yaml` | Read when the file above is missing. |
 | Log directory | `/var/log/tepegoz/TepegozLog/` | |
 | systemd unit | `/usr/lib/systemd/system/tepegoz.service` | Enabled when installed as root on a running systemd. Not started. |
-| Monitor GUI | `/usr/share/tepegoz/gui/`, launcher `/usr/bin/process-monitor` | |
+| Monitor GUI | `/usr/share/tepegoz/gui/`, launcher `/usr/bin/goz` | |
 | Test programs (tests built) | `/usr/bin/keepalive`, `/usr/bin/pmt_*`, `/usr/share/tepegoz/test-setup/` | See [Testing with TestServices](#testing-with-testservices). |
 
 The paths are built into the manager and the unit when you configure, so set the prefix then rather than with
@@ -537,12 +537,14 @@ The variables are set in this order:
 
 ## Monitor GUI
 
+The monitor GUI is called Göz, "eye", and its launcher `goz`.
+
 ### Starting it
 
 ```bash
-process-monitor                                    # installed launcher, manager on this machine
-process-monitor --host 10.0.0.5                    # a manager on another machine
-python3 ProcessManagerGui/process_monitor_gui.py --host 10.0.0.5   # straight from the source folder
+goz                                                # installed launcher, manager on this machine
+goz --host 10.0.0.5                                # a manager on another machine
+python3 ProcessManagerGui/goz.py --host 10.0.0.5   # straight from the source folder
 ```
 
 It needs Python 3 with PyQt6 and pyzmq. It runs on Linux and Windows.
@@ -579,7 +581,7 @@ set with the options above when the GUI starts. When the endpoints are on differ
   - **Record logs**, which reads **● Recording · N** while N services are recorded (see
     [Recording logs](#recording-logs));
   - **Connection**.
-- **Sidebar:** the manager (**processmanager**), its **network manager** (the broker), then every service
+- **Sidebar:** the manager (**tepegoz**), its **network manager** (the broker), then every service
   with a dot for its state and its CPU use. An amber `*` after a name marks a service that waits for a restart
   to apply its new definition, as `*` does in `status`; hovering over the row says so. The filter box narrows
   the list. Right-click a service for **Start**, **Stop** and **Restart**, which ask for confirmation like the
@@ -677,7 +679,7 @@ The GUI reads every log through the manager's journal server on port 6670. The m
 
 **Record logs** in the toolbar records services' logs into files on the GUI's machine:
 1. Tick the services. The one on show starts ticked.
-2. Pick the folder. It is `ProcessMonitorLogs` in your home folder until you pick another, and it is made if
+2. Pick the folder. It is `GozLogs` in your home folder until you pick another, and it is made if
    missing.
 3. Press **Record**. Each service gets a file of its own, `<service>_<date>_<time>.log`, with the lines its
    journal gets from that moment on, by the manager's clock, as `journalctl -o short-iso` prints them.
@@ -703,7 +705,7 @@ starts with `missing`. Each endpoint has an option of its own (`--pub`, `--route
 
 ```bash
 python3 ProcessManagerGui/mock_publisher.py
-python3 ProcessManagerGui/process_monitor_gui.py
+python3 ProcessManagerGui/goz.py
 ```
 
 ## Ports and network access

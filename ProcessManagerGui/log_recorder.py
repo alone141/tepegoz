@@ -17,7 +17,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 from remote_journal import JournalFollower
 
 # Where recordings go until another folder is picked.
-DEFAULT_FOLDER = str(Path.home() / "ProcessMonitorLogs")
+DEFAULT_FOLDER = str(Path.home() / "GozLogs")
 # Reads in a row for a service that is behind, per round: a busy one catches up without holding up the rest.
 MAX_READS_PER_ROUND = 10
 

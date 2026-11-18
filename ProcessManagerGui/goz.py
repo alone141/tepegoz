@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Process Manager Health Monitor – PyQt6 + ZMQ
+Göz, the monitor GUI of Tepegöz – PyQt6 + ZMQ
 
 DEALER wire format (exactly as specified by you):
     setsockopt(IDENTITY, b"GUI")
@@ -1075,7 +1075,7 @@ STATUSBAR_STYLE = f"""
 RECORD_TIP = "Record services' logs into files on this machine"
 
 
-class ProcessMonitorWindow(FramelessMainWindow):
+class GozWindow(FramelessMainWindow):
     def __init__(
         self,
         sub_endpoint: str,
@@ -1095,7 +1095,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
             endpoint_host(sub_endpoint).strip("[]"), REGISTRY_PORT
         )
 
-        self.setWindowTitle("Process Monitor")
+        self.setWindowTitle("Göz")
         fit_to_screen(self, QSize(1180, 760), minimum=QSize(900, 600))
 
         self._prev: Dict[str, Tuple[int, int]] = {}   # name → (cpu_usec, snap_ns)
@@ -1157,7 +1157,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
         # The window has no system title bar: the toolbar's row is its title bar.
         self.set_title_bar(toolbar).setStyleSheet(TOOLBAR_STYLE)
 
-        title = QLabel("Process Monitor")
+        title = QLabel("Göz")
         title.setFont(ui_font(1.1, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {TEXT}; padding: 0 4px;")
         toolbar.addWidget(title)
@@ -2162,7 +2162,7 @@ class ProcessMonitorWindow(FramelessMainWindow):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Process Manager Health Monitor (PyQt6 + ZMQ)"
+        description="Göz, the monitor GUI of Tepegöz (PyQt6 + ZMQ)"
     )
     parser.add_argument(
         "--host",
@@ -2194,7 +2194,7 @@ def main():
     app = QApplication(sys.argv)
     apply_dark_theme(app)
 
-    win = ProcessMonitorWindow(
+    win = GozWindow(
         args.sub or endpoint_on(args.host, REPORT_PORT),
         args.dealer or endpoint_on(args.host, COMMAND_PORT),
         args.network or endpoint_on(args.host, NETWORK_PORT),

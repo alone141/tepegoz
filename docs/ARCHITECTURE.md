@@ -1,6 +1,6 @@
 # Architecture
 
-How Tepegöz, the process manager, and its monitor GUI are built, and how they talk to each other. For how to use them, see
+How Tepegöz, the process manager, and its monitor GUI, Göz, are built, and how they talk to each other. For how to use them, see
 [QUICKSTART.md](QUICKSTART.md) and [USAGE.md](USAGE.md).
 
 ## Overview
@@ -61,7 +61,7 @@ The manager is a single process that runs the services as its children. All comm
 | `ProcessManager/TestServices/` | Test programs, scenario configurations and the scenario driver. |
 | `ProcessManager/packaging/` | What `cmake --install` sets up besides the programs. |
 | `ProcessManager/third_party/` | libzmq, cppzmq, cxxopts, fkYAML and GoogleTest, unchanged upstream releases. |
-| `ProcessManagerGui/` | The monitor GUI (Python 3, PyQt6, pyzmq). |
+| `ProcessManagerGui/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
 | `docs/` | These documents. |
 
 Every module has the same layout and naming: `.hpp` headers in `include/`, sources in `src/`, tests in
@@ -505,7 +505,7 @@ A forked child never logs, because it may hold no lock between `fork` and `exec`
 
 | Module | Role |
 |---|---|
-| `process_monitor_gui.py` | The main window, the worker threads, and the command-line entry point. |
+| `goz.py` | The main window, the worker threads, and the command-line entry point. |
 | `process_views.py` | Sidebar, service page (tiles, state band, tabs), manager page. |
 | `network_view.py`, `network_status.py` | The broker page, and parsing of the broker's JSON. |
 | `usage_graphs.py` | Usage history (15 minutes) and the graphs. |

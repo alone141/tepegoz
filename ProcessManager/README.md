@@ -37,7 +37,7 @@ sudo systemctl start tepegoz
 - **The systemd unit:** `tepegoz.service` runs the manager with `Delegate=yes`, which its cgroups
   need. Installing as root on a running systemd also enables the unit, so the manager starts at boot. It is not
   started at install time. A staged install (`DESTDIR`) only installs the file.
-- **The monitor GUI:** installed in `share/tepegoz/gui/`, with its launcher `process-monitor` in `bin/`. It
+- **The monitor GUI:** installed in `share/tepegoz/gui/`, with its launcher `goz` in `bin/`. It
   needs Python 3 with PyQt6 and pyzmq, which the install does not provide.
 - **The test setup (when the tests are built):** `keepalive` and the `pmt_*` test programs next to the manager,
   and their scenario configs and driver in `share/tepegoz/test-setup/` (see `TestServices/README.md`).
@@ -58,7 +58,7 @@ the manager and the unit. Each path can also be set on its own; directories end 
 | `TEPEGOZ_BIN_INSTALL_DIR` | `bin` | where `cmake --install` puts the programs |
 | `TEPEGOZ_CONFIG_SOURCE` | empty: a starter with no services | the `tepegoz.yaml` that is installed |
 | `TEPEGOZ_SYSTEMD_UNIT_DIR` | `<prefix>/lib/systemd/system` | `tepegoz.service` |
-| `TEPEGOZ_INSTALL_GUI` | `ON` | installing the GUI and `process-monitor` |
+| `TEPEGOZ_INSTALL_GUI` | `ON` | installing the GUI and `goz` |
 | `TEPEGOZ_ENABLE_SERVICE` | `ON` | enabling the unit when installing as root on a running systemd |
 
 The version the manager logs at start is the one in the root `project()` call.
@@ -82,6 +82,11 @@ so a machine that runs an earlier version needs the steps below before it runs t
 | The share directory: fallback configuration, GUI, test setup | `/usr/share/processmanager/` | `/usr/share/tepegoz/` |
 | The log files | `/var/log/processmanager/ProcessManagerLog/PMLog_*.log` | `/var/log/tepegoz/TepegozLog/tepegoz_*.log` |
 | The CMake cache variables | `PM_CONFIG_DIR` and the other `PM_*` | `TEPEGOZ_CONFIG_DIR` and the other `TEPEGOZ_*` |
+| The monitor GUI's title | `Process Monitor` | `Göz` |
+| Its launcher | `process-monitor` | `goz` |
+| Its main file | `process_monitor_gui.py` | `goz.py` |
+| The manager's row in its sidebar | `processmanager` | `tepegoz` |
+| Its default folder for recorded logs | `~/ProcessMonitorLogs` | `~/GozLogs` |
 
 A configuration that still has a `ProcessManager:` section is reported as having an unknown key, and its
 settings are not read. Configuring the build with a `PM_*` variable stops and names the new one; `cmake -U 'PM_*'
@@ -99,7 +104,7 @@ cmake --install build                      # the new build: keeps the moved file
 tepegoz validate --config /etc/tepegoz/tepegoz.yaml
 systemctl start tepegoz
 ```
-Then remove what the earlier version installed: `/usr/bin/iltaren-ProcessManager`,
+Then remove what the earlier version installed: `/usr/bin/iltaren-ProcessManager`, `/usr/bin/process-monitor`,
 `/usr/lib/systemd/system/processmanager.service` (then `systemctl daemon-reload`), `/etc/processmanager/`,
 `/usr/share/processmanager/` and, once its logs are no longer needed, `/var/log/processmanager/`. Scripts that
 call `iltaren-ProcessManager` or `systemctl ... processmanager` need the new names.

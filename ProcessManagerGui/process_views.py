@@ -68,7 +68,7 @@ from usage_graphs import (
     state_segments,
 )
 
-MANAGER_NAME = "processmanager"
+MANAGER_NAME = "tepegoz"
 # The broker inside the manager: its own sidebar row and page (network_view).
 NETWORK_NAME = "network manager"
 
