@@ -5,7 +5,7 @@ set(TEPEGOZ_CONFIG_SOURCE "" CACHE FILEPATH
     "tepegoz.yaml to install; empty installs a starter configuration with no services")
 set(TEPEGOZ_SYSTEMD_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system" CACHE PATH
     "Directory of the installed tepegoz.service")
-option(TEPEGOZ_INSTALL_GUI "Install the monitor GUI (ProcessManagerGui) and its goz launcher" ON)
+option(TEPEGOZ_INSTALL_GUI "Install the monitor GUI (Goz) and its goz launcher" ON)
 option(TEPEGOZ_ENABLE_SERVICE "Enable tepegoz.service after installing, when installing as root on systemd" ON)
 
 cmake_path(ABSOLUTE_PATH TEPEGOZ_BIN_INSTALL_DIR BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}" OUTPUT_VARIABLE installed_bin_dir)
@@ -39,7 +39,7 @@ configure_file(tepegoz.service.in ${CMAKE_CURRENT_BINARY_DIR}/${UNIT_NAME} @ONLY
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${UNIT_NAME} DESTINATION ${TEPEGOZ_SYSTEMD_UNIT_DIR})
 
 # The GUI lives next to this project; a copy of the project without it installs no GUI.
-set(gui_dir "${PROJECT_SOURCE_DIR}/../ProcessManagerGui")
+set(gui_dir "${PROJECT_SOURCE_DIR}/../Goz")
 if(TEPEGOZ_INSTALL_GUI AND EXISTS "${gui_dir}/goz.py")
     file(GLOB gui_sources CONFIGURE_DEPENDS "${gui_dir}/*.py")
     install(FILES ${gui_sources} DESTINATION ${GUI_INSTALL_DIR})
@@ -50,7 +50,7 @@ if(TEPEGOZ_INSTALL_GUI AND EXISTS "${gui_dir}/goz.py")
         DESTINATION ${TEPEGOZ_BIN_INSTALL_DIR}
     )
 elseif(TEPEGOZ_INSTALL_GUI)
-    message(STATUS "No ProcessManagerGui next to the project: the monitor GUI is not installed")
+    message(STATUS "No Goz folder next to the project: the monitor GUI is not installed")
 endif()
 
 if(TEPEGOZ_ENABLE_SERVICE)

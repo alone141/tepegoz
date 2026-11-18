@@ -1,5 +1,5 @@
 # Build output, and what Visual Studio writes when it opens the CMake folder.
-/ProcessManager/build/
-/ProcessManager/out/
+/Tepegoz/build/
+/Tepegoz/out/
 .vs/
 __pycache__/

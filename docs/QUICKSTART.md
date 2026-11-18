@@ -13,7 +13,7 @@ You need a Linux machine with systemd, CMake 3.20 or newer and GCC 10 or newer. 
 source, so the build needs no network.
 
 ```bash
-cmake -S ProcessManager -B build -DCMAKE_INSTALL_PREFIX=/usr
+cmake -S Tepegoz -B build -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build -j
 sudo cmake --install build
 ```
@@ -108,11 +108,11 @@ On the manager's machine:
 goz
 ```
 
-From another machine, point it at the manager's machine. Copy the `ProcessManagerGui` folder there, or install
+From another machine, point it at the manager's machine. Copy the `Goz` folder there, or install
 the project there too:
 
 ```bash
-python3 ProcessManagerGui/goz.py --host 10.0.0.5
+python3 Goz/goz.py --host 10.0.0.5
 ```
 
 Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to be reachable.

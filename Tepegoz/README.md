@@ -112,7 +112,9 @@ Then remove what the earlier version installed: `/usr/bin/iltaren-ProcessManager
 are no longer needed, `/var/log/processmanager/`. Scripts that call `iltaren-ProcessManager` or
 `systemctl ... processmanager` need the new names.
 
-In the code, the namespace `process_manager` is now `tepegoz`, and the classes `ProcessManager`,
+In the source, the folders `ProcessManager/` and `ProcessManagerGui/` are now `Tepegoz/` and `Goz/`, so a build is
+configured with `cmake -S Tepegoz`; inside, `ProcessManager/ProcessManager/` and `ProcessManager/ProcessManagerApp/`
+are `Tepegoz/Tepegoz/` and `Tepegoz/TepegozApp/`. In the code, the namespace `process_manager` is now `tepegoz`, and the classes `ProcessManager`,
 `ProcessManagerApp`, `ProcessManagerParams` and `IProcessManager` are `Tepegoz`, `TepegozApp`, `TepegozParams`
 and `ITepegoz`, in files of the same names. The CMake project is `tepegoz`; the targets `ProcessManager`,
 `ProcessManagerApp` and `process_manager_tests` are `Tepegoz`, `TepegozApp` and `tepegoz_tests`; the macros
@@ -194,7 +196,7 @@ and `ITepegoz`, in files of the same names. The CMake project is `tepegoz`; the 
   waiting for a restart is marked `*` in the sidebar and **restart to apply** on its page, which also says where
   the service is defined. New option `--registry ENDPOINT`; `--host` and the HOST field set it too. Without a
   registry that answers, these actions are greyed out with the reason. `mock_publisher.py` answers the registry
-  as well, and the GUI has its first tests, `ProcessManagerGui/tests/test_service_registry.py`.
+  as well, and the GUI has its first tests, `Goz/tests/test_service_registry.py`.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

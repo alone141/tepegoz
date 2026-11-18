@@ -1,2 +1,2 @@
-# Vendored code stays byte-for-byte as released; its hash is in ProcessManager/third_party/README.md.
-ProcessManager/third_party/** -text
+# Vendored code stays byte-for-byte as released; its hash is in Tepegoz/third_party/README.md.
+Tepegoz/third_party/** -text

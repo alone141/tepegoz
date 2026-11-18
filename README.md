@@ -9,6 +9,6 @@ use and logs, and starts and stops them, from the same machine or another one.
 
 | Folder | Contents |
 |---|---|
-| `ProcessManager/` | The manager (C++20, CMake). Its `README.md` has the build requirements and release notes. |
-| `ProcessManagerGui/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
+| `Tepegoz/` | The manager (C++20, CMake). Its `README.md` has the build requirements and release notes. |
+| `Goz/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
 | `docs/` | The documents above. |

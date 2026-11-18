@@ -15,14 +15,14 @@ The complete reference for running Tepegöz, the process manager, and its monito
 ## Installing
 
 ```bash
-cmake -S ProcessManager -B build -DCMAKE_INSTALL_PREFIX=/usr
+cmake -S Tepegoz -B build -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build -j
 ctest --test-dir build
 sudo cmake --install build
 ```
 
 The build needs CMake 3.20 or newer and GCC 10 or newer. libzmq, cppzmq, cxxopts, fkYAML and GoogleTest come
-with the source in `ProcessManager/third_party/`, so nothing is downloaded and the target machine needs no
+with the source in `Tepegoz/third_party/`, so nothing is downloaded and the target machine needs no
 ZeroMQ library.
 
 `cmake --install` installs:
@@ -542,9 +542,9 @@ The monitor GUI is called Göz, "eye", and its launcher `goz`.
 ### Starting it
 
 ```bash
-goz                                                # installed launcher, manager on this machine
-goz --host 10.0.0.5                                # a manager on another machine
-python3 ProcessManagerGui/goz.py --host 10.0.0.5   # straight from the source folder
+goz                                  # installed launcher, manager on this machine
+goz --host 10.0.0.5                  # a manager on another machine
+python3 Goz/goz.py --host 10.0.0.5   # straight from the source folder
 ```
 
 It needs Python 3 with PyQt6 and pyzmq. It runs on Linux and Windows.
@@ -695,7 +695,7 @@ While it records:
 
 ### Trying the GUI without a manager
 
-`ProcessManagerGui/mock_publisher.py` acts as a manager with seven fake services, on the same ports. It publishes
+`Goz/mock_publisher.py` acts as a manager with seven fake services, on the same ports. It publishes
 reports, answers commands, serves broker status and logs, and answers the service registry from services it
 keeps in memory: six are the main file's, and `map_server` is registered, with `path_planner` depending on it. A
 service added in the GUI joins the reports, a changed running one is marked "restart to apply", and a removed
@@ -704,8 +704,8 @@ starts with `missing`. Each endpoint has an option of its own (`--pub`, `--route
 `--registry`), for running it on other ports; `--registry ''` leaves the registry, and `map_server`, out.
 
 ```bash
-python3 ProcessManagerGui/mock_publisher.py
-python3 ProcessManagerGui/goz.py
+python3 Goz/mock_publisher.py
+python3 Goz/goz.py
 ```
 
 ## Ports and network access
@@ -728,7 +728,7 @@ starting another manager by hand.
 
 ## Testing with TestServices
 
-`ProcessManager/TestServices/` holds programs with planned behaviours and configurations that run them. Examples:
+`Tepegoz/TestServices/` holds programs with planned behaviours and configurations that run them. Examples:
 - a program that exits with a given code;
 - one that crashes by a given signal;
 - one that ignores SIGTERM;
@@ -737,10 +737,10 @@ starting another manager by hand.
 - one that floods its output.
 
 `run_scenarios.py` runs the manager with each configuration and checks what it does. See
-[TestServices/README.md](../ProcessManager/TestServices/README.md).
+[TestServices/README.md](../Tepegoz/TestServices/README.md).
 
 ```bash
-python3 ProcessManager/TestServices/scripts/run_scenarios.py --build-dir build
+python3 Tepegoz/TestServices/scripts/run_scenarios.py --build-dir build
 python3 /usr/share/tepegoz/test-setup/run_scenarios.py --prefix /usr
 ```
 

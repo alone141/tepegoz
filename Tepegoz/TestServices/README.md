@@ -67,9 +67,9 @@ service (exit code 1) and with `--force`, and a refused `add` (exit code 1).
 Run one by hand and watch it:
 
 ```bash
-build/ProcessManagerApp/src/TepegozApp --config build/TestServices/configs/basic.yaml
+build/TepegozApp/src/TepegozApp --config build/TestServices/configs/basic.yaml
 build/TestServices/apps/tpz_watch
-build/ProcessManagerApp/src/TepegozApp --kill second
+build/TepegozApp/src/TepegozApp --kill second
 ```
 
 ## The driver
