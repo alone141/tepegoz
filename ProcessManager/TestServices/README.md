@@ -26,7 +26,7 @@ Each program prints `HH:MM:SS.mmm name[pid]: message` lines and takes `--help`.
 ## Scenario configs
 
 The build writes them to `<build>/TestServices/configs/`, with the programs' paths in the build tree. The install
-puts copies with the installed paths in `share/processmanager/test-setup/`.
+puts copies with the installed paths in `share/tepegoz/test-setup/`.
 
 | Config | Shows |
 |---|---|
@@ -80,7 +80,7 @@ Python 3.7 or newer, and the manager's ports (5557, 6667, 6669) free, so stop an
 
 ```bash
 python3 TestServices/scripts/run_scenarios.py --build-dir build
-python3 /usr/share/processmanager/test-setup/run_scenarios.py --prefix /usr
+python3 /usr/share/tepegoz/test-setup/run_scenarios.py --prefix /usr
 python3 TestServices/scripts/run_scenarios.py --build-dir build health stopping
 ```
 

@@ -1,6 +1,6 @@
 # health: heartbeats every 500 ms, Unhealthy after 4 missed, checked once the 2 s grace period is over.
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

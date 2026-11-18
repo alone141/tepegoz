@@ -1,8 +1,8 @@
 # process_tree: children in the service's process group, a child that escapes it with setsid(), and a parent that
 # crashes and leaves its children behind for the manager to stop. Leftover children exit on their own after 60 s.
-# Then:  iltaren-ProcessManager --kill tree | --kill escapee | --kill escapee_cgroup
+# Then:  tepegoz --kill tree | --kill escapee | --kill escapee_cgroup
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

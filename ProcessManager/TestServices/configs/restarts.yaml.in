@@ -1,6 +1,6 @@
 # restarts: what counts as a failure, the restart limit, the backoff, and the reset after a long run.
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

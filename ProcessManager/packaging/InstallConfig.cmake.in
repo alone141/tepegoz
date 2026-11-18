@@ -1,12 +1,12 @@
-# Run by cmake --install: puts the configuration in @PM_CONFIG_DIR@ unless one is already there. An existing
+# Run by cmake --install: puts the configuration in @TEPEGOZ_CONFIG_DIR@ unless one is already there. An existing
 # configuration is kept, since it may have been edited, and the new one is put next to it as a .new file.
 set(source "@config_source@")
 # file(INSTALL) puts DESTDIR in front of the directory itself; the checks need it written out.
-string(REGEX REPLACE "/+$" "" directory "@PM_CONFIG_DIR@")
-set(target "$ENV{DESTDIR}${directory}/ProcessManagerConfig.yaml")
+string(REGEX REPLACE "/+$" "" directory "@TEPEGOZ_CONFIG_DIR@")
+set(target "$ENV{DESTDIR}${directory}/tepegoz.yaml")
 
 if(NOT EXISTS "${target}")
-    file(INSTALL DESTINATION "${directory}" TYPE FILE FILES "${source}" RENAME ProcessManagerConfig.yaml)
+    file(INSTALL DESTINATION "${directory}" TYPE FILE FILES "${source}" RENAME tepegoz.yaml)
     return()
 endif()
 
@@ -17,5 +17,5 @@ if(installed STREQUAL packaged)
     return()
 endif()
 
-file(INSTALL DESTINATION "${directory}" TYPE FILE FILES "${source}" RENAME ProcessManagerConfig.yaml.new)
-message(STATUS "Kept the existing ${target}; the packaged one is ProcessManagerConfig.yaml.new next to it")
+file(INSTALL DESTINATION "${directory}" TYPE FILE FILES "${source}" RENAME tepegoz.yaml.new)
+message(STATUS "Kept the existing ${target}; the packaged one is tepegoz.yaml.new next to it")

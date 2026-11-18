@@ -1,13 +1,13 @@
 add_executable(ProcessManagerApp)
 
 # The paths are set in the root CMakeLists.txt; the version is the project's.
-set(PROCESS_MANAGER_LOG_DIR "${PM_LOG_DIR}ProcessManagerLog")
-set(PROCESS_MANAGER_CONFIG_FILE "${PM_CONFIG_DIR}ProcessManagerConfig.yaml")
+set(PROCESS_MANAGER_LOG_DIR "${TEPEGOZ_LOG_DIR}TepegozLog")
+set(PROCESS_MANAGER_CONFIG_FILE "${TEPEGOZ_CONFIG_DIR}tepegoz.yaml")
 target_compile_definitions(ProcessManagerApp
 	PRIVATE
 		PROCESS_MANAGER_LOG_DIR=\"${PROCESS_MANAGER_LOG_DIR}\"
 		PROCESS_MANAGER_CONFIG_FILE=\"${PROCESS_MANAGER_CONFIG_FILE}\"
-		PROCESS_MANAGER_SHARE_DIR=\"${PM_SHARE_DIR}\"
+		PROCESS_MANAGER_SHARE_DIR=\"${TEPEGOZ_SHARE_DIR}\"
 		PROCESS_MANAGER_VERSION_FULL=\"${PROJECT_VERSION}\"
 )
 
@@ -31,6 +31,6 @@ target_link_libraries(ProcessManagerApp PRIVATE status_client command_watch regi
 install(
 	PROGRAMS $<TARGET_FILE:ProcessManagerApp>
 	PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-	DESTINATION ${PM_BIN_INSTALL_DIR}
-	RENAME "iltaren-ProcessManager"
+	DESTINATION ${TEPEGOZ_BIN_INSTALL_DIR}
+	RENAME "tepegoz"
 )

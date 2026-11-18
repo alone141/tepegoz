@@ -14,7 +14,7 @@ bool ProcessManagerApp::StartUp(const std::string& configPath)
 {
     InitializeLogger();
 
-    logger::Info("PROCESMANAGER VERSION: %s", PROCESS_MANAGER_VERSION_FULL);
+    logger::Info("TEPEGOZ VERSION: %s", PROCESS_MANAGER_VERSION_FULL);
 
 
     // A file named with --config is used as given; only the installed one may fall back to the share directory.
@@ -34,7 +34,7 @@ bool ProcessManagerApp::StartUp(const std::string& configPath)
 void ProcessManagerApp::Run()
 {
     if (processManager) processManager->Run();
-    logger::Debug("Exiting ProcessManager Thread");
+    logger::Debug("Exiting the supervision thread");
 }
 
 // Called from main's signal thread: only asks the supervision thread to stop; Run() returns after.
@@ -52,7 +52,7 @@ bool ProcessManagerApp::LoadConfig(const std::string& configPath, bool allowFall
     if (read == config_source::LoadCode::MainFileNotOpened && allowFallback)
     {
         logger::Warning("Config file could not found at %s", path.c_str());
-        path = PROCESS_MANAGER_SHARE_DIR"ProcessManagerConfig.yaml";
+        path = PROCESS_MANAGER_SHARE_DIR"tepegoz.yaml";
         logger::Warning("Searching config file at %s", path.c_str());
         read = config_source::ConfigSource{path}.Load(loaded, error); // its services.d is the one in the share directory
     }

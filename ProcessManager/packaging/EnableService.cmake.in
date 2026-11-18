@@ -1,6 +1,6 @@
 # Run last by cmake --install: enables @UNIT_NAME@, so the manager starts at boot. It does not start it now.
 # Skipped for a staged install (DESTDIR), without root, and where systemd is not running.
-set(unit "@PM_SYSTEMD_UNIT_DIR@/@UNIT_NAME@")
+set(unit "@TEPEGOZ_SYSTEMD_UNIT_DIR@/@UNIT_NAME@")
 set(name "@UNIT_NAME@")
 set(how "as root: systemctl daemon-reload && systemctl enable ${unit}")
 set(enable_as "${unit}")
@@ -23,11 +23,23 @@ if(NOT uid STREQUAL "0")
 endif()
 
 # A unit in one of systemd's own directories is enabled by name; one elsewhere (a prefix such as
-# /opt/processmanager) by its full path, which links it into /etc/systemd/system.
+# /opt/tepegoz) by its full path, which links it into /etc/systemd/system.
 set(enable_as "${unit}")
-if("@PM_SYSTEMD_UNIT_DIR@" MATCHES "^(/etc|/usr/lib|/lib|/usr/local/lib)/systemd/system/?$")
+if("@TEPEGOZ_SYSTEMD_UNIT_DIR@" MATCHES "^(/etc|/usr/lib|/lib|/usr/local/lib)/systemd/system/?$")
     set(enable_as "${name}")
 endif()
+
+# Before the rename the unit was processmanager.service. With both enabled, two managers would start at boot and
+# fight over the same ports, so the switch is left to the operator while the old one is enabled.
+execute_process(COMMAND systemctl is-enabled --quiet processmanager.service RESULT_VARIABLE old_unit_disabled)
+if(old_unit_disabled EQUAL 0)
+    message(WARNING "processmanager.service, this manager's unit before the rename, is still enabled, so ${name} "
+                    "is not. Move the configuration first (see the release notes), then switch as root: "
+                    "systemctl disable --now processmanager.service && systemctl daemon-reload && "
+                    "systemctl enable --now ${enable_as}")
+    return()
+endif()
+
 execute_process(COMMAND systemctl daemon-reload RESULT_VARIABLE reloaded)
 execute_process(COMMAND systemctl enable "${enable_as}" RESULT_VARIABLE enabled ERROR_VARIABLE enable_error)
 if(NOT reloaded EQUAL 0 OR NOT enabled EQUAL 0)

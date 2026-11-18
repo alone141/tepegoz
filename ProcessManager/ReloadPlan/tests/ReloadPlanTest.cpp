@@ -104,7 +104,7 @@ std::string Service(const std::string& name, const std::string& more = "")
 
 std::string MainFile(const std::string& entries)
 {
-    return "ProcessManager:\n  Mode: Auto\nServices:\n" + entries;
+    return "Tepegoz:\n  Mode: Auto\nServices:\n" + entries;
 }
 
 config_section::ConfigValue Parse(const std::string& text)
@@ -275,7 +275,7 @@ TEST(ReloadPlanTest, ChangedManagerModeIsNoChangeOfTheServices)
     const ScratchFolder folder{};
     folder.Write("main.yaml", MainFile(Entry("main")));
     const config_section::ConfigValue before = folder.Load().document;
-    folder.Write("main.yaml", "ProcessManager:\n  Mode: Manual\nServices:\n" + Entry("main"));
+    folder.Write("main.yaml", "Tepegoz:\n  Mode: Manual\nServices:\n" + Entry("main"));
     const reload_plan::ReloadPlan plan = Plan(before, folder, {"main"}, {"main"});
     EXPECT_EQ(plan.unchanged, Names{"main"});
 }

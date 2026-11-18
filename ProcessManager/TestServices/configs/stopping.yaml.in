@@ -1,7 +1,7 @@
 # stopping: a service that takes 2 s to stop within its 5 s limit, and one that ignores SIGTERM and gets SIGKILL.
-# Then:  iltaren-ProcessManager --kill slow | --kill stubborn
+# Then:  tepegoz --kill slow | --kill stubborn
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   # Debug shows each stop's steps, such as "Graceful shutdown failed" before the SIGKILL.
   LogLevel: Debug

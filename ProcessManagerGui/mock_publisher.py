@@ -174,7 +174,7 @@ class MockNetwork:
 class MockJournal:
     """The manager's journal server: answers version, journal, unit-status and members like JournalServer."""
 
-    MANAGER_IDENT = "iltaren-ProcessManager"
+    MANAGER_IDENT = "tepegoz"
     KEEP = 5000
 
     def __init__(self, sock: zmq.Socket, manager_pid: int):
@@ -219,10 +219,10 @@ class MockJournal:
             return b"ok", "".join(line + "\n" for line in lines)
         if name == "unit-status":
             return b"ok", (
-                "● processmanager.service - Process manager (mock)\n"
-                "     Loaded: loaded (/etc/systemd/system/processmanager.service; enabled)\n"
+                "● tepegoz.service - Tepegoz (mock)\n"
+                "     Loaded: loaded (/etc/systemd/system/tepegoz.service; enabled)\n"
                 "     Active: active (running)\n"
-                f"   Main PID: {self.manager_pid} (iltaren-ProcessManager)\n"
+                f"   Main PID: {self.manager_pid} (tepegoz)\n"
             )
         if name != "journal" or len(request) < 2:
             return b"error", "unknown request; the journal server answers version, journal, unit-status and members"
@@ -298,8 +298,8 @@ class MockServices:
 
 
 # The registry's view of the files: the main file's services, and one per file in services.d.
-MAIN_FILE = "/etc/processmanager/ProcessManagerConfig.yaml"
-REGISTRY_FOLDER = "/etc/processmanager/services.d"
+MAIN_FILE = "/etc/tepegoz/tepegoz.yaml"
+REGISTRY_FOLDER = "/etc/tepegoz/services.d"
 RESERVED_NAMES = ("pm", "all", "BPM", "PMC", "GUI")
 TEXT_KEYS = ("ProcessName", "ExecutablePath", "Cwd", "StdioFilePath", "Display", "XAuthority")
 INT_KEYS = {"MaxRestarts": (0, 1000), "RestartDelayMs": (0, None), "RestartResetMs": (0, None),

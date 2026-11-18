@@ -525,7 +525,7 @@ class WindowTest(unittest.TestCase):
         window.detail.update_report({"state": RuntimeState.RUNNING, "restartToApply": True})
         self.assertFalse(window.detail.pill_apply.isHidden())
         self.assertIn("next start", window.detail.pill_apply.toolTip())
-        self.assertTrue(window.detail.origin().startswith("Registered · /etc/processmanager/services.d/map_server"))
+        self.assertTrue(window.detail.origin().startswith("Registered · /etc/tepegoz/services.d/map_server"))
         self.assertTrue(window.detail.registry_buttons[sr.EDIT].isEnabled())
 
     def test_duplicate_and_remove_refused(self):
@@ -634,7 +634,7 @@ class MessageBoxesDoNotBlock(unittest.TestCase):
                                       journal_endpoint=closed_endpoint(), registry_endpoint=closed_endpoint())
         self.addCleanup(window.close)
         window._registry_services = {"cam": sr.ServiceEntry(
-            {"name": "cam", "origin": "registered", "file": "/etc/processmanager/services.d/cam.yaml"})}
+            {"name": "cam", "origin": "registered", "file": "/etc/tepegoz/services.d/cam.yaml"})}
         seen = []
         original = QMessageBox.question
 
@@ -648,7 +648,7 @@ class MessageBoxesDoNotBlock(unittest.TestCase):
         finally:
             QMessageBox.question = original
         self.assertEqual(len(seen), 1)
-        self.assertIn("/etc/processmanager/services.d/cam.yaml", seen[0][1])
+        self.assertIn("/etc/tepegoz/services.d/cam.yaml", seen[0][1])
         self.assertIn("<b>cam</b>", seen[0][1])
 
 

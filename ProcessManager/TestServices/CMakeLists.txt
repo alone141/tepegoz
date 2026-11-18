@@ -5,4 +5,4 @@ add_subdirectory(apps)
 add_subdirectory(configs)
 add_subdirectory(tests)
 
-install(FILES README.md scripts/run_scenarios.py DESTINATION ${PM_SHARE_DIR}test-setup)
+install(FILES README.md scripts/run_scenarios.py DESTINATION ${TEPEGOZ_SHARE_DIR}test-setup)

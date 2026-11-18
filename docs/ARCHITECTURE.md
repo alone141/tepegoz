@@ -1,6 +1,6 @@
 # Architecture
 
-How the process manager and its monitor GUI are built, and how they talk to each other. For how to use them, see
+How Tepegöz, the process manager, and its monitor GUI are built, and how they talk to each other. For how to use them, see
 [QUICKSTART.md](QUICKSTART.md) and [USAGE.md](USAGE.md).
 
 ## Overview
@@ -8,7 +8,7 @@ How the process manager and its monitor GUI are built, and how they talk to each
 ```
                          manager's machine                                    any machine
  ┌──────────────────────────────────────────────────────────────────────┐
- │ iltaren-ProcessManager (one process)                                 │   ┌──────────────────┐
+ │ tepegoz (one process)                                                │   ┌──────────────────┐
  │                                                                      │   │ monitor GUI      │
  │  broker ─────────────── ROUTER *:5557 ◄──── commands ────────────────┼───┤ (Python, PyQt6)  │
  │    │  status ────────── PUB    *:6669 ───── broker status ───────────┼──►│                  │
@@ -418,7 +418,7 @@ Whether an exit is restarted depends on three things:
 The installed systemd unit has `Delegate=yes`, so the manager may manage the cgroups below its own:
 
 ```
-/sys/fs/cgroup/system.slice/processmanager.service/          the unit's cgroup ("+cpu +memory" for its children)
+/sys/fs/cgroup/system.slice/tepegoz.service/          the unit's cgroup ("+cpu +memory" for its children)
 ├── task_pm/            the manager itself
 ├── task_server/        one per service with CreateProcessGroup: true
 └── task_viewer/
@@ -497,7 +497,7 @@ with other arguments keeps them.
 `Logger` is printf-style and thread-safe, with two outputs:
 - **stderr:** with journald priority prefixes (`<3>` …) when stderr is the journal, and with colours on a
   terminal.
-- **A file:** `PMLog_<date>_<time>.log`, continued in a new file at 100 MB.
+- **A file:** `tepegoz_<date>_<time>.log`, continued in a new file at 100 MB.
 
 A forked child never logs, because it may hold no lock between `fork` and `exec`.
 

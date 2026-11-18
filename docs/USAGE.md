@@ -1,6 +1,6 @@
 # Usage guide
 
-The complete reference for running the process manager and its monitor GUI. For the short version, see
+The complete reference for running Tepegöz, the process manager, and its monitor GUI. For the short version, see
 [QUICKSTART.md](QUICKSTART.md). For how the parts fit together, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - [Installing](#installing)
@@ -29,14 +29,14 @@ ZeroMQ library.
 
 | Item | Path with prefix `/usr` | Notes |
 |---|---|---|
-| Manager | `/usr/bin/iltaren-ProcessManager` | |
-| Configuration | `/etc/processmanager/ProcessManagerConfig.yaml` | Only if missing. An existing file is kept; if the new one differs, it is put next to it as `ProcessManagerConfig.yaml.new`. |
-| Registered services | `/etc/processmanager/services.d/` | Made empty if missing. An existing folder is kept with its files. See [Registered services](#registered-services-servicesd). |
-| Fallback configuration | `/usr/share/processmanager/ProcessManagerConfig.yaml` | Read when the file above is missing. |
-| Log directory | `/var/log/processmanager/ProcessManagerLog/` | |
-| systemd unit | `/usr/lib/systemd/system/processmanager.service` | Enabled when installed as root on a running systemd. Not started. |
-| Monitor GUI | `/usr/share/processmanager/gui/`, launcher `/usr/bin/process-monitor` | |
-| Test programs (tests built) | `/usr/bin/keepalive`, `/usr/bin/pmt_*`, `/usr/share/processmanager/test-setup/` | See [Testing with TestServices](#testing-with-testservices). |
+| Manager | `/usr/bin/tepegoz` | |
+| Configuration | `/etc/tepegoz/tepegoz.yaml` | Only if missing. An existing file is kept; if the new one differs, it is put next to it as `tepegoz.yaml.new`. |
+| Registered services | `/etc/tepegoz/services.d/` | Made empty if missing. An existing folder is kept with its files. See [Registered services](#registered-services-servicesd). |
+| Fallback configuration | `/usr/share/tepegoz/tepegoz.yaml` | Read when the file above is missing. |
+| Log directory | `/var/log/tepegoz/TepegozLog/` | |
+| systemd unit | `/usr/lib/systemd/system/tepegoz.service` | Enabled when installed as root on a running systemd. Not started. |
+| Monitor GUI | `/usr/share/tepegoz/gui/`, launcher `/usr/bin/process-monitor` | |
+| Test programs (tests built) | `/usr/bin/keepalive`, `/usr/bin/pmt_*`, `/usr/share/tepegoz/test-setup/` | See [Testing with TestServices](#testing-with-testservices). |
 
 The paths are built into the manager and the unit when you configure, so set the prefix then rather than with
 `cmake --install --prefix`. These cache variables change the install:
@@ -44,14 +44,14 @@ The paths are built into the manager and the unit when you configure, so set the
 | Variable | Default | Meaning |
 |---|---|---|
 | `CMAKE_INSTALL_PREFIX` | `/usr/local` | Base of every path below. |
-| `PM_CONFIG_DIR` | `<sysconfdir>/processmanager/`: `/etc/processmanager/` for `/usr`, `/usr/local/etc/processmanager/` for `/usr/local` | Where the manager reads `ProcessManagerConfig.yaml`. |
-| `PM_LOG_DIR` | `<localstatedir>/log/processmanager/`: `/var/log/processmanager/` for `/usr`, `/usr/local/var/log/processmanager/` for `/usr/local` | Parent of the `ProcessManagerLog` directory. |
-| `PM_SHARE_DIR` | `<prefix>/share/processmanager/` | Fallback configuration, GUI and test setup. |
-| `PM_BIN_INSTALL_DIR` | `bin` | Where the programs go. |
-| `PM_CONFIG_SOURCE` | empty | The configuration file to install. Empty installs a starter with no services. |
-| `PM_SYSTEMD_UNIT_DIR` | `<prefix>/lib/systemd/system` | Where the unit goes. |
-| `PM_INSTALL_GUI` | `ON` | Installs the GUI and its launcher. |
-| `PM_ENABLE_SERVICE` | `ON` | Enables the unit when installing as root on a running systemd. |
+| `TEPEGOZ_CONFIG_DIR` | `<sysconfdir>/tepegoz/`: `/etc/tepegoz/` for `/usr`, `/usr/local/etc/tepegoz/` for `/usr/local` | Where the manager reads `tepegoz.yaml`. |
+| `TEPEGOZ_LOG_DIR` | `<localstatedir>/log/tepegoz/`: `/var/log/tepegoz/` for `/usr`, `/usr/local/var/log/tepegoz/` for `/usr/local` | Parent of the `TepegozLog` directory. |
+| `TEPEGOZ_SHARE_DIR` | `<prefix>/share/tepegoz/` | Fallback configuration, GUI and test setup. |
+| `TEPEGOZ_BIN_INSTALL_DIR` | `bin` | Where the programs go. |
+| `TEPEGOZ_CONFIG_SOURCE` | empty | The configuration file to install. Empty installs a starter with no services. |
+| `TEPEGOZ_SYSTEMD_UNIT_DIR` | `<prefix>/lib/systemd/system` | Where the unit goes. |
+| `TEPEGOZ_INSTALL_GUI` | `ON` | Installs the GUI and its launcher. |
+| `TEPEGOZ_ENABLE_SERVICE` | `ON` | Enables the unit when installing as root on a running systemd. |
 | `ENABLE_TEST` | `ON` | Builds the tests and installs the test programs. |
 
 ## Running the manager
@@ -59,12 +59,12 @@ The paths are built into the manager and the unit when you configure, so set the
 ### As a systemd service
 
 ```bash
-sudo systemctl start processmanager
-sudo systemctl stop processmanager
-sudo systemctl restart processmanager          # stops every service and starts the manager again
-sudo systemctl reload processmanager           # reads a changed configuration without a restart
-systemctl status processmanager
-journalctl -u processmanager -f
+sudo systemctl start tepegoz
+sudo systemctl stop tepegoz
+sudo systemctl restart tepegoz          # stops every service and starts the manager again
+sudo systemctl reload tepegoz           # reads a changed configuration without a restart
+systemctl status tepegoz
+journalctl -u tepegoz -f
 ```
 
 The installed unit has these settings:
@@ -74,18 +74,18 @@ The installed unit has these settings:
 - **`TimeoutStopSec=180`:** after 180 s, systemd kills whatever is still running.
 - **`Restart=on-failure`:** systemd restarts the manager if it exits with an error or crashes. A manager that
   stops because its broker failed exits with 0, so it is not restarted.
-- **`ExecReload`:** `systemctl reload` runs `iltaren-ProcessManager reload`. See
+- **`ExecReload`:** `systemctl reload` runs `tepegoz reload`. See
   [Reloading the configuration](#reloading-the-configuration). A refused reload makes `systemctl reload` fail.
 
 ### By hand
 
 ```bash
-iltaren-ProcessManager                               # reads the installed configuration
-iltaren-ProcessManager --config ./my.yaml            # reads this file, with no fallback
+tepegoz                               # reads the installed configuration
+tepegoz --config ./my.yaml            # reads this file, with no fallback
 ```
 
-Without `--config`, the manager reads `PM_CONFIG_DIR/ProcessManagerConfig.yaml`. If that file is missing, it
-reads `PM_SHARE_DIR/ProcessManagerConfig.yaml`. With `--config`, a missing file is an error. In every case it
+Without `--config`, the manager reads `TEPEGOZ_CONFIG_DIR/tepegoz.yaml`. If that file is missing, it
+reads `TEPEGOZ_SHARE_DIR/tepegoz.yaml`. With `--config`, a missing file is an error. In every case it
 also reads the `services.d` folder next to the file it read.
 
 ### Stopping
@@ -106,7 +106,7 @@ still fails when it is started. A dependency cycle stops the manager from starti
 The manager writes its log in three places:
 - **On the console (stderr).** Under systemd, this goes to the journal with the right priorities. On a terminal,
   warnings are yellow, errors red and debug lines dim; `NO_COLOR` turns the colours off.
-- **In files:** `PMLog_<date>_<time>.log` in `PM_LOG_DIR/ProcessManagerLog/`. A file is continued in a new one
+- **In files:** `tepegoz_<date>_<time>.log` in `TEPEGOZ_LOG_DIR/TepegozLog/`. A file is continued in a new one
   at 100 MB. If the directory cannot be created, the manager logs to the console only.
 - **The level:** `LogLevel` in the configuration sets the lowest level that is logged.
 
@@ -115,7 +115,7 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 
 ## Command line
 
-`iltaren-ProcessManager [COMMAND] [OPTIONS]` (named `ProcessManagerApp` in a build tree).
+`tepegoz [COMMAND] [OPTIONS]` (named `ProcessManagerApp` in a build tree).
 
 | Command or option | What it does |
 |---|---|
@@ -123,7 +123,7 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 | `--config FILE`, `-c FILE` | Runs the manager with `FILE`. Also names the file for `validate` and `graph`. |
 | `validate --config FILE` | Checks `FILE` and the `services.d` folder next to it: YAML syntax with line numbers, unknown keys, wrong values, reserved names, missing executables and folders, missing dependencies, duplicates, cycles, and the rules for registered services. Exits 1 if it finds a problem. |
 | `graph --config FILE` | Prints the order in which the services of `FILE` and its `services.d` start. |
-| `generate` | Writes `ProcessManagerConfig.yaml` with every key documented, in the current folder. |
+| `generate` | Writes `tepegoz.yaml` with every key documented, in the current folder. |
 | `status` | Shows a live table, redrawn every second. See [The status table](#the-status-table). Ctrl+C leaves. |
 | `status --once` | Prints the table once and exits. It follows the reports for a second first, so CPU has a figure. Exits with 1 if no report comes within 3 s. |
 | `reload` | The running manager reads its configuration and `services.d` again and applies what changed. See [Reloading the configuration](#reloading-the-configuration). |
@@ -185,12 +185,12 @@ vision_pipeline   Stopped        -         -      -         -      -         -  
 
 ## Configuration
 
-The file is YAML with two parts: `ProcessManager` holds the manager's own settings, and `Services` lists the
+The file is YAML with two parts: `Tepegoz` holds the manager's own settings, and `Services` lists the
 programs to run. More services can be registered one per file, in the `services.d` folder next to it (see
 [Registered services](#registered-services-servicesd)).
 
 ```yaml
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 
@@ -209,7 +209,7 @@ Services:
   A service that sets both spellings of one key is ignored.
 - **Quoting:** a value with two spaces in a row must be quoted (`"a  b"`), because of the YAML reader in use.
 
-### `ProcessManager`
+### `Tepegoz`
 
 | Key | Values | Default | Meaning |
 |---|---|---|---|
@@ -253,11 +253,11 @@ Each entry is one service. `ProcessName` and `ExecutablePath` are required; ever
 ### Registered services (`services.d`)
 
 A service can also have a file of its own in the `services.d` folder next to the configuration file the manager
-read: `/etc/processmanager/services.d/` with prefix `/usr`, or the share directory's when the manager fell back to
+read: `/etc/tepegoz/services.d/` with prefix `/usr`, or the share directory's when the manager fell back to
 the copy there. `cmake --install` makes the folder empty if it is missing, and keeps an existing one.
 
 ```yaml
-# /etc/processmanager/services.d/viewer.yaml
+# /etc/tepegoz/services.d/viewer.yaml
 ProcessName: viewer
 ExecutablePath: /opt/app/bin/viewer
 DependsOn: [server]
@@ -282,7 +282,7 @@ DependsOn: [server]
 
 ### Reloading the configuration
 
-`iltaren-ProcessManager reload` (or `systemctl reload processmanager`) makes the running manager read its
+`tepegoz reload` (or `systemctl reload tepegoz`) makes the running manager read its
 configuration file and its `services.d` folder again, and touch only what changed. It works service by service,
 by `ProcessName`:
 
@@ -309,7 +309,7 @@ by `ProcessName`:
   is not valid YAML, its top level is not a mapping or its `Services` is not a list, the `services.d` folder
   exists but cannot be listed, or the new configuration has two services of the same name or a dependency
   cycle. A folder that cannot be listed is never taken for an empty one.
-- **`ProcessManager` settings:** `LogLevel` takes effect at once. A changed `Mode` applies to services the
+- **`Tepegoz` settings:** `LogLevel` takes effect at once. A changed `Mode` applies to services the
   reload adds from then on, and to new definitions when they take effect; running services keep their work mode.
 - **Disabled services:** one removed with `--disable` comes back on a reload if the configuration still has it.
 - **After the reload:** `--start all` builds from the configuration this reload read.
@@ -329,12 +329,12 @@ command line's commands below send these requests, and so does the GUI (see
 [architecture document](ARCHITECTURE.md#service-registry-port-6671) has the protocol, for other clients.
 
 ```bash
-iltaren-ProcessManager add camera /opt/cam/bin/server -- --port 8080
-iltaren-ProcessManager set camera MaxRestarts=3 Display=:1
-iltaren-ProcessManager show camera > camera.yaml       # edit camera.yaml, then:
-iltaren-ProcessManager replace camera --from camera.yaml --restart
-iltaren-ProcessManager list
-iltaren-ProcessManager remove camera
+tepegoz add camera /opt/cam/bin/server -- --port 8080
+tepegoz set camera MaxRestarts=3 Display=:1
+tepegoz show camera > camera.yaml       # edit camera.yaml, then:
+tepegoz replace camera --from camera.yaml --restart
+tepegoz list
+tepegoz remove camera
 ```
 
 | Command | What the manager does |
@@ -739,7 +739,7 @@ starting another manager by hand.
 
 ```bash
 python3 ProcessManager/TestServices/scripts/run_scenarios.py --build-dir build
-python3 /usr/share/processmanager/test-setup/run_scenarios.py --prefix /usr
+python3 /usr/share/tepegoz/test-setup/run_scenarios.py --prefix /usr
 ```
 
 The `everything` configuration runs one program of each kind, which makes a lively manager to watch in the GUI.

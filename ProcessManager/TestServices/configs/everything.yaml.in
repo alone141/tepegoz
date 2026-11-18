@@ -1,7 +1,7 @@
 # everything: one service of each kind, for watching the manager in the monitor GUI.
-# Run:   iltaren-ProcessManager --config everything.yaml  (the GUI shows each service's journal under systemd)
+# Run:   tepegoz --config everything.yaml  (the GUI shows each service's journal under systemd)
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

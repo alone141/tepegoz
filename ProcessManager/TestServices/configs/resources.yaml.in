@@ -1,6 +1,6 @@
 # resources: the CPU and memory figures. They come from the service's cgroup, so they read 0 without cgroups.
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

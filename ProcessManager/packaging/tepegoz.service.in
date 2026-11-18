@@ -1,5 +1,5 @@
 [Unit]
-Description=Process manager: starts and supervises the services of ProcessManagerConfig.yaml
+Description=Tepegoz: starts and supervises the services of tepegoz.yaml
 Wants=network-online.target
 After=network-online.target
 

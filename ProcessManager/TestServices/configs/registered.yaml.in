@@ -2,9 +2,9 @@
 # The driver copies this config into the scenario's run folder and writes services.d next to it:
 #   services.d/registered.yaml   ProcessName: registered, DependsOn: [anchor], no WorkMode (Mode: Auto applies)
 #   and files the manager ignores: a dot file, a .txt file and a subfolder.
-# Run:   iltaren-ProcessManager --config registered.yaml   (with such a services.d folder next to it)
+# Run:   tepegoz --config registered.yaml   (with such a services.d folder next to it)
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

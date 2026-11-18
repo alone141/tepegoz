@@ -1,6 +1,6 @@
 # Quick start
 
-The process manager starts the programs listed in `ProcessManagerConfig.yaml`, keeps them running and stops them.
+Tepegöz, the process manager, starts the programs listed in `tepegoz.yaml`, keeps them running and stops them.
 The monitor GUI shows their state, resource use and logs, and starts, stops or restarts them. The GUI can run on
 the manager's machine or on another one.
 
@@ -22,22 +22,22 @@ The install puts these in place:
 
 | What | Where |
 |---|---|
-| The manager | `/usr/bin/iltaren-ProcessManager` |
-| Its configuration | `/etc/processmanager/ProcessManagerConfig.yaml` (an existing one is kept) |
-| Its log files | `/var/log/processmanager/ProcessManagerLog/` |
-| The systemd service | `processmanager.service`, enabled so it starts at boot |
-| The monitor GUI | `/usr/share/processmanager/gui/`, started with `process-monitor` |
+| The manager | `/usr/bin/tepegoz` |
+| Its configuration | `/etc/tepegoz/tepegoz.yaml` (an existing one is kept) |
+| Its log files | `/var/log/tepegoz/TepegozLog/` |
+| The systemd service | `tepegoz.service`, enabled so it starts at boot |
+| The monitor GUI | `/usr/share/tepegoz/gui/`, started with `process-monitor` |
 
 The installed configuration starts no service yet. To install your own file instead, add
-`-DPM_CONFIG_SOURCE=/path/to/ProcessManagerConfig.yaml` to the first command.
+`-DTEPEGOZ_CONFIG_SOURCE=/path/to/tepegoz.yaml` to the first command.
 
 ## 2. List your services
 
-Edit `/etc/processmanager/ProcessManagerConfig.yaml`. Each service needs a `ProcessName` and an absolute
+Edit `/etc/tepegoz/tepegoz.yaml`. Each service needs a `ProcessName` and an absolute
 `ExecutablePath`; every other key is optional.
 
 ```yaml
-ProcessManager:
+Tepegoz:
   Mode: Auto              # start every service when the manager starts
   LogLevel: Info
 
@@ -59,26 +59,26 @@ Check the file before you use it. `validate` reports unknown or misspelled keys,
 and dependency problems:
 
 ```bash
-iltaren-ProcessManager validate --config /etc/processmanager/ProcessManagerConfig.yaml
+tepegoz validate --config /etc/tepegoz/tepegoz.yaml
 ```
 
-`iltaren-ProcessManager generate` writes a template that documents every key, in the current folder.
+`tepegoz generate` writes a template that documents every key, in the current folder.
 
 ## 3. Start the manager
 
 ```bash
-sudo systemctl start processmanager
-systemctl status processmanager
-journalctl -u processmanager -f             # follow its log
+sudo systemctl start tepegoz
+systemctl status tepegoz
+journalctl -u tepegoz -f             # follow its log
 ```
 
 The manager reads the configuration only when it starts. After editing the file, run
-`sudo systemctl restart processmanager`.
+`sudo systemctl restart tepegoz`.
 
 To try a configuration without systemd, run the manager by hand. Ctrl+C stops it and every service it started.
 
 ```bash
-iltaren-ProcessManager --config ./ProcessManagerConfig.yaml
+tepegoz --config ./tepegoz.yaml
 ```
 
 ## 4. Control services from the command line
@@ -86,13 +86,13 @@ iltaren-ProcessManager --config ./ProcessManagerConfig.yaml
 Run these on the manager's machine while the manager is running:
 
 ```bash
-iltaren-ProcessManager status                   # live table of every service; Ctrl+C to leave
-iltaren-ProcessManager status --once            # one table, then exit
-iltaren-ProcessManager --start viewer           # start it, and the services in its DependsOn
-iltaren-ProcessManager --kill viewer            # stop it; it stays stopped until started again
-iltaren-ProcessManager --restart server
-iltaren-ProcessManager --kill all               # stop every service
-iltaren-ProcessManager --start all              # stop, rebuild and start every service, Manual ones too
+tepegoz status                   # live table of every service; Ctrl+C to leave
+tepegoz status --once            # one table, then exit
+tepegoz --start viewer           # start it, and the services in its DependsOn
+tepegoz --kill viewer            # stop it; it stays stopped until started again
+tepegoz --restart server
+tepegoz --kill all               # stop every service
+tepegoz --start all              # stop, rebuild and start every service, Manual ones too
 ```
 
 Each command prints what it did, for example `viewer: Running, pid 4321`. It exits with 0 once that is done,
@@ -147,7 +147,7 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 
 | You see | Look at |
 |---|---|
-| The toolbar shows "Waiting for data…" or "No data for …" instead of "Live" | Whether the manager runs (`systemctl status processmanager`), and, for a remote GUI, whether a firewall blocks the ports. |
+| The toolbar shows "Waiting for data…" or "No data for …" instead of "Live" | Whether the manager runs (`systemctl status tepegoz`), and, for a remote GUI, whether a firewall blocks the ports. |
 | "no answer from the journal server" in a log view or the cgroup PIDs tab | Port 6670 is blocked, or the manager is older than its journal server. |
 | The cgroup PIDs tab says the service runs without a cgroup | The manager could not create cgroups: run it through its systemd unit, as root. |
 | A service keeps restarting, then stays stopped | Its Journal tab, and lines such as `[name] pid 1234 exited with code 1` in the manager's log. After `MaxRestarts` restarts in a row, the manager leaves it stopped. |

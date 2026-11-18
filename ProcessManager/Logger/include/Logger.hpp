@@ -36,7 +36,7 @@ struct Settings
     // Directory for the log files; empty writes to the console only.
     std::filesystem::path directory;
     // Files are named <prefix>_<start time>.log, then <prefix>_<start time>_<n>.log.
-    std::string prefix = "PMLog";
+    std::string prefix = "tepegoz";
     // A file that grows past this is closed, and the next one is started.
     std::uint64_t maxFileBytes = default_max_file_bytes;
 };

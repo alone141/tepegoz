@@ -15,12 +15,12 @@
 namespace process_manager
 {
 
-const char* config_template = R"yaml(# Process manager configuration (YAML)
+const char* config_template = R"yaml(# Tepegoz configuration (YAML)
 # More services can be registered one per file in the services.d folder next to this file: <ProcessName>.yaml,
 # holding the keys of one Services entry below. They come after the services listed here, in file name order.
 
 # Settings of the manager itself.
-ProcessManager:
+Tepegoz:
   # Auto: start every service when the manager starts. Manual: wait for --start.
   # A service's own WorkMode overrides this. DEFAULT: Inherit (a service without a WorkMode is Manual)
   Mode: Auto
@@ -52,7 +52,7 @@ Services:
     # DEFAULT: the manager's
     Cwd: /opt/app
     # OPTIONAL: Auto: started with the manager and restarted by RestartMode. Manual: waits for --start.
-    # DEFAULT: ProcessManager Mode, else Manual
+    # DEFAULT: Tepegoz Mode, else Manual
     WorkMode: Auto
     # OPTIONAL: whether the service gets a cgroup of its own.
     # DEFAULT: true
@@ -158,7 +158,7 @@ void PrintHelp(const cxxopts::Options& options)
         << "  validate   Validate config (keys, values, deps exist, no cycles)\n"
         << "  graph      Print dependency order\n"
         << "  status     Live table of every service, redrawn each second; --once prints it once\n"
-        << "  generate   Generates an example config (ProcessManagerConfig.yaml)\n"
+        << "  generate   Generates an example config (tepegoz.yaml)\n"
         << "  reload     The running manager reads its configuration again: it adds new services, removes\n"
         << "             deleted ones, and a changed one takes its new definition at its next start\n"
         << "\n"
@@ -414,7 +414,7 @@ void GenerateTemplateConfig()
 {
     std::ofstream fout;
 
-    fout = std::ofstream("ProcessManagerConfig.yaml");
+    fout = std::ofstream("tepegoz.yaml");
 
     if (fout.is_open())
     {

@@ -1,6 +1,6 @@
 # stdio: where a service's output goes in each StdioMode.
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

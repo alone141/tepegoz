@@ -1,8 +1,8 @@
 # basic: start order through DependsOn, a Manual service, and the --start, --kill and --restart commands.
-# Run:   iltaren-ProcessManager --config basic.yaml
-# Then:  iltaren-ProcessManager --start manual | --kill second | --restart first
+# Run:   tepegoz --config basic.yaml
+# Then:  tepegoz --start manual | --kill second | --restart first
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import List, Optional, Sequence, Tuple
 
 
-SERVICE_UNIT = "processmanager.service"
+SERVICE_UNIT = "tepegoz.service"
 CGROUP_ROOT = "/sys/fs/cgroup"
 # The manager's own cgroup; every task_<name> it creates sits next to it.
 MANAGER_CGROUP = "task_pm"

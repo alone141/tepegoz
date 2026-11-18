@@ -45,7 +45,7 @@ int ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
     dependsOn = section.ReadList("DependsOn", ' ');
     environmentVariables = section.ReadAssignments(section.RenamedKey("EnvironmentVariables", "EnviromentVariables"), ';');
 
-    // The choices in WorkMode order; without one, [ProcessManager] Mode may apply (GenerateConfig).
+    // The choices in WorkMode order; without one, [Tepegoz] Mode may apply (GenerateConfig).
     this->workMode = static_cast<WorkMode>(section.ReadChoice("WorkMode", { "Auto", "Manual" }, 1));
 
     stdioPolicy.UpdateArgs(section);

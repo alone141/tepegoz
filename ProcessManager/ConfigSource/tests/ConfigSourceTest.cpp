@@ -14,7 +14,7 @@
 namespace
 {
 
-const std::string main_text = "ProcessManager:\n"
+const std::string main_text = "Tepegoz:\n"
                               "  Mode: Auto\n"
                               "Services:\n"
                               "  - ProcessName: main\n"
@@ -357,12 +357,12 @@ TEST(ConfigSourceTest, MainFileSyntaxErrorReturnsMainFileSyntaxError)
 TEST(ConfigSourceTest, MainFileWithoutServicesGetsTheList)
 {
     const ScratchFolder folder{};
-    folder.Write("main.yaml", "ProcessManager:\n  Mode: Auto\n");
+    folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\n");
     folder.Write("services.d/extra.yaml", Service("extra"));
     const config_source::LoadedConfig loaded = Load(folder);
     EXPECT_EQ(ServiceNames(loaded), (std::vector<std::string>{"extra"}));
-    EXPECT_EQ(loaded.document.keys, (std::vector<std::string>{"ProcessManager", "Services"}));
-    EXPECT_NE(config_section::FindValue(loaded.document, "ProcessManager"), nullptr);
+    EXPECT_EQ(loaded.document.keys, (std::vector<std::string>{"Services", "Tepegoz"})); // sorted, as a mapping's keys are
+    EXPECT_NE(config_section::FindValue(loaded.document, "Tepegoz"), nullptr);
 }
 
 TEST(ConfigSourceTest, EmptyMainFileGetsTheList)
@@ -520,9 +520,9 @@ TEST(ConfigSourceTest, LoadingAgainSeesTheFolderAsItIsNow)
 
 TEST(ConfigSourceTest, DropInFolderIsBesideTheMainFile)
 {
-    const config_source::ConfigSource source{"/etc/processmanager/ProcessManagerConfig.yaml"};
-    EXPECT_EQ(source.MainFile(), std::filesystem::path{"/etc/processmanager/ProcessManagerConfig.yaml"});
-    EXPECT_EQ(source.DropInFolder(), std::filesystem::path{"/etc/processmanager/services.d"});
+    const config_source::ConfigSource source{"/etc/tepegoz/tepegoz.yaml"};
+    EXPECT_EQ(source.MainFile(), std::filesystem::path{"/etc/tepegoz/tepegoz.yaml"});
+    EXPECT_EQ(source.DropInFolder(), std::filesystem::path{"/etc/tepegoz/services.d"});
 }
 
 TEST(ConfigSourceTest, FindOriginFindsTheServiceByName)

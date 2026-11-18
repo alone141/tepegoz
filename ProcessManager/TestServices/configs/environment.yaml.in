@@ -2,7 +2,7 @@
 # Each service prints them once (see the manager's log) and waits.
 # 'validate' reports one error here on purpose: cwd_missing's Cwd does not exist.
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

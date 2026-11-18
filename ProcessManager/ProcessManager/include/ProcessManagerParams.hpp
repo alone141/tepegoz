@@ -12,8 +12,8 @@ namespace process_manager
 struct ProcessManagerParams
 {
     WorkMode workMode = WorkMode::Manual;
-    logger::Level logLevel = logger::Level::Debug; // [ProcessManager] LogLevel
-    bool remoteRegistration = false; // [ProcessManager] RemoteRegistration, read at start-up only
+    logger::Level logLevel = logger::Level::Debug; // [Tepegoz] LogLevel
+    bool remoteRegistration = false; // [Tepegoz] RemoteRegistration, read at start-up only
     std::vector<Process> processList;
     config_section::ConfigValue document; // what the services were built from: "start all" builds them again
     // Where document was read, so that it can be read again. Empty when it was not read from a file.

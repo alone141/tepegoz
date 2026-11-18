@@ -7,13 +7,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ENABLE_TEST "Build the GoogleTest suites, the keepalive test service and the TestServices programs" ON)
 
+# Before the rename to Tepegoz these cache variables were PM_*. One still given, on the command line or in the cache
+# of an older build folder, would be ignored without a word and the default path used instead.
+foreach(renamed IN ITEMS CONFIG_DIR LOG_DIR SHARE_DIR BIN_INSTALL_DIR CONFIG_SOURCE SYSTEMD_UNIT_DIR INSTALL_GUI
+                         ENABLE_SERVICE)
+    if(DEFINED PM_${renamed})
+        message(FATAL_ERROR "PM_${renamed} is now TEPEGOZ_${renamed}: set that instead. To use this build folder "
+                            "again, remove the old variables from its cache with: cmake -U 'PM_*' <build folder>")
+    endif()
+endforeach()
+
 # Built into the manager. Directories end with a slash. With -DCMAKE_INSTALL_PREFIX=/usr the config is read
-# from /etc/processmanager/ and the logs go under /var/log/processmanager/.
+# from /etc/tepegoz/ and the logs go under /var/log/tepegoz/.
 include(GNUInstallDirs)
-set(PM_CONFIG_DIR "${CMAKE_INSTALL_FULL_SYSCONFDIR}/processmanager/" CACHE STRING "Directory of ProcessManagerConfig.yaml")
-set(PM_LOG_DIR "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/log/processmanager/" CACHE STRING "Directory that holds ProcessManagerLog")
-set(PM_SHARE_DIR "${CMAKE_INSTALL_FULL_DATADIR}/processmanager/" CACHE STRING "Directory of the fallback ProcessManagerConfig.yaml")
-set(PM_BIN_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}" CACHE STRING "Install directory of the programs")
+set(TEPEGOZ_CONFIG_DIR "${CMAKE_INSTALL_FULL_SYSCONFDIR}/tepegoz/" CACHE STRING "Directory of tepegoz.yaml")
+set(TEPEGOZ_LOG_DIR "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/log/tepegoz/" CACHE STRING "Directory that holds TepegozLog")
+set(TEPEGOZ_SHARE_DIR "${CMAKE_INSTALL_FULL_DATADIR}/tepegoz/" CACHE STRING "Directory of the fallback tepegoz.yaml")
+set(TEPEGOZ_BIN_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}" CACHE STRING "Install directory of the programs")
 
 # Dependencies: libzmq 4.3.5, cppzmq 4.10.0, cxxopts 3.3.1, fkYAML 0.4.4 and, for the tests, GoogleTest 1.18.0 are
 # vendored in third_party and built here (see third_party/README.md): the build needs no installed package and

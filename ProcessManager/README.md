@@ -1,4 +1,4 @@
-# ProcessManager Release Notes
+# Tepegöz Release Notes
 
 How to use and how it works: [quick start](../docs/QUICKSTART.md), [usage guide](../docs/USAGE.md),
 [architecture](../docs/ARCHITECTURE.md).
@@ -23,28 +23,28 @@ cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build
 ctest --test-dir build
 sudo cmake --install build
-sudo systemctl start processmanager
+sudo systemctl start tepegoz
 ```
 `cmake --install` sets up everything the manager needs on the machine:
-- **The manager:** installed in `bin/` as `iltaren-ProcessManager`.
-- **The configuration:** `ProcessManagerConfig.yaml` goes in the config directory unless one is already there.
+- **The manager:** installed in `bin/` as `tepegoz`.
+- **The configuration:** `tepegoz.yaml` goes in the config directory unless one is already there.
   An existing file, which may have been edited, is kept, and the new one is put next to it as
-  `ProcessManagerConfig.yaml.new`. The share directory gets the same file, which the manager reads when the
+  `tepegoz.yaml.new`. The share directory gets the same file, which the manager reads when the
   config directory has none. By default this is a starter configuration with no services;
-  `-DPM_CONFIG_SOURCE=FILE` installs your own file instead. Next to it goes an empty `services.d` folder for
+  `-DTEPEGOZ_CONFIG_SOURCE=FILE` installs your own file instead. Next to it goes an empty `services.d` folder for
   registered services; an existing one is kept with its files.
-- **The log directory:** `ProcessManagerLog`, for the log files.
-- **The systemd unit:** `processmanager.service` runs the manager with `Delegate=yes`, which its cgroups
+- **The log directory:** `TepegozLog`, for the log files.
+- **The systemd unit:** `tepegoz.service` runs the manager with `Delegate=yes`, which its cgroups
   need. Installing as root on a running systemd also enables the unit, so the manager starts at boot. It is not
   started at install time. A staged install (`DESTDIR`) only installs the file.
-- **The monitor GUI:** installed in `share/processmanager/gui/`, with its launcher `process-monitor` in `bin/`. It
+- **The monitor GUI:** installed in `share/tepegoz/gui/`, with its launcher `process-monitor` in `bin/`. It
   needs Python 3 with PyQt6 and pyzmq, which the install does not provide.
 - **The test setup (when the tests are built):** `keepalive` and the `pmt_*` test programs next to the manager,
-  and their scenario configs and driver in `share/processmanager/test-setup/` (see `TestServices/README.md`).
+  and their scenario configs and driver in `share/tepegoz/test-setup/` (see `TestServices/README.md`).
 
 The paths are fixed when the build is configured and follow `CMAKE_INSTALL_PREFIX`. With `/usr`:
-- the config is `/etc/processmanager/ProcessManagerConfig.yaml`;
-- the logs go to `/var/log/processmanager/ProcessManagerLog/`;
+- the config is `/etc/tepegoz/tepegoz.yaml`;
+- the logs go to `/var/log/tepegoz/TepegozLog/`;
 - the unit goes in `/usr/lib/systemd/system/`.
 
 Set the prefix when you configure, not with `cmake --install --prefix`, since the paths are already built into
@@ -52,23 +52,58 @@ the manager and the unit. Each path can also be set on its own; directories end 
 
 | Cache variable | Default | Used for |
 |---|---|---|
-| `PM_CONFIG_DIR` | `<prefix>/etc/processmanager/` | `ProcessManagerConfig.yaml` |
-| `PM_LOG_DIR` | `<prefix>/var/log/processmanager/` | the `ProcessManagerLog` directory |
-| `PM_SHARE_DIR` | `<prefix>/share/processmanager/` | the `ProcessManagerConfig.yaml` read when the first is missing, and the GUI |
-| `PM_BIN_INSTALL_DIR` | `bin` | where `cmake --install` puts the programs |
-| `PM_CONFIG_SOURCE` | empty: a starter with no services | the `ProcessManagerConfig.yaml` that is installed |
-| `PM_SYSTEMD_UNIT_DIR` | `<prefix>/lib/systemd/system` | `processmanager.service` |
-| `PM_INSTALL_GUI` | `ON` | installing the GUI and `process-monitor` |
-| `PM_ENABLE_SERVICE` | `ON` | enabling the unit when installing as root on a running systemd |
+| `TEPEGOZ_CONFIG_DIR` | `<prefix>/etc/tepegoz/` | `tepegoz.yaml` |
+| `TEPEGOZ_LOG_DIR` | `<prefix>/var/log/tepegoz/` | the `TepegozLog` directory |
+| `TEPEGOZ_SHARE_DIR` | `<prefix>/share/tepegoz/` | the `tepegoz.yaml` read when the first is missing, and the GUI |
+| `TEPEGOZ_BIN_INSTALL_DIR` | `bin` | where `cmake --install` puts the programs |
+| `TEPEGOZ_CONFIG_SOURCE` | empty: a starter with no services | the `tepegoz.yaml` that is installed |
+| `TEPEGOZ_SYSTEMD_UNIT_DIR` | `<prefix>/lib/systemd/system` | `tepegoz.service` |
+| `TEPEGOZ_INSTALL_GUI` | `ON` | installing the GUI and `process-monitor` |
+| `TEPEGOZ_ENABLE_SERVICE` | `ON` | enabling the unit when installing as root on a running systemd |
 
 The version the manager logs at start is the one in the root `project()` call.
 
 ### Configuration
-`ProcessManagerConfig.yaml`, written by `iltaren-ProcessManager generate` with every key documented.
-`iltaren-ProcessManager validate --config FILE` reports YAML errors with their line, unknown keys,
+`tepegoz.yaml`, written by `tepegoz generate` with every key documented.
+`tepegoz validate --config FILE` reports YAML errors with their line, unknown keys,
 values of the wrong kind, reserved names, missing dependencies and cycles.
 
 ### Unreleased
+**ProcessManager is now called Tepegöz**, and every name it had changes with it. Only the new names are read,
+so a machine that runs an earlier version needs the steps below before it runs this one.
+
+| What | Before | Now |
+|---|---|---|
+| The program | `iltaren-ProcessManager` | `tepegoz` |
+| The systemd unit | `processmanager.service` | `tepegoz.service` |
+| The configuration | `/etc/processmanager/ProcessManagerConfig.yaml` | `/etc/tepegoz/tepegoz.yaml` |
+| The manager's own settings in it | the `ProcessManager:` section | the `Tepegoz:` section |
+| Registered services | `/etc/processmanager/services.d/` | `/etc/tepegoz/services.d/` |
+| The share directory: fallback configuration, GUI, test setup | `/usr/share/processmanager/` | `/usr/share/tepegoz/` |
+| The log files | `/var/log/processmanager/ProcessManagerLog/PMLog_*.log` | `/var/log/tepegoz/TepegozLog/tepegoz_*.log` |
+| The CMake cache variables | `PM_CONFIG_DIR` and the other `PM_*` | `TEPEGOZ_CONFIG_DIR` and the other `TEPEGOZ_*` |
+
+A configuration that still has a `ProcessManager:` section is reported as having an unknown key, and its
+settings are not read. Configuring the build with a `PM_*` variable stops and names the new one; `cmake -U 'PM_*'
+build` removes them from an older build folder. `cmake --install` does not enable `tepegoz.service` while
+`processmanager.service` is enabled, since two managers would fight over the same ports; it says how to switch.
+
+On a machine that runs an earlier version, as root (the paths are those of the prefix `/usr`):
+```text
+systemctl disable --now processmanager.service
+mkdir -p /etc/tepegoz
+mv /etc/processmanager/ProcessManagerConfig.yaml /etc/tepegoz/tepegoz.yaml
+mv /etc/processmanager/services.d /etc/tepegoz/
+sed -i 's/^ProcessManager:/Tepegoz:/' /etc/tepegoz/tepegoz.yaml
+cmake --install build                      # the new build: keeps the moved files, enables tepegoz.service
+tepegoz validate --config /etc/tepegoz/tepegoz.yaml
+systemctl start tepegoz
+```
+Then remove what the earlier version installed: `/usr/bin/iltaren-ProcessManager`,
+`/usr/lib/systemd/system/processmanager.service` (then `systemctl daemon-reload`), `/etc/processmanager/`,
+`/usr/share/processmanager/` and, once its logs are no longer needed, `/var/log/processmanager/`. Scripts that
+call `iltaren-ProcessManager` or `systemctl ... processmanager` need the new names.
+
 - Services can be registered one per file, in the `services.d` folder next to the configuration file the manager
   reads. Each `<ProcessName>.yaml` holds the keys of one `Services` entry. The files are read in file name order,
   and their services come after the main file's; otherwise they are ordinary services. Subfolders, dot files and
@@ -78,7 +113,7 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   registered services. `cmake --install` creates the empty folder next to the installed configuration and keeps
   an existing one. The folder is read at start-up and on a reload, like the main file. The new module
   `ConfigSource/` reads both and keeps where each service was defined.
-- `iltaren-ProcessManager reload`, and `systemctl reload processmanager` through the unit's new `ExecReload`,
+- `tepegoz reload`, and `systemctl reload tepegoz` through the unit's new `ExecReload`,
   make the running manager read its configuration file and `services.d` again and touch only what changed. A new
   service is added and started by its work mode; a service with no entry and no file, or with `Enabled: false`,
   is stopped and removed; a service whose new definition cannot be read is kept as it is; a changed service keeps
@@ -123,7 +158,7 @@ values of the wrong kind, reserved names, missing dependencies and cycles.
   `validate` checks a configuration, written as one file in `services.d`, and applied with a reload; a request
   that would add a problem writes nothing. Only registered services can be changed this way; `show` and `list`
   cover every service. Requests are a YAML or JSON mapping, and replies one JSON object, so the GUI needs no
-  YAML reader. The port listens on 127.0.0.1 only, unless the new `ProcessManager` key `RemoteRegistration` is
+  YAML reader. The port listens on 127.0.0.1 only, unless the new `Tepegoz` key `RemoteRegistration` is
   true. It has no authentication, so whoever reaches it can make the manager run any program. `pmt_request`,
   a new test program, sends requests by hand.
 - The command line registers services through the running manager: `add NAME EXECUTABLE [ARG...]` (arguments

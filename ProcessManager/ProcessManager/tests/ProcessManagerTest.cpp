@@ -161,7 +161,7 @@ Reloaded Reload(process_manager::ProcessManagerParams& params)
 TEST(ProcessManagerTest, DropInServiceTakesTheManagerModeDefault)
 {
     const ScratchFolder folder{};
-    folder.Write("main.yaml", "ProcessManager:\n  Mode: Auto\nServices: []\n");
+    folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\nServices: []\n");
     folder.Write("services.d/extra.yaml", Service("extra"));
     std::vector<std::string> errors;
     const std::unique_ptr<process_manager::ProcessManagerParams> params =
@@ -235,7 +235,7 @@ TEST(ProcessManagerTest, RebuildConfigKeepsTheDropInsAndWhereTheyCameFrom)
 TEST(ProcessManagerTest, ReloadAddsTheServiceOfANewFile)
 {
     const ScratchFolder folder{};
-    folder.Write("main.yaml", "ProcessManager:\n  Mode: Auto\nServices:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
+    folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\nServices:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
     std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
     folder.Write("services.d/extra.yaml", Service("extra"));
     const Reloaded reloaded = Reload(*params);
@@ -429,9 +429,9 @@ TEST(ProcessManagerTest, ReloadStoresTheNewDocumentForStartAll)
 TEST(ProcessManagerTest, ReloadTakesTheLogLevelAndMode)
 {
     const ScratchFolder folder{};
-    folder.Write("main.yaml", "ProcessManager:\n  Mode: Manual\n  LogLevel: Debug\nServices: []\n");
+    folder.Write("main.yaml", "Tepegoz:\n  Mode: Manual\n  LogLevel: Debug\nServices: []\n");
     std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    folder.Write("main.yaml", "ProcessManager:\n  Mode: Auto\n  LogLevel: Warning\nServices: []\n");
+    folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\n  LogLevel: Warning\nServices: []\n");
     ASSERT_EQ(Reload(*params).report.result, process_manager::ReloadResult::Applied);
     EXPECT_EQ(params->logLevel, logger::Level::Warning);
     EXPECT_EQ(params->workMode, process_manager::WorkMode::Auto);
@@ -557,7 +557,7 @@ TEST(ProcessManagerTest, ServiceDisabledAtRunTimeComesBackOnReload)
 namespace
 {
 
-const std::string auto_main = "ProcessManager:\n  Mode: Auto\nServices:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n";
+const std::string auto_main = "Tepegoz:\n  Mode: Auto\nServices:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n";
 
 // A registry request's reply, read back with the configuration reader: JSON is YAML.
 struct Answered
@@ -736,7 +736,7 @@ TEST(ProcessManagerTest, RegistryAddOfAnUnknownKeyIsRefused)
 TEST(ProcessManagerTest, RegistryAddIgnoresProblemsThatWereThereBefore)
 {
     const ScratchFolder folder{};
-    folder.Write("main.yaml", "ProcessManager:\n  Mode: Auto\nServices:\n  - ProcessName: old\n"
+    folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\nServices:\n  - ProcessName: old\n"
                               "    ExecutablePath: /nonexistent/old\n    WorkMode: Manual\n");
     std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("extra", Service("extra"))});
@@ -1038,7 +1038,7 @@ TEST(ProcessManagerTest, RemoteRegistrationIsReadFromTheManagerSection)
     std::vector<std::string> problems;
     config_section::ConfigValue document{};
     std::string error;
-    ASSERT_EQ(config_section::ParseConfigText("ProcessManager:\n  RemoteRegistration: true\nServices: []\n", document, error),
+    ASSERT_EQ(config_section::ParseConfigText("Tepegoz:\n  RemoteRegistration: true\nServices: []\n", document, error),
               config_section::LoadCode::Ok);
     EXPECT_TRUE(process_manager::ProcessManager::GenerateConfig(document, &problems)->remoteRegistration);
     EXPECT_TRUE(problems.empty());

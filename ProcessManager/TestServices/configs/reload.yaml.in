@@ -1,12 +1,12 @@
-# reload: services added, changed, removed and kept by 'iltaren-ProcessManager reload' while the manager runs.
+# reload: services added, changed, removed and kept by 'tepegoz reload' while the manager runs.
 # The driver copies this config into the scenario's run folder and writes services.d next to it:
 #   services.d/edited.yaml    pmt_env, which prints PMT_MARK: one; the driver changes it to two
 #   services.d/doomed.yaml    pmt_steady; the driver deletes the file
 #   services.d/fragile.yaml   pmt_steady; the driver reformats the file, then breaks it
 # and later services.d/added.yaml and services.d/late.yaml, and it breaks this file for a while.
-# Run:   iltaren-ProcessManager --config reload.yaml   (with such a services.d folder next to it)
+# Run:   tepegoz --config reload.yaml   (with such a services.d folder next to it)
 
-ProcessManager:
+Tepegoz:
   Mode: Auto
   LogLevel: Info
 

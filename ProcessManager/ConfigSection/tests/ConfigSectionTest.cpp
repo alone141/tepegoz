@@ -94,13 +94,13 @@ TEST(ConfigSectionTest, LoadsFile)
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "config_section_test.yaml";
     {
         std::ofstream file{path};
-        file << "ProcessManager:\n  Mode: Auto\n";
+        file << "Tepegoz:\n  Mode: Auto\n";
     }
 
     config_section::ConfigValue document{};
     std::string error;
     EXPECT_EQ(config_section::LoadConfigFile(path, document, error), config_section::LoadCode::Ok) << error;
-    EXPECT_NE(config_section::FindValue(document, "ProcessManager"), nullptr);
+    EXPECT_NE(config_section::FindValue(document, "Tepegoz"), nullptr);
     std::filesystem::remove(path);
 }
 
@@ -265,11 +265,11 @@ TEST(ConfigSectionTest, NonMappingSectionIsProblem)
 
 TEST(ConfigSectionTest, ReadSectionAndSequenceCheckKinds)
 {
-    const config_section::ConfigValue document = Parse("ProcessManager: Auto\nServices:\n  - ProcessName: A\n");
+    const config_section::ConfigValue document = Parse("Tepegoz: Auto\nServices:\n  - ProcessName: A\n");
     config_section::ConfigSection section{document, "the configuration"};
-    EXPECT_EQ(section.ReadSection("ProcessManager"), nullptr);
+    EXPECT_EQ(section.ReadSection("Tepegoz"), nullptr);
     EXPECT_NE(section.ReadSequence("Services"), nullptr);
-    EXPECT_TRUE(HasProblemWith(section, "ProcessManager: must be a mapping"));
+    EXPECT_TRUE(HasProblemWith(section, "Tepegoz: must be a mapping"));
 }
 
 TEST(ConfigSectionTest, SplitListDropsEmptyParts)

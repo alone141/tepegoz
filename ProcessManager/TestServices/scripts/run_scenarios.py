@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
 MANAGER_PORTS = (5557, 6667, 6669, 6671)
-INSTALLED_MANAGER = "iltaren-ProcessManager"
+INSTALLED_MANAGER = "tepegoz"
 STOP_LIMIT_S = 30.0
 FIRST_REPORT_LIMIT_S = 10.0
 MIB = 1024 * 1024
@@ -713,7 +713,7 @@ def scenario_reload(c: Context) -> None:
     current = {name: c.watch.get(name).pid for name in c.watch.reported()}
     with open(c.manager.config) as main:
         main_text = main.read()
-    write(c.manager.config, "ProcessManager:\n  Mode: Auto\n Services: []\n")
+    write(c.manager.config, "Tepegoz:\n  Mode: Auto\n Services: []\n")
     write(os.path.join(folder, "late.yaml"), steady_service(c.paths, "late"))
     code, out = c.manager.reload()
     c.results.check(code == 1 and "Reload refused" in out,
@@ -1097,7 +1097,7 @@ def resolve_paths(args: argparse.Namespace) -> Paths:
     elif args.prefix:
         prefix = os.path.abspath(args.prefix)
         paths = Paths(os.path.join(prefix, "bin", INSTALLED_MANAGER), os.path.join(prefix, "bin"),
-                      os.path.join(prefix, "share", "processmanager", "test-setup"))
+                      os.path.join(prefix, "share", "tepegoz", "test-setup"))
     else:
         paths = Paths("", "", "")
     paths.manager = args.manager or paths.manager

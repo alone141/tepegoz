@@ -222,7 +222,7 @@ int ProcessManager::StartUp()
     }
     if (cycleDetected)
     {
-        logger::Error("!!!PROCESS MANAGER CANNOT START WITH CYCLE DEPENDENCIES!!!");
+        logger::Error("!!!TEPEGOZ CANNOT START WITH CYCLE DEPENDENCIES!!!");
         return 0;
     }
     return 1;
@@ -406,9 +406,9 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const confi
 
     config_section::ConfigSection top(document, "the configuration");
     bool hasDefaultWorkMode = false;
-    if (const config_section::ConfigValue* managerValue = top.ReadSection("ProcessManager"))
+    if (const config_section::ConfigValue* managerValue = top.ReadSection("Tepegoz"))
     {
-        config_section::ConfigSection manager(*managerValue, "ProcessManager");
+        config_section::ConfigSection manager(*managerValue, "Tepegoz");
         // Inherit: no default, so a service without a WorkMode of its own is Manual.
         const int mode = manager.ReadChoice("Mode", { "Inherit", "Manual", "Auto" }, 0);
         hasDefaultWorkMode = mode != 0;
@@ -448,7 +448,7 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const confi
             continue;
         }
         addProblems(section.Problems());
-        // [ProcessManager] Mode applies to every service without a WorkMode of its own.
+        // [Tepegoz] Mode applies to every service without a WorkMode of its own.
         if (hasDefaultWorkMode && !section.Has("WorkMode"))
         {
             process.SetWorkMode(processManagerParams->workMode);

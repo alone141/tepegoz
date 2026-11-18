@@ -20,7 +20,7 @@ namespace
 {
 
 constexpr std::chrono::milliseconds reply_wait{10000};
-const std::string unit_parent = "/system.slice/processmanager.service";
+const std::string unit_parent = "/system.slice/tepegoz.service";
 const journal_server::ManagerIdentity unit_identity = journal_server::IdentityFromCgroup(unit_parent, 4242);
 const std::string fake_members = "cgroup\talpha\n"
                                  "pid\talpha\t10\t2097152\tpython3\tpython3 /opt/main.py\n"
@@ -140,7 +140,7 @@ journal_server::JournalServer Started(const std::string& journalctl, const std::
     return server;
 }
 
-// The cgroups and /proc of a manager in processmanager.service, inside the test's folder: alpha runs pid 10 and
+// The cgroups and /proc of a manager in tepegoz.service, inside the test's folder: alpha runs pid 10 and
 // pid 20, which has gone; beta's cgroup is empty.
 journal_server::SystemPaths FakeSystem(const ScriptFolder& folder, const std::string& parent = unit_parent)
 {
@@ -174,8 +174,8 @@ std::vector<std::string> Lines(const std::string& text)
 
 TEST(JournalServerTest, IdentityFindsUnitInCgroup)
 {
-    EXPECT_EQ(unit_identity.unit, "processmanager.service");
-    EXPECT_EQ(unit_identity.serviceCgroupParent, "/system.slice/processmanager.service");
+    EXPECT_EQ(unit_identity.unit, "tepegoz.service");
+    EXPECT_EQ(unit_identity.serviceCgroupParent, "/system.slice/tepegoz.service");
     EXPECT_EQ(unit_identity.pid, 4242);
 }
 
@@ -245,7 +245,7 @@ TEST(JournalServerTest, ManagerJournalUsesUnit)
     std::vector<std::string> args{};
     ASSERT_EQ(journal_server::BuildJournalArgs(Request(journal_server::TargetKind::Manager, ""), unit_identity, args),
               journal_server::RequestCode::Ok);
-    EXPECT_EQ(args, Tail({"-u", "processmanager.service", "-n", "50"}));
+    EXPECT_EQ(args, Tail({"-u", "tepegoz.service", "-n", "50"}));
 }
 
 TEST(JournalServerTest, ManagerJournalWithoutUnitUsesPid)
@@ -262,7 +262,7 @@ TEST(JournalServerTest, ServiceJournalUsesTaskCgroup)
     std::vector<std::string> args{};
     ASSERT_EQ(journal_server::BuildJournalArgs(Request(journal_server::TargetKind::Service, "alpha"), unit_identity, args),
               journal_server::RequestCode::Ok);
-    EXPECT_EQ(args, Tail({"_SYSTEMD_CGROUP=/system.slice/processmanager.service/task_alpha", "-n", "50"}));
+    EXPECT_EQ(args, Tail({"_SYSTEMD_CGROUP=/system.slice/tepegoz.service/task_alpha", "-n", "50"}));
 }
 
 TEST(JournalServerTest, ServiceJournalAtCgroupRoot)
@@ -343,7 +343,7 @@ TEST(JournalServerTest, UnitStatusArguments)
 {
     std::vector<std::string> args{};
     ASSERT_EQ(journal_server::BuildUnitStatusArgs(unit_identity, args), journal_server::RequestCode::Ok);
-    EXPECT_EQ(args, (std::vector<std::string>{"status", "processmanager.service", "--no-pager", "-l", "-n", "0"}));
+    EXPECT_EQ(args, (std::vector<std::string>{"status", "tepegoz.service", "--no-pager", "-l", "-n", "0"}));
     EXPECT_EQ(journal_server::BuildUnitStatusArgs(journal_server::IdentityFromCgroup("/", 1), args),
               journal_server::RequestCode::NoUnit);
 }
@@ -483,7 +483,7 @@ TEST(JournalServerTest, ServerRunsJournalctlWithBuiltArguments)
     EXPECT_EQ(reply[0], "ok");
     EXPECT_EQ(Lines(reply[1]).size(), 2U);
     EXPECT_EQ(Lines(folder.Read("args.txt")),
-              (std::vector<std::string>{"_SYSTEMD_CGROUP=/system.slice/processmanager.service/task_alpha", "-n", "20",
+              (std::vector<std::string>{"_SYSTEMD_CGROUP=/system.slice/tepegoz.service/task_alpha", "-n", "20",
                                         "--no-pager", "--all", "--quiet", "-o", "json", "--after-cursor=c0"}));
 }
 

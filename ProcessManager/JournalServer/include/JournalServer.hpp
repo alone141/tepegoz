@@ -52,12 +52,12 @@ struct JournalRequest
 // Where the manager's own journal entries, and those of its services, are found.
 struct ManagerIdentity
 {
-    // The manager's systemd unit, such as processmanager.service; empty when it runs outside one.
+    // The manager's systemd unit, such as tepegoz.service; empty when it runs outside one.
     std::string unit;
     // Matched instead of the unit when there is none.
     int pid = 0;
     // journald's _SYSTEMD_CGROUP of the folder that holds task_pm and every task_<name>, such as
-    // /system.slice/processmanager.service; "/" outside a unit.
+    // /system.slice/tepegoz.service; "/" outside a unit.
     std::string serviceCgroupParent = "/";
 };
 
@@ -114,7 +114,7 @@ enum class MembersCode
 
 /**
  * @brief Work out the manager's identity from the cgroup that holds its services' cgroups.
- * @param serviceCgroupParent journald form of that cgroup, such as /system.slice/processmanager.service.
+ * @param serviceCgroupParent journald form of that cgroup, such as /system.slice/tepegoz.service.
  * @param pid The manager's pid.
  * @return The identity. Its unit is the innermost path component that ends in .service, or empty without one.
  */
