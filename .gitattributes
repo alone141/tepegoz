@@ -1,2 +1,4 @@
 # Vendored code stays byte-for-byte as released; its hash is in Tepegoz/third_party/README.md.
 Tepegoz/third_party/** -text
+# That README is the project's own, so it is stored with LF line endings like the rest.
+Tepegoz/third_party/README.md text
