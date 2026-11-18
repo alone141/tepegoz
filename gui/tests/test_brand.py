@@ -1,7 +1,7 @@
 """Tests of Göz's mark: goz.svg and the painted mark come from the same shapes, and the window shows it.
 
 Run from the repository root (standard library unittest; PyQt6 and pyzmq installed):
-    QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s Goz/tests -v
+    QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s gui/tests -v
 """
 
 from __future__ import annotations

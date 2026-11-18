@@ -113,9 +113,9 @@ Then remove what the earlier version installed: `/usr/bin/iltaren-ProcessManager
 are no longer needed, `/var/log/processmanager/`. Scripts that call `iltaren-ProcessManager` or
 `systemctl ... processmanager` need the new names.
 
-In the source, the folders `ProcessManager/` and `ProcessManagerGui/` are now `Tepegoz/` and `Goz/`, so a build is
-configured with `cmake -S Tepegoz`; inside, `ProcessManager/ProcessManager/` and `ProcessManager/ProcessManagerApp/`
-are `Tepegoz/Tepegoz/` and `Tepegoz/TepegozApp/`. In the code, the namespace `process_manager` is now `tepegoz`,
+In the source, the folders `ProcessManager/` and `ProcessManagerGui/` are now `manager/` and `gui/`, so a build is
+configured with `cmake -S manager`; inside, `ProcessManager/ProcessManager/` and `ProcessManager/ProcessManagerApp/`
+are `manager/Tepegoz/` and `manager/TepegozApp/`. In the code, the namespace `process_manager` is now `tepegoz`,
 and the classes `ProcessManager`, `ProcessManagerApp`, `ProcessManagerParams` and `IProcessManager` are `Tepegoz`,
 `TepegozApp`, `TepegozParams` and `ITepegoz`, in files of the same names. The CMake project is `tepegoz`; the
 targets `ProcessManager`, `ProcessManagerApp` and `process_manager_tests` are `Tepegoz`, `TepegozApp` and
@@ -197,7 +197,7 @@ targets `ProcessManager`, `ProcessManagerApp` and `process_manager_tests` are `T
   waiting for a restart is marked `*` in the sidebar and **restart to apply** on its page, which also says where
   the service is defined. New option `--registry ENDPOINT`; `--host` and the HOST field set it too. Without a
   registry that answers, these actions are greyed out with the reason. `mock_publisher.py` answers the registry
-  as well, and the GUI has its first tests, `Goz/tests/test_service_registry.py`.
+  as well, and the GUI has its first tests, `gui/tests/test_service_registry.py`.
 - Göz has a mark, an eye: the window's icon, which the taskbar and Alt+Tab show (on Windows, under a taskbar
   button of its own instead of Python's), and next to its name in the title row. `cmake --install` adds a menu
   entry, `share/applications/goz.desktop`, with the mark as its icon in `share/icons/hicolor/scalable/apps/`. The

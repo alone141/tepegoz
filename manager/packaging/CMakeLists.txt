@@ -39,7 +39,7 @@ configure_file(tepegoz.service.in ${CMAKE_CURRENT_BINARY_DIR}/${UNIT_NAME} @ONLY
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${UNIT_NAME} DESTINATION ${TEPEGOZ_SYSTEMD_UNIT_DIR})
 
 # The GUI lives next to this project; a copy of the project without it installs no GUI.
-set(gui_dir "${PROJECT_SOURCE_DIR}/../Goz")
+set(gui_dir "${PROJECT_SOURCE_DIR}/../gui")
 if(TEPEGOZ_INSTALL_GUI AND EXISTS "${gui_dir}/goz.py")
     file(GLOB gui_sources CONFIGURE_DEPENDS "${gui_dir}/*.py")
     install(FILES ${gui_sources} DESTINATION ${GUI_INSTALL_DIR})
@@ -56,7 +56,7 @@ if(TEPEGOZ_INSTALL_GUI AND EXISTS "${gui_dir}/goz.py")
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/goz.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES ${gui_dir}/goz.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 elseif(TEPEGOZ_INSTALL_GUI)
-    message(STATUS "No Goz folder next to the project: the monitor GUI is not installed")
+    message(STATUS "No gui folder next to the project: the monitor GUI is not installed")
 endif()
 
 if(TEPEGOZ_ENABLE_SERVICE)

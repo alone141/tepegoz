@@ -42,26 +42,26 @@ The manager is a single process that runs the services as its children. All comm
 
 | Path | What it is |
 |---|---|
-| `Tepegoz/` | The C++20 CMake project: the manager, its modules and tests. |
-| `Tepegoz/TepegozApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `reload`, `add`, `list`, `--start` …). `tests/keepalive.cpp` is a heartbeat example. |
-| `Tepegoz/StatusTable/` | The `status` table, drawn from the health reports, with the restart-to-apply mark. |
-| `Tepegoz/CommandWatch/` | Follows a command in the health reports: where each service stands. |
-| `Tepegoz/StatusClient/` | The command line's ZeroMQ side: reads the reports for `status`, sends a command and follows it, and sends a reload and tells its answer. |
-| `Tepegoz/RegistryClient/` | The command line's `add`, `set`, `replace`, `remove`, `show` and `list`: builds a registry request from the words typed, sends it, and words the answer and the `list` table. |
-| `Tepegoz/Tepegoz/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `TepegozCommands.hpp` holds the command format and the endpoints. |
-| `Tepegoz/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealth.hpp`). |
-| `Tepegoz/NetworkManager/` | The ZeroMQ message broker. |
-| `Tepegoz/ConfigSection/` | Reads the YAML configuration (the only code that uses fkYAML) and reports problems. |
-| `Tepegoz/ConfigSource/` | Reads the main configuration file and the `services.d` folder next to it into one document, and keeps where each service was defined and whether the folder could be listed. |
-| `Tepegoz/ReloadPlan/` | Compares the services the manager has with a configuration read again: added, removed, changed, kept, unchanged, or why the reload is refused. |
-| `Tepegoz/ServiceRegistry/` | The service registry's parts that need no running manager: requests, names, editing a definition, writing it as YAML and JSON, and the files of `services.d` with snapshots to undo a change. |
-| `Tepegoz/Logger/` | Logging to the console, the journal and rotating files. |
-| `Tepegoz/GpuMonitor/` | GPU sampling through NVML, loaded at run time. |
-| `Tepegoz/JournalServer/` | Answers journal reads for a remote GUI. |
-| `Tepegoz/TestServices/` | Test programs, scenario configurations and the scenario driver. |
-| `Tepegoz/packaging/` | What `cmake --install` sets up besides the programs. |
-| `Tepegoz/third_party/` | libzmq, cppzmq, cxxopts, fkYAML and GoogleTest, unchanged upstream releases. |
-| `Goz/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
+| `manager/` | The C++20 CMake project: the manager, its modules and tests. |
+| `manager/TepegozApp/` | The program: `main.cpp` (threads and signals), start-up and configuration loading, and the command line (`status`, `validate`, `graph`, `reload`, `add`, `list`, `--start` …). `tests/keepalive.cpp` is a heartbeat example. |
+| `manager/StatusTable/` | The `status` table, drawn from the health reports, with the restart-to-apply mark. |
+| `manager/CommandWatch/` | Follows a command in the health reports: where each service stands. |
+| `manager/StatusClient/` | The command line's ZeroMQ side: reads the reports for `status`, sends a command and follows it, and sends a reload and tells its answer. |
+| `manager/RegistryClient/` | The command line's `add`, `set`, `replace`, `remove`, `show` and `list`: builds a registry request from the words typed, sends it, and words the answer and the `list` table. |
+| `manager/Tepegoz/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `TepegozCommands.hpp` holds the command format and the endpoints. |
+| `manager/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealth.hpp`). |
+| `manager/NetworkManager/` | The ZeroMQ message broker. |
+| `manager/ConfigSection/` | Reads the YAML configuration (the only code that uses fkYAML) and reports problems. |
+| `manager/ConfigSource/` | Reads the main configuration file and the `services.d` folder next to it into one document, and keeps where each service was defined and whether the folder could be listed. |
+| `manager/ReloadPlan/` | Compares the services the manager has with a configuration read again: added, removed, changed, kept, unchanged, or why the reload is refused. |
+| `manager/ServiceRegistry/` | The service registry's parts that need no running manager: requests, names, editing a definition, writing it as YAML and JSON, and the files of `services.d` with snapshots to undo a change. |
+| `manager/Logger/` | Logging to the console, the journal and rotating files. |
+| `manager/GpuMonitor/` | GPU sampling through NVML, loaded at run time. |
+| `manager/JournalServer/` | Answers journal reads for a remote GUI. |
+| `manager/TestServices/` | Test programs, scenario configurations and the scenario driver. |
+| `manager/packaging/` | What `cmake --install` sets up besides the programs. |
+| `manager/third_party/` | libzmq, cppzmq, cxxopts, fkYAML and GoogleTest, unchanged upstream releases. |
+| `gui/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
 | `docs/` | These documents. |
 
 Every module has the same layout and naming: `.hpp` headers in `include/`, sources in `src/`, tests in
@@ -254,7 +254,7 @@ Sampled. The GUI shows a frame that fails these checks as a parse error in its s
 | 141 | reserved | `uint8[3]` | Zero |
 
 The C++ layout is `DetailedHealthReport` in `Process/include/RuntimeHealth.hpp`. The Python
-layout is `DetailedHealthReport` in `Goz/health_structs.py`. A `static_assert` and a Python
+layout is `DetailedHealthReport` in `gui/health_structs.py`. A `static_assert` and a Python
 `assert` keep both at 144 bytes, and further `static_assert`s keep every field at its offset. `restartToApply`
 took a byte that was padding after `state`, so an older reader still parses the report and ignores the mark.
 
@@ -602,10 +602,10 @@ The service registry has a worker of its own, so a registry that does not answer
   command line's commands. It needs the manager's
   fixed ports, so ctest does not run it.
 - The GUI's registry logic, its worker and its service dialog have a unittest module,
-  `Goz/tests/test_service_registry.py`. It runs the worker and the window offscreen against
-  `mock_publisher.py`'s registry on ports the system picks. `Goz/tests/test_brand.py` checks that `goz.svg`
+  `gui/tests/test_service_registry.py`. It runs the worker and the window offscreen against
+  `mock_publisher.py`'s registry on ports the system picks. `gui/tests/test_brand.py` checks that `goz.svg`
   and the painted mark agree and that the window shows it. Both run with
-  `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s Goz/tests`. The rest of the GUI is
+  `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s gui/tests`. The rest of the GUI is
   checked against `mock_publisher.py` or a running manager.
 
 ## Known limits

@@ -1,7 +1,7 @@
 """Tests of registering services through the GUI: the request logic, the registry worker, and the dialog.
 
 Run from the repository root (standard library unittest; PyQt6 and pyzmq installed):
-    QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s Goz/tests -v
+    QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s gui/tests -v
 Every socket is on 127.0.0.1 at a port the system picks, so a manager on this machine is never reached.
 """
 

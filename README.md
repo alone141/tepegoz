@@ -1,4 +1,4 @@
-# <img src="Goz/goz.svg" alt="" width="40" height="40"> Tepegöz
+# <img src="gui/goz.svg" alt="" width="40" height="40"> Tepegöz
 
 Tepegöz starts the programs of a machine, keeps them running and stops them. Its monitor GUI, Göz, shows their
 state, resource use and logs, and starts and stops them, from the same machine or another one.
@@ -9,6 +9,6 @@ state, resource use and logs, and starts and stops them, from the same machine o
 
 | Folder | Contents |
 |---|---|
-| `Tepegoz/` | The manager (C++20, CMake). Its `README.md` has the build requirements and release notes. |
-| `Goz/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
+| `manager/` | The manager (C++20, CMake). Its `README.md` has the build requirements and release notes. |
+| `gui/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
 | `docs/` | The documents above. |

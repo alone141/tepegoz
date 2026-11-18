@@ -15,14 +15,14 @@ The complete reference for running Tepegöz, the process manager, and its monito
 ## Installing
 
 ```bash
-cmake -S Tepegoz -B build -DCMAKE_INSTALL_PREFIX=/usr
+cmake -S manager -B build -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build -j
 ctest --test-dir build
 sudo cmake --install build
 ```
 
 The build needs CMake 3.20 or newer and GCC 10 or newer. libzmq, cppzmq, cxxopts, fkYAML and GoogleTest come
-with the source in `Tepegoz/third_party/`, so nothing is downloaded and the target machine needs no
+with the source in `manager/third_party/`, so nothing is downloaded and the target machine needs no
 ZeroMQ library.
 
 `cmake --install` installs:
@@ -546,7 +546,7 @@ next to its name in the title row. Installed, Göz is also in the desktop's appl
 ```bash
 goz                                  # installed launcher, manager on this machine
 goz --host 10.0.0.5                  # a manager on another machine
-python3 Goz/goz.py --host 10.0.0.5   # straight from the source folder
+python3 gui/goz.py --host 10.0.0.5   # straight from the source folder
 ```
 
 It needs Python 3 with PyQt6 and pyzmq. It runs on Linux and Windows.
@@ -697,7 +697,7 @@ While it records:
 
 ### Trying the GUI without a manager
 
-`Goz/mock_publisher.py` acts as a manager with seven fake services, on the same ports. It publishes
+`gui/mock_publisher.py` acts as a manager with seven fake services, on the same ports. It publishes
 reports, answers commands, serves broker status and logs, and answers the service registry from services it
 keeps in memory: six are the main file's, and `map_server` is registered, with `path_planner` depending on it. A
 service added in the GUI joins the reports, a changed running one is marked "restart to apply", and a removed
@@ -706,8 +706,8 @@ starts with `missing`. Each endpoint has an option of its own (`--pub`, `--route
 `--registry`), for running it on other ports; `--registry ''` leaves the registry, and `map_server`, out.
 
 ```bash
-python3 Goz/mock_publisher.py
-python3 Goz/goz.py
+python3 gui/mock_publisher.py
+python3 gui/goz.py
 ```
 
 ## Ports and network access
@@ -730,7 +730,7 @@ starting another manager by hand.
 
 ## Testing with TestServices
 
-`Tepegoz/TestServices/` holds programs with planned behaviours and configurations that run them. Examples:
+`manager/TestServices/` holds programs with planned behaviours and configurations that run them. Examples:
 - a program that exits with a given code;
 - one that crashes by a given signal;
 - one that ignores SIGTERM;
@@ -739,10 +739,10 @@ starting another manager by hand.
 - one that floods its output.
 
 `run_scenarios.py` runs the manager with each configuration and checks what it does. See
-[TestServices/README.md](../Tepegoz/TestServices/README.md).
+[TestServices/README.md](../manager/TestServices/README.md).
 
 ```bash
-python3 Tepegoz/TestServices/scripts/run_scenarios.py --build-dir build
+python3 manager/TestServices/scripts/run_scenarios.py --build-dir build
 python3 /usr/share/tepegoz/test-setup/run_scenarios.py --prefix /usr
 ```
 
