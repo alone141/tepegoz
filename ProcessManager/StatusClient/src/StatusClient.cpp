@@ -1,6 +1,6 @@
 #include "StatusClient.hpp"
 #include "CommandWatch.hpp"
-#include "ProcessManagerCommands.hpp"
+#include "TepegozCommands.hpp"
 #include "RuntimeHealth.hpp"
 #include "StatusTable.hpp"
 
@@ -32,10 +32,10 @@ constexpr std::chrono::milliseconds poll_step{200};
 constexpr std::chrono::milliseconds reload_report_wait{600};
 constexpr std::string_view clear_screen = "\033[H\033[2J";
 
-static_assert(static_cast<int>(process_manager::RuntimeState::Unhealthy) ==
+static_assert(static_cast<int>(tepegoz::RuntimeState::Unhealthy) ==
                   static_cast<int>(status_table::ServiceState::Unhealthy),
               "ServiceState follows the manager's RuntimeState");
-static_assert(static_cast<int>(process_manager::GpuUsageState::Stalled) ==
+static_assert(static_cast<int>(tepegoz::GpuUsageState::Stalled) ==
                   static_cast<int>(status_table::GpuState::Stalled),
               "GpuState follows the manager's GpuUsageState");
 
@@ -44,7 +44,7 @@ std::int64_t SinceEpochNs(std::chrono::high_resolution_clock::time_point when)
     return std::chrono::duration_cast<std::chrono::nanoseconds>(when.time_since_epoch()).count();
 }
 
-status_table::ServiceState StateOf(process_manager::RuntimeState state)
+status_table::ServiceState StateOf(tepegoz::RuntimeState state)
 {
     const int value = static_cast<int>(state);
     if (value > static_cast<int>(status_table::ServiceState::Unhealthy))
@@ -55,7 +55,7 @@ status_table::ServiceState StateOf(process_manager::RuntimeState state)
     return static_cast<status_table::ServiceState>(value);
 }
 
-status_table::GpuState GpuStateOf(process_manager::GpuUsageState state)
+status_table::GpuState GpuStateOf(tepegoz::GpuUsageState state)
 {
     const int value = static_cast<int>(state);
     if (value > static_cast<int>(status_table::GpuState::Stalled))
@@ -130,26 +130,26 @@ bool NextReport(zmq::socket_t& socket, std::chrono::milliseconds timeout, std::v
     }
 }
 
-process_manager::CommandCode WireCommand(command_watch::Command command)
+tepegoz::CommandCode WireCommand(command_watch::Command command)
 {
     switch (command)
     {
     case command_watch::Command::Start:
-        return process_manager::CommandCode::StartService;
+        return tepegoz::CommandCode::StartService;
     case command_watch::Command::Stop:
-        return process_manager::CommandCode::StopService;
+        return tepegoz::CommandCode::StopService;
     case command_watch::Command::Restart:
-        return process_manager::CommandCode::RestartService;
+        return tepegoz::CommandCode::RestartService;
     case command_watch::Command::Disable:
-        return process_manager::CommandCode::DisableService;
+        return tepegoz::CommandCode::DisableService;
     }
-    return process_manager::CommandCode::Unknown;
+    return tepegoz::CommandCode::Unknown;
 }
 
 bool Send(zmq::context_t& context, const std::string& endpoint, command_watch::Command command,
           std::string_view target)
 {
-    process_manager::CommandMessage message{};
+    tepegoz::CommandMessage message{};
     message.command = WireCommand(command);
     std::memcpy(message.serviceName, target.data(), target.size());
 
@@ -160,7 +160,7 @@ bool Send(zmq::context_t& context, const std::string& endpoint, command_watch::C
     socket.set(zmq::sockopt::sndtimeo, 2000);
     socket.set(zmq::sockopt::linger, 2000);
     socket.connect(endpoint);
-    const std::string& destination = process_manager::comm::process_manager_id;
+    const std::string& destination = tepegoz::comm::tepegoz_id;
     return socket.send(zmq::buffer(destination), zmq::send_flags::sndmore) &&
            socket.send(zmq::buffer(&message, sizeof(message)), zmq::send_flags::none);
 }
@@ -184,25 +184,25 @@ void PrintLines(const std::vector<std::string>& lines)
     std::cout << std::flush;
 }
 
-std::string RefusalText(process_manager::ReloadResult result)
+std::string RefusalText(tepegoz::ReloadResult result)
 {
     switch (result)
     {
-    case process_manager::ReloadResult::Applied:
+    case tepegoz::ReloadResult::Applied:
         return std::string{};
-    case process_manager::ReloadResult::NoSource:
+    case tepegoz::ReloadResult::NoSource:
         return "the manager's configuration was not read from a file";
-    case process_manager::ReloadResult::MainFileNotOpened:
+    case tepegoz::ReloadResult::MainFileNotOpened:
         return "the configuration file could not be opened";
-    case process_manager::ReloadResult::MainFileSyntaxError:
+    case tepegoz::ReloadResult::MainFileSyntaxError:
         return "the configuration file is not valid YAML";
-    case process_manager::ReloadResult::NoServicesList:
+    case tepegoz::ReloadResult::NoServicesList:
         return "the configuration file has no Services list for the services";
-    case process_manager::ReloadResult::FolderNotReadable:
+    case tepegoz::ReloadResult::FolderNotReadable:
         return "the services.d folder could not be listed";
-    case process_manager::ReloadResult::DependencyCycle:
+    case tepegoz::ReloadResult::DependencyCycle:
         return "the new configuration has a dependency cycle";
-    case process_manager::ReloadResult::DuplicateName:
+    case tepegoz::ReloadResult::DuplicateName:
         return "the new configuration has two services of the same name";
     }
     return "refused with code " + std::to_string(static_cast<int>(result));
@@ -254,15 +254,15 @@ bool MadeAfter(const std::vector<status_table::ServiceSample>& report, std::int6
 
 bool SendReloadRequest(zmq::socket_t& socket, bool wait)
 {
-    process_manager::CommandMessage message{};
-    message.command = process_manager::CommandCode::ReloadConfig;
+    tepegoz::CommandMessage message{};
+    message.command = tepegoz::CommandCode::ReloadConfig;
     if (!wait)
     {
-        const std::string_view noReply = process_manager::reload_without_reply;
+        const std::string_view noReply = tepegoz::reload_without_reply;
         std::memcpy(message.args, noReply.data(), noReply.size());
     }
 
-    const std::string& destination = process_manager::comm::process_manager_id;
+    const std::string& destination = tepegoz::comm::tepegoz_id;
     return socket.send(zmq::buffer(destination), zmq::send_flags::sndmore) &&
            socket.send(zmq::buffer(&message, sizeof(message)), zmq::send_flags::none);
 }
@@ -303,7 +303,7 @@ bool ReceiveReloadReply(zmq::socket_t& socket, std::chrono::milliseconds timeout
 
 ParseCode ParseReport(std::string_view bytes, std::vector<status_table::ServiceSample>& out)
 {
-    constexpr std::size_t record_size = sizeof(process_manager::DetailedHealthReport);
+    constexpr std::size_t record_size = sizeof(tepegoz::DetailedHealthReport);
     if (bytes.size() % record_size != 0)
     {
         return ParseCode::BadSize;
@@ -312,7 +312,7 @@ ParseCode ParseReport(std::string_view bytes, std::vector<status_table::ServiceS
     std::vector<status_table::ServiceSample> samples{};
     for (std::size_t offset = 0; offset < bytes.size(); offset += record_size)
     {
-        process_manager::DetailedHealthReport report{};
+        tepegoz::DetailedHealthReport report{};
         std::memcpy(static_cast<void*>(&report), bytes.data() + offset, record_size);
         status_table::ServiceSample sample{};
         sample.name = std::string{report.processName, ::strnlen(report.processName, sizeof(report.processName))};
@@ -421,10 +421,10 @@ StatusCode PrintStatus(const Endpoints& endpoints)
 CommandCode SendCommand(command_watch::Command command, std::string_view target, const Endpoints& endpoints,
                         bool follow, std::chrono::seconds timeout)
 {
-    if (target.size() >= sizeof(process_manager::CommandMessage::serviceName))
+    if (target.size() >= sizeof(tepegoz::CommandMessage::serviceName))
     {
         std::cerr << "Service name '" << target << "' is longer than "
-                  << sizeof(process_manager::CommandMessage::serviceName) - 1 << " bytes\n";
+                  << sizeof(tepegoz::CommandMessage::serviceName) - 1 << " bytes\n";
         return CommandCode::BadTarget;
     }
     if (command == command_watch::Command::Disable && target == command_watch::all_services)
@@ -507,20 +507,20 @@ int ExitCode(CommandCode code)
 
 ParseCode ParseReloadReply(std::string_view bytes, ReloadReply& out)
 {
-    process_manager::ReloadReport report{};
+    tepegoz::ReloadReport report{};
     if (bytes.size() != sizeof(report))
     {
         return ParseCode::BadSize;
     }
 
     std::memcpy(static_cast<void*>(&report), bytes.data(), sizeof(report));
-    if (report.command != process_manager::CommandCode::ReloadConfig)
+    if (report.command != tepegoz::CommandCode::ReloadConfig)
     {
         return ParseCode::WrongCommand;
     }
 
     ReloadReply reply{};
-    reply.applied = report.result == process_manager::ReloadResult::Applied;
+    reply.applied = report.result == tepegoz::ReloadResult::Applied;
     reply.refusal = RefusalText(report.result);
     reply.added = report.added;
     reply.removed = report.removed;

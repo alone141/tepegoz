@@ -115,7 +115,7 @@ Services in `Pipe` mode have their output logged the same way: `[server] <the li
 
 ## Command line
 
-`tepegoz [COMMAND] [OPTIONS]` (named `ProcessManagerApp` in a build tree).
+`tepegoz [COMMAND] [OPTIONS]` (named `TepegozApp` in a build tree).
 
 | Command or option | What it does |
 |---|---|

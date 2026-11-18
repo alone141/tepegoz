@@ -3,7 +3,7 @@
 #include <string_view>
 #include <string>
 
-namespace process_manager
+namespace tepegoz
 {
 
 enum class CommandCode : char
@@ -73,7 +73,7 @@ namespace comm
 
 constexpr std::string_view command_server_id = "PMC";
 constexpr std::string_view gui_id = "GUI";
-inline const std::string process_manager_id = "BPM"; // std::string so that it can be logged
+inline const std::string tepegoz_id = "BPM"; // std::string so that it can be logged
 inline const char* command_server_port = "tcp://localhost:5557";
 inline const char* health_publish_port_detailed = "tcp://*:6667";
 inline const char* health_listen_port_detailed = "tcp://localhost:6667";
@@ -86,4 +86,4 @@ inline const char* registry_connect = "tcp://localhost:6671";
 
 } // namespace comm
 
-} // namespace process_manager
+} // namespace tepegoz

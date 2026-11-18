@@ -1,5 +1,5 @@
 #pragma once
-namespace process_manager
+namespace tepegoz
 {
 
 enum class StdioMode
@@ -10,4 +10,4 @@ enum class StdioMode
     NullDevice
 };
 
-} // namespace process_manager
+} // namespace tepegoz

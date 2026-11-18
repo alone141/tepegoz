@@ -2,7 +2,7 @@
 #include "ConfigSection.hpp"
 #include <climits>
 
-namespace process_manager
+namespace tepegoz
 {
 
 void HealthPolicy::UpdateArgs(config_section::ConfigSection& section)
@@ -13,4 +13,4 @@ void HealthPolicy::UpdateArgs(config_section::ConfigSection& section)
     missedHeartbeatThreshold = section.ReadInt("MissedHeartbeatThreshold", 5, 1, 1000);
 }
 
-} // namespace process_manager
+} // namespace tepegoz

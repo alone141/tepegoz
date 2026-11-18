@@ -1,5 +1,5 @@
 #include <cxxopts.hpp>
-#include "ProcessManagerApp.hpp"
+#include "TepegozApp.hpp"
 #include <thread>
 #include <csignal>
 #include <cstdlib>
@@ -11,14 +11,14 @@
 #include "Logger.hpp"
 #include "NetworkManager.hpp"
 
-process_manager::ProcessManagerApp* manager;
-//process_manager::NetworkManager* networkMaster;
+tepegoz::TepegozApp* manager;
+//tepegoz::NetworkManager* networkMaster;
 network_manager::NetworkManager* gNetworkManager = nullptr;
 
 int main(int argc, char** argv)
 {
     std::string configPath;
-    const int exitCode = process_manager::ParseInputFlags(argc, argv, configPath);
+    const int exitCode = tepegoz::ParseInputFlags(argc, argv, configPath);
     if (exitCode >= 0)
     {
         return exitCode;
@@ -39,8 +39,8 @@ int main(int argc, char** argv)
     const char* portName = "tcp://*:5557";
     // The broker's status and events, for the monitor GUI's network page.
     const char* statusPortName = "tcp://*:6669";
-    manager = new process_manager::ProcessManagerApp;
-    //networkMaster = new process_manager::NetworkManager(portName);
+    manager = new tepegoz::TepegozApp;
+    //networkMaster = new tepegoz::NetworkManager(portName);
 
 
     if (!manager->StartUp(configPath))
@@ -79,7 +79,7 @@ int main(int argc, char** argv)
             logger::Error("Broker stopped: %s", runError.c_str());
             manager->ShutdownSignalReceived(0);
         });
-    std::thread processManThread(&process_manager::ProcessManagerApp::Run, manager);
+    std::thread processManThread(&tepegoz::TepegozApp::Run, manager);
 
     processManThread.join(); // returns once every service is stopped
     manager->TearDown();

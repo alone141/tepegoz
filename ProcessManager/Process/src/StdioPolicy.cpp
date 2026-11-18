@@ -2,7 +2,7 @@
 #include "ConfigSection.hpp"
 #include <string>
 
-namespace process_manager
+namespace tepegoz
 {
 
 void StdioPolicy::UpdateArgs(config_section::ConfigSection& section)
@@ -13,4 +13,4 @@ void StdioPolicy::UpdateArgs(config_section::ConfigSection& section)
     stdioAppend = section.ReadBool("StdioAppend", false);
 }
 
-} // namespace process_manager
+} // namespace tepegoz

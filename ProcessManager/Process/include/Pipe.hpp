@@ -1,5 +1,5 @@
 #pragma once
-namespace process_manager
+namespace tepegoz
 {
 
 struct Pipe
@@ -19,4 +19,4 @@ struct Pipe
     void CloseWrite();
 };
 
-} // namespace process_manager
+} // namespace tepegoz

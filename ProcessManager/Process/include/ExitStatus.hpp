@@ -1,6 +1,6 @@
 #pragma once
 #include <sys/types.h>
-namespace process_manager
+namespace tepegoz
 {
 
 struct ExitStatus
@@ -12,4 +12,4 @@ struct ExitStatus
     bool duringStop = false; // reaped while a stop the manager began was under way
 };
 
-} // namespace process_manager
+} // namespace tepegoz

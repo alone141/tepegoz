@@ -7,7 +7,7 @@ namespace config_section
 class ConfigSection;
 
 } // namespace config_section
-namespace process_manager
+namespace tepegoz
 {
 
 struct StdioPolicy
@@ -20,4 +20,4 @@ struct StdioPolicy
     bool stdioAppend = false;
 };
 
-} // namespace process_manager
+} // namespace tepegoz

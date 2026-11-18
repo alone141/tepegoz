@@ -2,7 +2,7 @@
 #include "ConfigSection.hpp"
 #include <climits>
 
-namespace process_manager
+namespace tepegoz
 {
 
 void RestartPolicy::UpdateArgs(config_section::ConfigSection& section)
@@ -16,4 +16,4 @@ void RestartPolicy::UpdateArgs(config_section::ConfigSection& section)
     restartResetMs = std::chrono::milliseconds(section.ReadInt("RestartResetMs", 60000, 0, INT_MAX));
 }
 
-} // namespace process_manager
+} // namespace tepegoz

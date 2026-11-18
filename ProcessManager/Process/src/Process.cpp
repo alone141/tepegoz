@@ -26,7 +26,7 @@
 
 namespace fs = std::filesystem;
 
-namespace process_manager
+namespace tepegoz
 {
 
 namespace
@@ -1077,4 +1077,4 @@ bool Process::StartChildProcess() const
     ::_exit(127);
 }
 
-} // namespace process_manager
+} // namespace tepegoz

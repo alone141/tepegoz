@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <sys/types.h>
 
-namespace process_manager
+namespace tepegoz
 {
 
 class ProcessGroupBuilder
@@ -27,4 +27,4 @@ private:
     std::filesystem::path managerProcPath;
 };
 
-} // namespace process_manager
+} // namespace tepegoz

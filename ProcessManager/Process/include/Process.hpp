@@ -15,7 +15,7 @@ class ConfigSection;
 
 } // namespace config_section
 
-namespace process_manager
+namespace tepegoz
 {
 
 // Owns its child process: a destroyed or overwritten Process stops the child it still holds,
@@ -127,4 +127,4 @@ private:
     std::optional<ProcessConfigParams> deferredConfig; // DeferDefinition()
 };
 
-} // namespace process_manager
+} // namespace tepegoz

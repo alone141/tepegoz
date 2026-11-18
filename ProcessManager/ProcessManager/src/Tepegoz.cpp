@@ -3,7 +3,7 @@
 #include <unordered_map>
 #include <queue>
 
-#include "ProcessManager.hpp"
+#include "Tepegoz.hpp"
 #include "Pipe.hpp"
 
 #include <zmq_addon.hpp>
@@ -26,7 +26,7 @@
 #include "Logger.hpp"
 #include "ReloadPlan.hpp"
 
-namespace process_manager
+namespace tepegoz
 {
 
 namespace
@@ -201,7 +201,7 @@ private:
 
 } // namespace
 
-int ProcessManager::StartUp()
+int Tepegoz::StartUp()
 {
     ProcessGroupBuilder::GetInstance().GenerateGroups();
 
@@ -228,14 +228,14 @@ int ProcessManager::StartUp()
     return 1;
 }
 
-ProcessManager::ProcessManager(std::unique_ptr<ProcessManagerParams> args)
+Tepegoz::Tepegoz(std::unique_ptr<TepegozParams> args)
     :
     zmqContext(1),
     listener(zmqContext, zmq::socket_type::dealer),
     statusPublisher(zmqContext, zmq::socket_type::pub),
     registrar(zmqContext, zmq::socket_type::router)
 {
-    listener.set(zmq::sockopt::routing_id, comm::process_manager_id);
+    listener.set(zmq::sockopt::routing_id, comm::tepegoz_id);
     listener.connect(comm::command_server_port);
 
     statusPublisher.bind(comm::health_publish_port_detailed);
@@ -243,7 +243,7 @@ ProcessManager::ProcessManager(std::unique_ptr<ProcessManagerParams> args)
     processParams = std::move(args);
     BindRegistry();
 }
-ProcessManager::~ProcessManager()
+Tepegoz::~Tepegoz()
 {
     //shutdown
     listener.close();
@@ -251,13 +251,13 @@ ProcessManager::~ProcessManager()
     registrar.close();
     zmqContext.close();
 }
-void ProcessManager::Run()
+void Tepegoz::Run()
 {
     logger::Info("Health status will be published from %s", comm::health_publish_port_detailed);
-    logger::Info("Heartbeats will be listened from %s as %s", comm::command_server_port, comm::process_manager_id.c_str());
+    logger::Info("Heartbeats will be listened from %s as %s", comm::command_server_port, comm::tepegoz_id.c_str());
     // The broker learns a dealer's name from what it sends, and this socket otherwise only receives:
     // a message to itself names it in the broker's log. It comes back here and is ignored.
-    listener.send(zmq::buffer(comm::process_manager_id), zmq::send_flags::sndmore | zmq::send_flags::dontwait);
+    listener.send(zmq::buffer(comm::tepegoz_id), zmq::send_flags::sndmore | zmq::send_flags::dontwait);
     listener.send(zmq::str_buffer("hello"), zmq::send_flags::dontwait);
     zmq::pollitem_t items[] = { { listener.handle(), 0, ZMQ_POLLIN, 0}, { registrar.handle(), 0, ZMQ_POLLIN, 0} };
 
@@ -349,11 +349,11 @@ void ProcessManager::Run()
 
     return;
 }
-void ProcessManager::RequestStop()
+void Tepegoz::RequestStop()
 {
     enabled = false;
 }
-int ProcessManager::TearDown()
+int Tepegoz::TearDown()
 {
     enabled = false;
     logger::Debug("TearDown");
@@ -361,7 +361,7 @@ int ProcessManager::TearDown()
     return 0;
 }
 // Blocking, for shutdown: every process gets SIGTERM at once, then all are waited for together.
-void ProcessManager::StopAll()
+void Tepegoz::StopAll()
 {
     for (auto& process : processParams->processList)
     {
@@ -379,13 +379,13 @@ void ProcessManager::StopAll()
         for (auto& process : retiring) process.AdvanceStop();
     }
 }
-void ProcessManager::RetireProcess(Process& process, std::vector<Process>& retiring)
+void Tepegoz::RetireProcess(Process& process, std::vector<Process>& retiring)
 {
     process.SuspendHealthCheck();
     process.Stop();
     if (process.HasPid() || process.IsStopping()) retiring.push_back(std::move(process));
 }
-bool ProcessManager::IsStopInProgress() const
+bool Tepegoz::IsStopInProgress() const
 {
     for (const auto& process : processParams->processList)
     {
@@ -397,10 +397,10 @@ bool ProcessManager::IsStopInProgress() const
     }
     return false;
 }
-std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const config_section::ConfigValue& document, std::vector<std::string>* errors)
+std::unique_ptr<TepegozParams> Tepegoz::GenerateConfig(const config_section::ConfigValue& document, std::vector<std::string>* errors)
 {
-    auto processManagerParams = std::make_unique<ProcessManagerParams>();
-    processManagerParams->document = document;
+    auto params = std::make_unique<TepegozParams>();
+    params->document = document;
     std::vector<std::string> problems;
     const auto addProblems = [&problems](const std::vector<std::string>& found) { problems.insert(problems.end(), found.begin(), found.end()); };
 
@@ -412,10 +412,10 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const confi
         // Inherit: no default, so a service without a WorkMode of its own is Manual.
         const int mode = manager.ReadChoice("Mode", { "Inherit", "Manual", "Auto" }, 0);
         hasDefaultWorkMode = mode != 0;
-        processManagerParams->remoteRegistration = manager.ReadBool("RemoteRegistration", false);
-        processManagerParams->workMode = mode == 2 ? WorkMode::Auto : WorkMode::Manual;
+        params->remoteRegistration = manager.ReadBool("RemoteRegistration", false);
+        params->workMode = mode == 2 ? WorkMode::Auto : WorkMode::Manual;
         // The choices in logger::Level order.
-        processManagerParams->logLevel = static_cast<logger::Level>(manager.ReadChoice("LogLevel", { "Verbose", "Debug", "Info", "Warning", "Error" }, 1));
+        params->logLevel = static_cast<logger::Level>(manager.ReadChoice("LogLevel", { "Verbose", "Debug", "Info", "Warning", "Error" }, 1));
         addProblems(manager.Problems());
     }
     const config_section::ConfigValue* services = top.ReadSequence("Services");
@@ -451,9 +451,9 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const confi
         // [Tepegoz] Mode applies to every service without a WorkMode of its own.
         if (hasDefaultWorkMode && !section.Has("WorkMode"))
         {
-            process.SetWorkMode(processManagerParams->workMode);
+            process.SetWorkMode(params->workMode);
         }
-        processManagerParams->processList.emplace_back(std::move(process));
+        params->processList.emplace_back(std::move(process));
     }
 
     for (const auto& problem : problems)
@@ -462,16 +462,16 @@ std::unique_ptr<ProcessManagerParams> ProcessManager::GenerateConfig(const confi
         else logger::Error("%s", problem.c_str());
     }
 
-    return processManagerParams;
+    return params;
 }
-std::unique_ptr<ProcessManagerParams> ProcessManager::RebuildConfig(const ProcessManagerParams& params)
+std::unique_ptr<TepegozParams> Tepegoz::RebuildConfig(const TepegozParams& params)
 {
-    std::unique_ptr<ProcessManagerParams> rebuilt = GenerateConfig(params.document);
+    std::unique_ptr<TepegozParams> rebuilt = GenerateConfig(params.document);
     rebuilt->source = params.source;
     rebuilt->origins = params.origins;
     return rebuilt;
 }
-ReloadReport ProcessManager::Reload(ProcessManagerParams& params, std::vector<Process>& retiring)
+ReloadReport Tepegoz::Reload(TepegozParams& params, std::vector<Process>& retiring)
 {
     ReloadReport report{};
     report.command = CommandCode::ReloadConfig;
@@ -583,7 +583,7 @@ ReloadReport ProcessManager::Reload(ProcessManagerParams& params, std::vector<Pr
     report.unchanged = Count(plan.unchanged);
     return report;
 }
-bool ProcessManager::SortByDependencies(std::vector<std::string>& errors, std::vector<Process>& pList)
+bool Tepegoz::SortByDependencies(std::vector<std::string>& errors, std::vector<Process>& pList)
 {
     std::unordered_map<std::string, size_t> idx;
 
@@ -671,7 +671,7 @@ bool ProcessManager::SortByDependencies(std::vector<std::string>& errors, std::v
 
 }
 
-bool ProcessManager::CheckProcessConfig(std::vector<std::string>& err) const
+bool Tepegoz::CheckProcessConfig(std::vector<std::string>& err) const
 {
     for (const auto& process : processParams->processList)
     {
@@ -680,7 +680,7 @@ bool ProcessManager::CheckProcessConfig(std::vector<std::string>& err) const
     return false;
 }
 
-bool ProcessManager::ApplyToAll(CommandCode command)
+bool Tepegoz::ApplyToAll(CommandCode command)
 {
     if (command == CommandCode::StopService)
     {
@@ -716,7 +716,7 @@ bool ProcessManager::ApplyToAll(CommandCode command)
     return false;
 }
 
-void ProcessManager::StartDependencies(const Process& process) const
+void Tepegoz::StartDependencies(const Process& process) const
 {
     for (const auto& dependsOn : process.GetDependencyList())
     {
@@ -730,7 +730,7 @@ void ProcessManager::StartDependencies(const Process& process) const
     }
 }
 
-bool ProcessManager::ApplyCommandServerMessage(const CommandMessage& message)
+bool Tepegoz::ApplyCommandServerMessage(const CommandMessage& message)
 {
     logger::Debug("Command received");
     const auto& command = message.command;
@@ -805,7 +805,7 @@ bool ProcessManager::ApplyCommandServerMessage(const CommandMessage& message)
     return true;
 }
 
-bool ProcessManager::ProcessMessage(const std::vector<zmq::message_t>& messages)
+bool Tepegoz::ProcessMessage(const std::vector<zmq::message_t>& messages)
 {
     if (messages.size() < 2) return false;
 
@@ -820,11 +820,11 @@ bool ProcessManager::ProcessMessage(const std::vector<zmq::message_t>& messages)
         {
             VersionReport version{};
             version.command = CommandCode::GetVersionInfo;
-#ifdef PROCESS_MANAGER_VERSION_MAJOR
-            version.manager.major = PROCESS_MANAGER_VERSION_MAJOR;
-            version.manager.minor = PROCESS_MANAGER_VERSION_MINOR;
-            version.manager.patch = PROCESS_MANAGER_VERSION_PATCH;
-#endif // PROCESS_MANAGER_VERSION_MAJOR
+#ifdef TEPEGOZ_VERSION_MAJOR
+            version.manager.major = TEPEGOZ_VERSION_MAJOR;
+            version.manager.minor = TEPEGOZ_VERSION_MINOR;
+            version.manager.patch = TEPEGOZ_VERSION_PATCH;
+#endif // TEPEGOZ_VERSION_MAJOR
 
 
             auto result = reinterpret_cast<char*>(&version);
@@ -872,7 +872,7 @@ bool ProcessManager::ProcessMessage(const std::vector<zmq::message_t>& messages)
     }
 }
 
-bool ProcessManager::StartSequentialAsync() const
+bool Tepegoz::StartSequentialAsync() const
 {
     for (const auto& process : retiring)
     {
@@ -910,7 +910,7 @@ bool ProcessManager::StartSequentialAsync() const
     return true;
 }
 
-std::vector<Process>::iterator ProcessManager::GetProcess(std::string_view processName) const
+std::vector<Process>::iterator Tepegoz::GetProcess(std::string_view processName) const
 {
     const auto& listStart = processParams->processList.begin();
     const auto& listEnd = processParams->processList.end();
@@ -924,4 +924,4 @@ std::vector<Process>::iterator ProcessManager::GetProcess(std::string_view proce
     return it;
 }
 
-} // namespace process_manager
+} // namespace tepegoz

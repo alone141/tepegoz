@@ -112,6 +112,12 @@ Then remove what the earlier version installed: `/usr/bin/iltaren-ProcessManager
 are no longer needed, `/var/log/processmanager/`. Scripts that call `iltaren-ProcessManager` or
 `systemctl ... processmanager` need the new names.
 
+In the code, the namespace `process_manager` is now `tepegoz`, and the classes `ProcessManager`,
+`ProcessManagerApp`, `ProcessManagerParams` and `IProcessManager` are `Tepegoz`, `TepegozApp`, `TepegozParams`
+and `ITepegoz`, in files of the same names. The CMake project is `tepegoz`; the targets `ProcessManager`,
+`ProcessManagerApp` and `process_manager_tests` are `Tepegoz`, `TepegozApp` and `tepegoz_tests`; the macros
+`PROCESS_MANAGER_*` are `TEPEGOZ_*`.
+
 - Services can be registered one per file, in the `services.d` folder next to the configuration file the manager
   reads. Each `<ProcessName>.yaml` holds the keys of one `Services` entry. The files are read in file name order,
   and their services come after the main file's; otherwise they are ordinary services. Subfolders, dot files and

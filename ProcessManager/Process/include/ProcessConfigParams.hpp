@@ -15,7 +15,7 @@
 #include "RuntimeHealth.hpp"
 #include "StopPhase.hpp"
 #include "WorkMode.hpp"
-namespace process_manager
+namespace tepegoz
 {
 
 struct ProcessConfigParams
@@ -76,4 +76,4 @@ struct ProcessRuntimeParams
     int consecutiveRestarts = 0;
 };
 
-} // namespace process_manager
+} // namespace tepegoz

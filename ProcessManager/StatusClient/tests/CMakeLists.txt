@@ -6,7 +6,7 @@ add_executable(status_client_tests StatusClientTest.cpp)
 target_include_directories(status_client_tests
     PRIVATE
         $<TARGET_PROPERTY:Process,INTERFACE_INCLUDE_DIRECTORIES>
-        $<TARGET_PROPERTY:ProcessManager,INTERFACE_INCLUDE_DIRECTORIES>)
+        $<TARGET_PROPERTY:Tepegoz,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(status_client_tests
     PRIVATE status_client command_watch status_table cppzmq-static Threads::Threads GTest::gtest_main)
 gtest_discover_tests(status_client_tests)

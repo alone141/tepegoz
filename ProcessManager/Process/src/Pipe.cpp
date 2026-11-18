@@ -2,7 +2,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-namespace process_manager
+namespace tepegoz
 {
 
 void Pipe::ConstructPipe()
@@ -57,4 +57,4 @@ Pipe::~Pipe()
     CloseWrite();
 }
 
-} // namespace process_manager
+} // namespace tepegoz

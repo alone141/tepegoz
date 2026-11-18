@@ -1,8 +1,8 @@
 #pragma once
-namespace process_manager
+namespace tepegoz
 {
 
-class IProcessManager
+class ITepegoz
 {
 public:
     virtual int StartUp() = 0;
@@ -10,7 +10,7 @@ public:
     virtual void Run() = 0;
     virtual void RequestStop() = 0; // thread-safe: Run() stops the services and returns
 
-    virtual ~IProcessManager() = default;
+    virtual ~ITepegoz() = default;
 };
 
-} // namespace process_manager
+} // namespace tepegoz

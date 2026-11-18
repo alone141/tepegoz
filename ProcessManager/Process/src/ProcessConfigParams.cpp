@@ -2,7 +2,7 @@
 #include "ConfigSection.hpp"
 #include <climits>
 
-namespace process_manager
+namespace tepegoz
 {
 
 // "pm" is the manager's own cgroup (task_pm), BPM/PMC/GUI are broker identities, "all" is the
@@ -55,4 +55,4 @@ int ProcessConfigParams::UpdateArgs(config_section::ConfigSection& section)
     return bothSpellings ? -3 : 1;
 }
 
-} // namespace process_manager
+} // namespace tepegoz

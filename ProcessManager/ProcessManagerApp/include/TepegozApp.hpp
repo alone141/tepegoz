@@ -1,6 +1,6 @@
 #pragma once
-#include "IProcessManager.hpp"
-#include "ProcessManagerCommands.hpp"
+#include "ITepegoz.hpp"
+#include "TepegozCommands.hpp"
 
 #include <memory>
 #include <string>
@@ -13,14 +13,14 @@ struct LoadedConfig;
 
 } // namespace config_source
 
-namespace process_manager
+namespace tepegoz
 {
 
-class ProcessManagerApp
+class TepegozApp
 {
 public:
-    ProcessManagerApp() = default;
-    ~ProcessManagerApp() = default;
+    TepegozApp() = default;
+    ~TepegozApp() = default;
 
     bool StartUp(const std::string& configPath = ""); // empty: the installed config; false: cannot run
 
@@ -36,10 +36,10 @@ public:
     static void PrintDependencyGraph(std::string config);
 private:
     static void InitializeLogger();
-    bool InitializeProcessManager(const config_source::LoadedConfig& loaded);
+    bool InitializeManager(const config_source::LoadedConfig& loaded);
     static void PrintErrors(const std::vector<std::string>& errList);
 
-    std::unique_ptr<IProcessManager> processManager;
+    std::unique_ptr<ITepegoz> manager;
 };
 
-} // namespace process_manager
+} // namespace tepegoz

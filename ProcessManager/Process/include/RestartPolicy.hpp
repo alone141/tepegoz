@@ -7,7 +7,7 @@ namespace config_section
 class ConfigSection;
 
 } // namespace config_section
-namespace process_manager
+namespace tepegoz
 {
 
 struct RestartPolicy
@@ -20,4 +20,4 @@ struct RestartPolicy
     std::chrono::milliseconds restartResetMs{ 60'000 };
 };
 
-} // namespace process_manager
+} // namespace tepegoz

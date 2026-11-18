@@ -1,5 +1,5 @@
 #pragma once
-namespace process_manager
+namespace tepegoz
 {
 
 enum class WorkMode
@@ -8,4 +8,4 @@ enum class WorkMode
     Manual
 };
 
-} // namespace process_manager
+} // namespace tepegoz

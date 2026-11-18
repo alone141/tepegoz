@@ -5,7 +5,7 @@
 #include <stdio.h>
 namespace fs = std::filesystem;
 
-namespace process_manager
+namespace tepegoz
 {
 
 namespace
@@ -98,4 +98,4 @@ void ProcessGroupBuilder::GenerateGroups() const
     parentControlFile.close();
 }
 
-} // namespace process_manager
+} // namespace tepegoz

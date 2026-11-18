@@ -6,10 +6,10 @@
 #include "ConfigSection.hpp"
 #include "ConfigSource.hpp"
 #include "Logger.hpp"
-namespace process_manager
+namespace tepegoz
 {
 
-struct ProcessManagerParams
+struct TepegozParams
 {
     WorkMode workMode = WorkMode::Manual;
     logger::Level logLevel = logger::Level::Debug; // [Tepegoz] LogLevel
@@ -22,4 +22,4 @@ struct ProcessManagerParams
     std::vector<config_source::ServiceOrigin> origins;
 };
 
-} // namespace process_manager
+} // namespace tepegoz

@@ -1,6 +1,6 @@
 #pragma once
 #include <sys/types.h>
-namespace process_manager
+namespace tepegoz
 {
 
 struct ProcessHandle
@@ -9,4 +9,4 @@ struct ProcessHandle
     pid_t pgid = -1; // process group id
 };
 
-} // namespace process_manager
+} // namespace tepegoz

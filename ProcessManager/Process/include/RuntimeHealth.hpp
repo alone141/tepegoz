@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <ctype.h>
 #include <sys/types.h>
-namespace process_manager
+namespace tepegoz
 {
 
 enum class RuntimeState : uint8_t
@@ -101,4 +101,4 @@ static_assert(offsetof(DetailedHealthReport, gpuUsage.memoryUsageInBytes) == 128
 static_assert(offsetof(DetailedHealthReport, gpuUsage.utilizationPercent) == 136, "gpuUsage.utilizationPercent moved");
 static_assert(offsetof(DetailedHealthReport, gpuUsage.state) == 140, "gpuUsage.state moved");
 
-} // namespace process_manager
+} // namespace tepegoz

@@ -7,12 +7,12 @@
 #include <system_error>
 #include <vector>
 #include <cxxopts.hpp>
-#include "ProcessManagerApp.hpp"
+#include "TepegozApp.hpp"
 #include "CommandWatch.hpp"
 #include "RegistryClient.hpp"
 #include "StatusClient.hpp"
 
-namespace process_manager
+namespace tepegoz
 {
 
 const char* config_template = R"yaml(# Tepegoz configuration (YAML)
@@ -373,11 +373,11 @@ int ParseInputFlags(const int& argc, char**& argv, std::string& configPath)
     }
     else if (cmd == "validate")
     {
-        return ProcessManagerApp::ValidateConfig(config) ? 0 : 1;
+        return TepegozApp::ValidateConfig(config) ? 0 : 1;
     }
     else if (cmd == "graph")
     {
-        ProcessManagerApp::PrintDependencyGraph(config);
+        TepegozApp::PrintDependencyGraph(config);
         return 0;
     }
     else if (cmd == "reload")
@@ -424,4 +424,4 @@ void GenerateTemplateConfig()
     fout.close();
 }
 
-} // namespace process_manager
+} // namespace tepegoz

@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace process_manager
+namespace tepegoz
 {
 
 // Returns the exit code when the command line was a one-shot command, or -1 to run the manager
@@ -10,4 +10,4 @@ namespace process_manager
 int ParseInputFlags(const int& argc, char**& argv, std::string& configPath);
 void GenerateTemplateConfig();
 
-} // namespace process_manager
+} // namespace tepegoz

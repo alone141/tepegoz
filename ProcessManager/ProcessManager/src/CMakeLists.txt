@@ -1,27 +1,27 @@
-add_library(ProcessManager STATIC)
+add_library(Tepegoz STATIC)
 
-target_sources(ProcessManager 
+target_sources(Tepegoz 
 	PUBLIC
-	${CMAKE_CURRENT_LIST_DIR}/../include/IProcessManager.hpp
-	${CMAKE_CURRENT_LIST_DIR}/../include/ProcessManager.hpp
-	${CMAKE_CURRENT_LIST_DIR}/../include/ProcessManagerParams.hpp
-	${CMAKE_CURRENT_LIST_DIR}/../include/ProcessManagerCommands.hpp
+	${CMAKE_CURRENT_LIST_DIR}/../include/ITepegoz.hpp
+	${CMAKE_CURRENT_LIST_DIR}/../include/Tepegoz.hpp
+	${CMAKE_CURRENT_LIST_DIR}/../include/TepegozParams.hpp
+	${CMAKE_CURRENT_LIST_DIR}/../include/TepegozCommands.hpp
 
 
 	PRIVATE
-	${CMAKE_CURRENT_LIST_DIR}/ProcessManager.cpp
-	${CMAKE_CURRENT_LIST_DIR}/ProcessManagerRegistry.cpp
+	${CMAKE_CURRENT_LIST_DIR}/Tepegoz.cpp
+	${CMAKE_CURRENT_LIST_DIR}/TepegozRegistry.cpp
 
 
 )
 
-target_include_directories(ProcessManager PUBLIC "${CMAKE_CURRENT_LIST_DIR}/../include")
+target_include_directories(Tepegoz PUBLIC "${CMAKE_CURRENT_LIST_DIR}/../include")
 # GetVersionInfo answers with the project's version.
-target_compile_definitions(ProcessManager
+target_compile_definitions(Tepegoz
 	PRIVATE
-		PROCESS_MANAGER_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
-		PROCESS_MANAGER_VERSION_MINOR=${PROJECT_VERSION_MINOR}
-		PROCESS_MANAGER_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+		TEPEGOZ_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+		TEPEGOZ_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+		TEPEGOZ_VERSION_PATCH=${PROJECT_VERSION_PATCH}
 )
-target_link_libraries(ProcessManager PUBLIC Process cppzmq-static config_section config_source logger service_registry)
-target_link_libraries(ProcessManager PRIVATE gpu_monitor journal_server reload_plan)
+target_link_libraries(Tepegoz PUBLIC Process cppzmq-static config_section config_source logger service_registry)
+target_link_libraries(Tepegoz PRIVATE gpu_monitor journal_server reload_plan)

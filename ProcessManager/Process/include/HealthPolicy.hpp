@@ -6,7 +6,7 @@ namespace config_section
 class ConfigSection;
 
 } // namespace config_section
-namespace process_manager
+namespace tepegoz
 {
 
 struct HealthPolicy
@@ -20,4 +20,4 @@ struct HealthPolicy
     int missedHeartbeatThreshold = 5; //take action after threshold
 };
 
-} // namespace process_manager
+} // namespace tepegoz

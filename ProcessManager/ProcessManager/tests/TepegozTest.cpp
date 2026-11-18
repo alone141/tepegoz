@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "ProcessManager.hpp"
+#include "Tepegoz.hpp"
 #include "ConfigSource.hpp"
 #include "Logger.hpp"
 
@@ -23,7 +23,7 @@ class ScratchFolder
 public:
     ScratchFolder()
     {
-        char pattern[] = "/tmp/process_manager_test_XXXXXX";
+        char pattern[] = "/tmp/tepegoz_test_XXXXXX";
         const char* made = ::mkdtemp(pattern);
         path = made != nullptr ? std::filesystem::path{made} : std::filesystem::path{};
     }
@@ -87,10 +87,10 @@ config_source::LoadedConfig Load(const ScratchFolder& folder)
     return loaded;
 }
 
-std::vector<std::string> Names(const std::vector<process_manager::Process>& processes)
+std::vector<std::string> Names(const std::vector<tepegoz::Process>& processes)
 {
     std::vector<std::string> names;
-    for (const process_manager::Process& process : processes)
+    for (const tepegoz::Process& process : processes)
     {
         names.push_back(process.GetProcessName());
     }
@@ -111,22 +111,22 @@ std::string Sleeper(const std::string& name, const std::string& seconds = "60")
 }
 
 // The parameters the manager starts with: built from the folder's configuration, in start order.
-std::unique_ptr<process_manager::ProcessManagerParams> Started(const ScratchFolder& folder)
+std::unique_ptr<tepegoz::TepegozParams> Started(const ScratchFolder& folder)
 {
     const config_source::LoadedConfig loaded = Load(folder);
     std::vector<std::string> errors;
-    std::unique_ptr<process_manager::ProcessManagerParams> params =
-        process_manager::ProcessManager::GenerateConfig(loaded.document, &errors);
-    EXPECT_TRUE(process_manager::ProcessManager::SortByDependencies(errors, params->processList));
+    std::unique_ptr<tepegoz::TepegozParams> params =
+        tepegoz::Tepegoz::GenerateConfig(loaded.document, &errors);
+    EXPECT_TRUE(tepegoz::Tepegoz::SortByDependencies(errors, params->processList));
     EXPECT_TRUE(errors.empty());
     params->source = config_source::ConfigSource{loaded.mainFile};
     params->origins = loaded.origins;
     return params;
 }
 
-process_manager::Process* Find(process_manager::ProcessManagerParams& params, const std::string& name)
+tepegoz::Process* Find(tepegoz::TepegozParams& params, const std::string& name)
 {
-    for (process_manager::Process& process : params.processList)
+    for (tepegoz::Process& process : params.processList)
     {
         if (process.GetProcessName() == name)
         {
@@ -145,45 +145,45 @@ bool IsAlive(pid_t pid)
 // What a reload of the manager's parameters did, with the services it retired.
 struct Reloaded
 {
-    process_manager::ReloadReport report{};
-    std::vector<process_manager::Process> retiring;
+    tepegoz::ReloadReport report{};
+    std::vector<tepegoz::Process> retiring;
 };
 
-Reloaded Reload(process_manager::ProcessManagerParams& params)
+Reloaded Reload(tepegoz::TepegozParams& params)
 {
     Reloaded reloaded{};
-    reloaded.report = process_manager::ProcessManager::Reload(params, reloaded.retiring);
+    reloaded.report = tepegoz::Tepegoz::Reload(params, reloaded.retiring);
     return reloaded;
 }
 
 } // namespace
 
-TEST(ProcessManagerTest, DropInServiceTakesTheManagerModeDefault)
+TEST(TepegozTest, DropInServiceTakesTheManagerModeDefault)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\nServices: []\n");
     folder.Write("services.d/extra.yaml", Service("extra"));
     std::vector<std::string> errors;
-    const std::unique_ptr<process_manager::ProcessManagerParams> params =
-        process_manager::ProcessManager::GenerateConfig(Load(folder).document, &errors);
+    const std::unique_ptr<tepegoz::TepegozParams> params =
+        tepegoz::Tepegoz::GenerateConfig(Load(folder).document, &errors);
     EXPECT_TRUE(errors.empty());
     ASSERT_EQ(Names(params->processList), (std::vector<std::string>{"extra"}));
     EXPECT_FALSE(params->processList[0].IsWorkingManually());
 }
 
-TEST(ProcessManagerTest, DisabledDropInIsNotBuilt)
+TEST(TepegozTest, DisabledDropInIsNotBuilt)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
     folder.Write("services.d/paused.yaml", Service("paused") + "Enabled: false\n");
     std::vector<std::string> errors;
-    const std::unique_ptr<process_manager::ProcessManagerParams> params =
-        process_manager::ProcessManager::GenerateConfig(Load(folder).document, &errors);
+    const std::unique_ptr<tepegoz::TepegozParams> params =
+        tepegoz::Tepegoz::GenerateConfig(Load(folder).document, &errors);
     EXPECT_TRUE(errors.empty());
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main"}));
 }
 
-TEST(ProcessManagerTest, DependenciesCrossBetweenTheMainFileAndTheDropIns)
+TEST(TepegozTest, DependenciesCrossBetweenTheMainFileAndTheDropIns)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n"
@@ -194,37 +194,37 @@ TEST(ProcessManagerTest, DependenciesCrossBetweenTheMainFileAndTheDropIns)
                               "    ExecutablePath: /bin/true\n");
     folder.Write("services.d/middle.yaml", Service("middle") + "DependsOn: [front]\n");
     std::vector<std::string> errors;
-    const std::unique_ptr<process_manager::ProcessManagerParams> params =
-        process_manager::ProcessManager::GenerateConfig(Load(folder).document, &errors);
-    EXPECT_TRUE(process_manager::ProcessManager::SortByDependencies(errors, params->processList));
+    const std::unique_ptr<tepegoz::TepegozParams> params =
+        tepegoz::Tepegoz::GenerateConfig(Load(folder).document, &errors);
+    EXPECT_TRUE(tepegoz::Tepegoz::SortByDependencies(errors, params->processList));
     EXPECT_TRUE(errors.empty());
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"front", "middle", "back"}));
 }
 
-TEST(ProcessManagerTest, DropInKeysAreCheckedLikeTheMainFileKeys)
+TEST(TepegozTest, DropInKeysAreCheckedLikeTheMainFileKeys)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/extra.yaml", Service("extra") + "MaxRestart: 3\n");
     std::vector<std::string> errors;
-    process_manager::ProcessManager::GenerateConfig(Load(folder).document, &errors);
+    tepegoz::Tepegoz::GenerateConfig(Load(folder).document, &errors);
     EXPECT_EQ(errors, (std::vector<std::string>{"service 'extra': unknown key 'MaxRestart'"}));
 }
 
-TEST(ProcessManagerTest, RebuildConfigKeepsTheDropInsAndWhereTheyCameFrom)
+TEST(TepegozTest, RebuildConfigKeepsTheDropInsAndWhereTheyCameFrom)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
     folder.Write("services.d/extra.yaml", Service("extra"));
     const config_source::LoadedConfig loaded = Load(folder);
     std::vector<std::string> errors;
-    std::unique_ptr<process_manager::ProcessManagerParams> params =
-        process_manager::ProcessManager::GenerateConfig(loaded.document, &errors);
+    std::unique_ptr<tepegoz::TepegozParams> params =
+        tepegoz::Tepegoz::GenerateConfig(loaded.document, &errors);
     params->source = config_source::ConfigSource{loaded.mainFile};
     params->origins = loaded.origins;
 
-    const std::unique_ptr<process_manager::ProcessManagerParams> rebuilt =
-        process_manager::ProcessManager::RebuildConfig(*params);
+    const std::unique_ptr<tepegoz::TepegozParams> rebuilt =
+        tepegoz::Tepegoz::RebuildConfig(*params);
     EXPECT_EQ(Names(rebuilt->processList), (std::vector<std::string>{"main", "extra"}));
     EXPECT_EQ(rebuilt->source.MainFile(), folder.MainFile());
     const config_source::ServiceOrigin* extra = config_source::FindOrigin(rebuilt->origins, "extra");
@@ -232,45 +232,45 @@ TEST(ProcessManagerTest, RebuildConfigKeepsTheDropInsAndWhereTheyCameFrom)
     EXPECT_EQ(extra->kind, config_source::OriginKind::DropIn);
 }
 
-TEST(ProcessManagerTest, ReloadAddsTheServiceOfANewFile)
+TEST(TepegozTest, ReloadAddsTheServiceOfANewFile)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\nServices:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     folder.Write("services.d/extra.yaml", Service("extra"));
     const Reloaded reloaded = Reload(*params);
-    EXPECT_EQ(reloaded.report.command, process_manager::CommandCode::ReloadConfig);
-    EXPECT_EQ(reloaded.report.result, process_manager::ReloadResult::Applied);
+    EXPECT_EQ(reloaded.report.command, tepegoz::CommandCode::ReloadConfig);
+    EXPECT_EQ(reloaded.report.result, tepegoz::ReloadResult::Applied);
     EXPECT_EQ(reloaded.report.added, 1);
     EXPECT_EQ(reloaded.report.unchanged, 1);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main", "extra"}));
-    const process_manager::Process* extra = Find(*params, "extra");
+    const tepegoz::Process* extra = Find(*params, "extra");
     ASSERT_NE(extra, nullptr);
     EXPECT_FALSE(extra->HasPid());
     EXPECT_FALSE(extra->IsWorkingManually());
 }
 
-TEST(ProcessManagerTest, ReloadPutsAddedServicesInStartOrder)
+TEST(TepegozTest, ReloadPutsAddedServicesInStartOrder)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n    DependsOn: [late]\n");
     std::vector<std::string> ignored;
     const config_source::LoadedConfig first = Load(folder);
-    std::unique_ptr<process_manager::ProcessManagerParams> params =
-        process_manager::ProcessManager::GenerateConfig(first.document, &ignored);
+    std::unique_ptr<tepegoz::TepegozParams> params =
+        tepegoz::Tepegoz::GenerateConfig(first.document, &ignored);
     params->source = config_source::ConfigSource{first.mainFile};
     folder.Write("services.d/late.yaml", Service("late"));
-    EXPECT_EQ(Reload(*params).report.result, process_manager::ReloadResult::Applied);
+    EXPECT_EQ(Reload(*params).report.result, tepegoz::ReloadResult::Applied);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"late", "main"}));
 }
 
-TEST(ProcessManagerTest, ReloadRetiresTheServiceOfADeletedFile)
+TEST(TepegozTest, ReloadRetiresTheServiceOfADeletedFile)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n" "  - ProcessName: main\n    ExecutablePath: /bin/true\n");
     folder.Write("services.d/gone.yaml", Sleeper("gone"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    process_manager::Process* gone = Find(*params, "gone");
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
+    tepegoz::Process* gone = Find(*params, "gone");
     ASSERT_NE(gone, nullptr);
     gone->StartProcess();
     const pid_t pid = gone->GetPid();
@@ -285,12 +285,12 @@ TEST(ProcessManagerTest, ReloadRetiresTheServiceOfADeletedFile)
     EXPECT_TRUE(reloaded.retiring[0].IsStopping());
 }
 
-TEST(ProcessManagerTest, ReloadRemovesAServiceSwitchedOff)
+TEST(TepegozTest, ReloadRemovesAServiceSwitchedOff)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n" "  - ProcessName: main\n    ExecutablePath: /bin/true\n");
     folder.Write("services.d/paused.yaml", Service("paused"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     folder.Write("services.d/paused.yaml", Service("paused") + "Enabled: false\n");
     const Reloaded reloaded = Reload(*params);
     EXPECT_EQ(reloaded.report.removed, 1);
@@ -298,13 +298,13 @@ TEST(ProcessManagerTest, ReloadRemovesAServiceSwitchedOff)
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main"}));
 }
 
-TEST(ProcessManagerTest, ReloadLeavesARunningChangedServiceRunningWithTheMark)
+TEST(TepegozTest, ReloadLeavesARunningChangedServiceRunningWithTheMark)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/edited.yaml", Sleeper("edited", "60"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    process_manager::Process* edited = Find(*params, "edited");
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
+    tepegoz::Process* edited = Find(*params, "edited");
     ASSERT_NE(edited, nullptr);
     edited->StartProcess();
     const pid_t pid = edited->GetPid();
@@ -321,31 +321,31 @@ TEST(ProcessManagerTest, ReloadLeavesARunningChangedServiceRunningWithTheMark)
     EXPECT_TRUE(reloaded.retiring.empty());
 }
 
-TEST(ProcessManagerTest, ReloadDefersTheDefinitionOfAStoppedChangedService)
+TEST(TepegozTest, ReloadDefersTheDefinitionOfAStoppedChangedService)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: idle\n    ExecutablePath: /bin/true\n    WorkMode: Manual\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     folder.Write("main.yaml", "Services:\n  - ProcessName: idle\n    ExecutablePath: /bin/true\n    WorkMode: Auto\n");
     EXPECT_EQ(Reload(*params).report.changed, 1);
-    const process_manager::Process* idle = Find(*params, "idle");
+    const tepegoz::Process* idle = Find(*params, "idle");
     ASSERT_NE(idle, nullptr);
     EXPECT_TRUE(idle->HasDeferredDefinition());
     EXPECT_TRUE(idle->IsWorkingManually());
     EXPECT_FALSE(idle->HasPid());
 }
 
-TEST(ProcessManagerTest, ReloadLeavesAnUnchangedServiceUntouched)
+TEST(TepegozTest, ReloadLeavesAnUnchangedServiceUntouched)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/same.yaml", Sleeper("same"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    process_manager::Process* same = Find(*params, "same");
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
+    tepegoz::Process* same = Find(*params, "same");
     ASSERT_NE(same, nullptr);
     same->StartProcess();
     const pid_t pid = same->GetPid();
-    const process_manager::RuntimeHealth before = same->GetRuntimeStats();
+    const tepegoz::RuntimeHealth before = same->GetRuntimeStats();
 
     folder.Write("services.d/same.yaml", "# reformatted\n" + Sleeper("same"));
     folder.Write("services.d/other.yaml", Service("other"));
@@ -359,20 +359,20 @@ TEST(ProcessManagerTest, ReloadLeavesAnUnchangedServiceUntouched)
     EXPECT_FALSE(same->HasDeferredDefinition());
 }
 
-TEST(ProcessManagerTest, ReloadKeepsARunningServiceWhoseFileBroke)
+TEST(TepegozTest, ReloadKeepsARunningServiceWhoseFileBroke)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/fragile.yaml", Sleeper("fragile"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    process_manager::Process* fragile = Find(*params, "fragile");
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
+    tepegoz::Process* fragile = Find(*params, "fragile");
     ASSERT_NE(fragile, nullptr);
     fragile->StartProcess();
     const pid_t pid = fragile->GetPid();
 
     folder.Write("services.d/fragile.yaml", "ProcessName: [fragile\n");
     const Reloaded reloaded = Reload(*params);
-    EXPECT_EQ(reloaded.report.result, process_manager::ReloadResult::Applied);
+    EXPECT_EQ(reloaded.report.result, tepegoz::ReloadResult::Applied);
     EXPECT_EQ(reloaded.report.kept, 1);
     EXPECT_TRUE(reloaded.retiring.empty());
     fragile = Find(*params, "fragile");
@@ -381,16 +381,16 @@ TEST(ProcessManagerTest, ReloadKeepsARunningServiceWhoseFileBroke)
     EXPECT_FALSE(fragile->HasDeferredDefinition());
 }
 
-TEST(ProcessManagerTest, ReorderingStopsNoRunningService)
+TEST(TepegozTest, ReorderingStopsNoRunningService)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/a.yaml", Sleeper("a"));
     folder.Write("services.d/b.yaml", Sleeper("b"));
     folder.Write("services.d/c.yaml", Sleeper("c"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     std::vector<pid_t> pids;
-    for (process_manager::Process& process : params->processList)
+    for (tepegoz::Process& process : params->processList)
     {
         process.StartProcess();
         pids.push_back(process.GetPid());
@@ -401,7 +401,7 @@ TEST(ProcessManagerTest, ReorderingStopsNoRunningService)
     folder.Write("services.d/b.yaml", Sleeper("b") + "DependsOn: [c]\n");
     folder.Write("services.d/new.yaml", Service("new"));
     const Reloaded reloaded = Reload(*params);
-    EXPECT_EQ(reloaded.report.result, process_manager::ReloadResult::Applied);
+    EXPECT_EQ(reloaded.report.result, tepegoz::ReloadResult::Applied);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"c", "new", "b", "a"}));
     for (const pid_t pid : pids)
     {
@@ -411,64 +411,64 @@ TEST(ProcessManagerTest, ReorderingStopsNoRunningService)
     EXPECT_EQ(Find(*params, "c")->GetPid(), pids[2]);
 }
 
-TEST(ProcessManagerTest, ReloadStoresTheNewDocumentForStartAll)
+TEST(TepegozTest, ReloadStoresTheNewDocumentForStartAll)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     folder.Write("services.d/extra.yaml", Service("extra") + "Args: [new]\n");
-    ASSERT_EQ(Reload(*params).report.result, process_manager::ReloadResult::Applied);
+    ASSERT_EQ(Reload(*params).report.result, tepegoz::ReloadResult::Applied);
     const config_source::ServiceOrigin* extra = config_source::FindOrigin(params->origins, "extra");
     ASSERT_NE(extra, nullptr);
     EXPECT_EQ(extra->kind, config_source::OriginKind::DropIn);
-    const std::unique_ptr<process_manager::ProcessManagerParams> rebuilt =
-        process_manager::ProcessManager::RebuildConfig(*params);
+    const std::unique_ptr<tepegoz::TepegozParams> rebuilt =
+        tepegoz::Tepegoz::RebuildConfig(*params);
     EXPECT_EQ(Names(rebuilt->processList), (std::vector<std::string>{"main", "extra"}));
 }
 
-TEST(ProcessManagerTest, ReloadTakesTheLogLevelAndMode)
+TEST(TepegozTest, ReloadTakesTheLogLevelAndMode)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Tepegoz:\n  Mode: Manual\n  LogLevel: Debug\nServices: []\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\n  LogLevel: Warning\nServices: []\n");
-    ASSERT_EQ(Reload(*params).report.result, process_manager::ReloadResult::Applied);
+    ASSERT_EQ(Reload(*params).report.result, tepegoz::ReloadResult::Applied);
     EXPECT_EQ(params->logLevel, logger::Level::Warning);
-    EXPECT_EQ(params->workMode, process_manager::WorkMode::Auto);
+    EXPECT_EQ(params->workMode, tepegoz::WorkMode::Auto);
     logger::Logger::Instance().SetMinimum(logger::Level::Debug);
 }
 
-TEST(ProcessManagerTest, ReloadOfABrokenMainFileChangesNothing)
+TEST(TepegozTest, ReloadOfABrokenMainFileChangesNothing)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
     folder.Write("services.d/extra.yaml", Service("extra"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const config_section::ConfigValue document = params->document;
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n   ExecutablePath: /bin/true\n");
     folder.Write("services.d/added.yaml", Service("added"));
     const Reloaded reloaded = Reload(*params);
-    EXPECT_EQ(reloaded.report.result, process_manager::ReloadResult::MainFileSyntaxError);
+    EXPECT_EQ(reloaded.report.result, tepegoz::ReloadResult::MainFileSyntaxError);
     EXPECT_EQ(reloaded.report.added, 0);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main", "extra"}));
     EXPECT_EQ(params->document.keys, document.keys);
     EXPECT_TRUE(reloaded.retiring.empty());
 }
 
-TEST(ProcessManagerTest, ReloadKeepsARunningServiceWhoseEntryLostItsName)
+TEST(TepegozTest, ReloadKeepsARunningServiceWhoseEntryLostItsName)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/sleep\n    Args: [60]\n"
                               "    CreateProcessGroup: false\n    StdioMode: NullDevice\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    process_manager::Process* main = Find(*params, "main");
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
+    tepegoz::Process* main = Find(*params, "main");
     ASSERT_NE(main, nullptr);
     main->StartProcess();
     const pid_t pid = main->GetPid();
 
     folder.Write("main.yaml", "Services:\n  - ProcessName: [main]\n    ExecutablePath: /bin/sleep\n");
     const Reloaded reloaded = Reload(*params);
-    EXPECT_EQ(reloaded.report.result, process_manager::ReloadResult::Applied);
+    EXPECT_EQ(reloaded.report.result, tepegoz::ReloadResult::Applied);
     EXPECT_EQ(reloaded.report.kept, 1);
     EXPECT_EQ(reloaded.report.removed, 0);
     EXPECT_TRUE(reloaded.retiring.empty());
@@ -477,78 +477,78 @@ TEST(ProcessManagerTest, ReloadKeepsARunningServiceWhoseEntryLostItsName)
     EXPECT_EQ(main->GetPid(), pid);
 }
 
-TEST(ProcessManagerTest, ReloadOfAMissingMainFileChangesNothing)
+TEST(TepegozTest, ReloadOfAMissingMainFileChangesNothing)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     std::filesystem::remove(folder.MainFile());
-    EXPECT_EQ(Reload(*params).report.result, process_manager::ReloadResult::MainFileNotOpened);
+    EXPECT_EQ(Reload(*params).report.result, tepegoz::ReloadResult::MainFileNotOpened);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main"}));
 }
 
-TEST(ProcessManagerTest, ReloadWithAnUnreadableFolderChangesNothing)
+TEST(TepegozTest, ReloadWithAnUnreadableFolderChangesNothing)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/extra.yaml", Service("extra"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const std::filesystem::path dropIns = folder.MainFile().parent_path() / "services.d";
     std::filesystem::remove_all(dropIns);
     std::filesystem::create_symlink("services.d", dropIns); // a link to itself cannot be read
     const Reloaded reloaded = Reload(*params);
-    EXPECT_EQ(reloaded.report.result, process_manager::ReloadResult::FolderNotReadable);
+    EXPECT_EQ(reloaded.report.result, tepegoz::ReloadResult::FolderNotReadable);
     EXPECT_EQ(reloaded.report.removed, 0);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"extra"}));
 }
 
-TEST(ProcessManagerTest, ReloadWithoutAServicesListChangesNothing)
+TEST(TepegozTest, ReloadWithoutAServicesListChangesNothing)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     folder.Write("main.yaml", "Services:\n  ProcessName: main\n");
-    EXPECT_EQ(Reload(*params).report.result, process_manager::ReloadResult::NoServicesList);
+    EXPECT_EQ(Reload(*params).report.result, tepegoz::ReloadResult::NoServicesList);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main"}));
 }
 
-TEST(ProcessManagerTest, ReloadWithACycleChangesNothing)
+TEST(TepegozTest, ReloadWithACycleChangesNothing)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/a.yaml", Service("a"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     folder.Write("services.d/a.yaml", Service("a") + "DependsOn: [b]\n");
     folder.Write("services.d/b.yaml", Service("b") + "DependsOn: [a]\n");
-    EXPECT_EQ(Reload(*params).report.result, process_manager::ReloadResult::DependencyCycle);
+    EXPECT_EQ(Reload(*params).report.result, tepegoz::ReloadResult::DependencyCycle);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"a"}));
     EXPECT_FALSE(Find(*params, "a")->HasDeferredDefinition());
 }
 
-TEST(ProcessManagerTest, ReloadWithADuplicateNameChangesNothing)
+TEST(TepegozTest, ReloadWithADuplicateNameChangesNothing)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n"
                               "  - ProcessName: main\n    ExecutablePath: /bin/false\n");
-    EXPECT_EQ(Reload(*params).report.result, process_manager::ReloadResult::DuplicateName);
+    EXPECT_EQ(Reload(*params).report.result, tepegoz::ReloadResult::DuplicateName);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main"}));
 }
 
-TEST(ProcessManagerTest, ReloadWithoutASourceIsRefused)
+TEST(TepegozTest, ReloadWithoutASourceIsRefused)
 {
-    process_manager::ProcessManagerParams params{};
-    std::vector<process_manager::Process> retiring;
-    EXPECT_EQ(process_manager::ProcessManager::Reload(params, retiring).result, process_manager::ReloadResult::NoSource);
+    tepegoz::TepegozParams params{};
+    std::vector<tepegoz::Process> retiring;
+    EXPECT_EQ(tepegoz::Tepegoz::Reload(params, retiring).result, tepegoz::ReloadResult::NoSource);
 }
 
-TEST(ProcessManagerTest, ServiceDisabledAtRunTimeComesBackOnReload)
+TEST(TepegozTest, ServiceDisabledAtRunTimeComesBackOnReload)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
     folder.Write("services.d/extra.yaml", Service("extra"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     params->processList.pop_back(); // what --disable extra does to the list
     EXPECT_EQ(Reload(*params).report.added, 1);
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main", "extra"}));
@@ -565,13 +565,13 @@ struct Answered
     service_registry::ReplyStatus status = service_registry::ReplyStatus::Error;
     config_section::ConfigValue body;
     std::string json;
-    std::vector<process_manager::Process> retiring;
+    std::vector<tepegoz::Process> retiring;
 };
 
-Answered Ask(process_manager::ProcessManagerParams& params, const std::vector<std::string>& frames)
+Answered Ask(tepegoz::TepegozParams& params, const std::vector<std::string>& frames)
 {
     Answered answered{};
-    const service_registry::Reply reply = process_manager::ProcessManager::HandleRegistry(params, answered.retiring, frames);
+    const service_registry::Reply reply = tepegoz::Tepegoz::HandleRegistry(params, answered.retiring, frames);
     answered.status = reply.status;
     answered.json = reply.json;
     std::string error;
@@ -632,7 +632,7 @@ std::filesystem::path RegisteredFile(const ScratchFolder& folder, const std::str
 }
 
 // As Started, for a folder whose files have problems on purpose.
-std::unique_ptr<process_manager::ProcessManagerParams> StartedWithProblems(const ScratchFolder& folder)
+std::unique_ptr<tepegoz::TepegozParams> StartedWithProblems(const ScratchFolder& folder)
 {
     const config_source::ConfigSource source{folder.MainFile()};
     config_source::LoadedConfig loaded{};
@@ -640,9 +640,9 @@ std::unique_ptr<process_manager::ProcessManagerParams> StartedWithProblems(const
     EXPECT_EQ(source.Load(loaded, error), config_source::LoadCode::Ok) << error;
     EXPECT_FALSE(loaded.problems.empty());
     std::vector<std::string> ignored;
-    std::unique_ptr<process_manager::ProcessManagerParams> params =
-        process_manager::ProcessManager::GenerateConfig(loaded.document, &ignored);
-    process_manager::ProcessManager::SortByDependencies(ignored, params->processList);
+    std::unique_ptr<tepegoz::TepegozParams> params =
+        tepegoz::Tepegoz::GenerateConfig(loaded.document, &ignored);
+    tepegoz::Tepegoz::SortByDependencies(ignored, params->processList);
     params->source = config_source::ConfigSource{loaded.mainFile};
     params->origins = loaded.origins;
     return params;
@@ -658,11 +658,11 @@ config_section::ConfigValue ReadBack(const std::filesystem::path& file)
 
 } // namespace
 
-TEST(ProcessManagerTest, RegistryAddWritesTheFileAndStartsAnAutomaticService)
+TEST(TepegozTest, RegistryAddWritesTheFileAndStartsAnAutomaticService)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("extra", "ExecutablePath: /bin/true\nArgs: [\"--port\", \"8080\"]\n")});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "outcome"), "starting");
@@ -676,46 +676,46 @@ TEST(ProcessManagerTest, RegistryAddWritesTheFileAndStartsAnAutomaticService)
     EXPECT_EQ(origin->kind, config_source::OriginKind::DropIn);
 }
 
-TEST(ProcessManagerTest, RegistryAddMakesTheFolder)
+TEST(TepegozTest, RegistryAddMakesTheFolder)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     ASSERT_FALSE(std::filesystem::exists(folder.MainFile().parent_path() / "services.d"));
     EXPECT_EQ(Ask(*params, {"add", WithDefinition("extra", Service("extra"))}).status, service_registry::ReplyStatus::Ok);
     EXPECT_TRUE(std::filesystem::is_regular_file(RegisteredFile(folder, "extra")));
 }
 
-TEST(ProcessManagerTest, RegistryAddHeldKeepsTheServiceStoppedAndTheFileAsSent)
+TEST(TepegozTest, RegistryAddHeldKeepsTheServiceStoppedAndTheFileAsSent)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("extra", Service("extra"), "start: false\n")});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "outcome"), "held");
-    const process_manager::Process* extra = Find(*params, "extra");
+    const tepegoz::Process* extra = Find(*params, "extra");
     ASSERT_NE(extra, nullptr);
     EXPECT_TRUE(extra->IsWorkingManually());
     EXPECT_EQ(config_section::FindValue(ReadBack(RegisteredFile(folder, "extra")), "WorkMode"), nullptr);
 }
 
-TEST(ProcessManagerTest, RegistryAddOfAManualServiceSaysHowToStartIt)
+TEST(TepegozTest, RegistryAddOfAManualServiceSaysHowToStartIt)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: main\n    ExecutablePath: /bin/true\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("extra", Service("extra"))});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "outcome"), "manual");
     EXPECT_NE(Field(answered, "message").find("--start extra"), std::string::npos);
 }
 
-TEST(ProcessManagerTest, RegistryAddOfAMissingExecutableWritesNothing)
+TEST(TepegozTest, RegistryAddOfAMissingExecutableWritesNothing)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("extra", "ExecutablePath: /nonexistent/program\n")});
     EXPECT_EQ(answered.status, service_registry::ReplyStatus::Refused);
     EXPECT_TRUE(HasProblemWith(answered, "extra ExecutablePath does not exists")) << answered.json;
@@ -723,51 +723,51 @@ TEST(ProcessManagerTest, RegistryAddOfAMissingExecutableWritesNothing)
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main"}));
 }
 
-TEST(ProcessManagerTest, RegistryAddOfAnUnknownKeyIsRefused)
+TEST(TepegozTest, RegistryAddOfAnUnknownKeyIsRefused)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("extra", "ExecutablePath: /bin/true\nMaxRestart: 3\n")});
     EXPECT_EQ(answered.status, service_registry::ReplyStatus::Refused);
     EXPECT_TRUE(HasProblemWith(answered, "MaxRestart")) << answered.json;
 }
 
-TEST(ProcessManagerTest, RegistryAddIgnoresProblemsThatWereThereBefore)
+TEST(TepegozTest, RegistryAddIgnoresProblemsThatWereThereBefore)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Tepegoz:\n  Mode: Auto\nServices:\n  - ProcessName: old\n"
                               "    ExecutablePath: /nonexistent/old\n    WorkMode: Manual\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("extra", Service("extra"))});
     EXPECT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
 }
 
-TEST(ProcessManagerTest, RegistryAddOfANameTheMainFileHasIsRefused)
+TEST(TepegozTest, RegistryAddOfANameTheMainFileHasIsRefused)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("main", Service("main"))});
     EXPECT_EQ(answered.status, service_registry::ReplyStatus::Refused);
     EXPECT_NE(Field(answered, "message").find("main file"), std::string::npos);
 }
 
-TEST(ProcessManagerTest, RegistryAddOfARegisteredNameIsRefusedEvenWhenItsFileIsBroken)
+TEST(TepegozTest, RegistryAddOfARegisteredNameIsRefusedEvenWhenItsFileIsBroken)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
     folder.Write("services.d/extra.yaml", "ProcessName: other\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = StartedWithProblems(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = StartedWithProblems(folder);
     EXPECT_EQ(Ask(*params, {"add", WithDefinition("extra", Service("extra"))}).status,
               service_registry::ReplyStatus::Refused);
 }
 
-TEST(ProcessManagerTest, RegistryAddRefusesNamesThatCannotBeFilesOrAreReserved)
+TEST(TepegozTest, RegistryAddRefusesNamesThatCannotBeFilesOrAreReserved)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     EXPECT_EQ(Ask(*params, {"add", "name: a/b\ndefinition: {ExecutablePath: /bin/true}\n"}).status,
               service_registry::ReplyStatus::Refused);
     EXPECT_EQ(Ask(*params, {"add", "name: .hidden\ndefinition: {ExecutablePath: /bin/true}\n"}).status,
@@ -777,20 +777,20 @@ TEST(ProcessManagerTest, RegistryAddRefusesNamesThatCannotBeFilesOrAreReserved)
     EXPECT_FALSE(std::filesystem::exists(folder.MainFile().parent_path() / "services.d"));
 }
 
-TEST(ProcessManagerTest, RegistryAddOfADefinitionNamingAnotherServiceIsRefused)
+TEST(TepegozTest, RegistryAddOfADefinitionNamingAnotherServiceIsRefused)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     EXPECT_EQ(Ask(*params, {"add", WithDefinition("extra", Service("other"))}).status,
               service_registry::ReplyStatus::Refused);
 }
 
-TEST(ProcessManagerTest, RegistryDryRunWritesNothing)
+TEST(TepegozTest, RegistryDryRunWritesNothing)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"add", WithDefinition("extra", "ExecutablePath: /bin/true\n", "dryRun: true\n")});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "outcome"), "valid");
@@ -799,13 +799,13 @@ TEST(ProcessManagerTest, RegistryDryRunWritesNothing)
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"main"}));
 }
 
-TEST(ProcessManagerTest, RegistryReplaceOfARunningServiceWaitsForItsNextStart)
+TEST(TepegozTest, RegistryReplaceOfARunningServiceWaitsForItsNextStart)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/edited.yaml", Sleeper("edited", "60"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    process_manager::Process* edited = Find(*params, "edited");
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
+    tepegoz::Process* edited = Find(*params, "edited");
     ASSERT_NE(edited, nullptr);
     edited->StartProcess();
     const pid_t pid = edited->GetPid();
@@ -820,13 +820,13 @@ TEST(ProcessManagerTest, RegistryReplaceOfARunningServiceWaitsForItsNextStart)
     EXPECT_EQ(config_section::FindValue(ReadBack(RegisteredFile(folder, "edited")), "Args")->children[0].text, "61");
 }
 
-TEST(ProcessManagerTest, RegistryReplaceWithRestartRestartsARunningService)
+TEST(TepegozTest, RegistryReplaceWithRestartRestartsARunningService)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/edited.yaml", Sleeper("edited", "60"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    process_manager::Process* edited = Find(*params, "edited");
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
+    tepegoz::Process* edited = Find(*params, "edited");
     ASSERT_NE(edited, nullptr);
     edited->StartProcess();
 
@@ -840,28 +840,28 @@ TEST(ProcessManagerTest, RegistryReplaceWithRestartRestartsARunningService)
     EXPECT_TRUE(edited->IsStopping());
 }
 
-TEST(ProcessManagerTest, RegistryReplaceWithRestartOfAStoppedServiceAppliesTheDefinition)
+TEST(TepegozTest, RegistryReplaceWithRestartOfAStoppedServiceAppliesTheDefinition)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/edited.yaml", Service("edited"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(
         *params, {"replace", WithDefinition("edited", Service("edited") + "Args: [x]\n", "restart: true\n")});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "outcome"), "applied");
-    const process_manager::Process* edited = Find(*params, "edited");
+    const tepegoz::Process* edited = Find(*params, "edited");
     ASSERT_NE(edited, nullptr);
     EXPECT_FALSE(edited->HasDeferredDefinition());
     EXPECT_FALSE(edited->HasPid());
 }
 
-TEST(ProcessManagerTest, RegistryUpdateSetsAndUnsetsKeysAndKeepsTheRest)
+TEST(TepegozTest, RegistryUpdateSetsAndUnsetsKeysAndKeepsTheRest)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/edited.yaml", Service("edited") + "Args: [a, b]\nCwd: /tmp\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"update", "name: edited\nset: {MaxRestarts: 3}\nunset: [Cwd]\n"});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "outcome"), "waiting");
@@ -872,23 +872,23 @@ TEST(ProcessManagerTest, RegistryUpdateSetsAndUnsetsKeysAndKeepsTheRest)
     EXPECT_EQ(config_section::FindValue(written, "ExecutablePath")->text, "/bin/true");
 }
 
-TEST(ProcessManagerTest, RegistryUpdateThatChangesNothingSaysSo)
+TEST(TepegozTest, RegistryUpdateThatChangesNothingSaysSo)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/edited.yaml", Service("edited"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"update", "name: edited\nset: {ExecutablePath: /bin/true}\n"});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "outcome"), "unchanged");
 }
 
-TEST(ProcessManagerTest, RegistryUpdateOfABrokenFileIsRefusedAndReplaceRepairsIt)
+TEST(TepegozTest, RegistryUpdateOfABrokenFileIsRefusedAndReplaceRepairsIt)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/broken.yaml", "- not a mapping\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = StartedWithProblems(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = StartedWithProblems(folder);
     EXPECT_EQ(Ask(*params, {"update", "name: broken\nset: {Cwd: /tmp}\n"}).status, service_registry::ReplyStatus::Refused);
     const Answered answered = Ask(*params, {"replace", WithDefinition("broken", Service("broken"))});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
@@ -896,11 +896,11 @@ TEST(ProcessManagerTest, RegistryUpdateOfABrokenFileIsRefusedAndReplaceRepairsIt
     EXPECT_NE(Find(*params, "broken"), nullptr);
 }
 
-TEST(ProcessManagerTest, RegistryChangeOfAServiceOfTheMainFileIsRefused)
+TEST(TepegozTest, RegistryChangeOfAServiceOfTheMainFileIsRefused)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     EXPECT_EQ(Ask(*params, {"replace", WithDefinition("main", Service("main"))}).status,
               service_registry::ReplyStatus::Refused);
     EXPECT_EQ(Ask(*params, {"update", "name: main\nset: {Cwd: /tmp}\n"}).status, service_registry::ReplyStatus::Refused);
@@ -909,13 +909,13 @@ TEST(ProcessManagerTest, RegistryChangeOfAServiceOfTheMainFileIsRefused)
     EXPECT_NE(Field(removed, "message").find("main file"), std::string::npos);
 }
 
-TEST(ProcessManagerTest, RegistryRemoveDeletesTheFileAndRetiresTheService)
+TEST(TepegozTest, RegistryRemoveDeletesTheFileAndRetiresTheService)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services: []\n");
     folder.Write("services.d/gone.yaml", Sleeper("gone"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
-    process_manager::Process* gone = Find(*params, "gone");
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
+    tepegoz::Process* gone = Find(*params, "gone");
     ASSERT_NE(gone, nullptr);
     gone->StartProcess();
     const pid_t pid = gone->GetPid();
@@ -929,12 +929,12 @@ TEST(ProcessManagerTest, RegistryRemoveDeletesTheFileAndRetiresTheService)
     EXPECT_EQ(answered.retiring[0].GetPid(), pid);
 }
 
-TEST(ProcessManagerTest, RegistryRemoveOfANeededServiceIsRefusedUnlessForced)
+TEST(TepegozTest, RegistryRemoveOfANeededServiceIsRefusedUnlessForced)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", "Services:\n  - ProcessName: user\n    ExecutablePath: /bin/true\n    DependsOn: [needed]\n");
     folder.Write("services.d/needed.yaml", Service("needed"));
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered refused = Ask(*params, {"remove", "name: needed\n"});
     EXPECT_EQ(refused.status, service_registry::ReplyStatus::Refused);
     EXPECT_TRUE(HasProblemWith(refused, "user depends on 'needed'")) << refused.json;
@@ -946,21 +946,21 @@ TEST(ProcessManagerTest, RegistryRemoveOfANeededServiceIsRefusedUnlessForced)
     EXPECT_EQ(Names(params->processList), (std::vector<std::string>{"user"}));
 }
 
-TEST(ProcessManagerTest, RegistryRemoveOfAnUnknownServiceIsRefused)
+TEST(TepegozTest, RegistryRemoveOfAnUnknownServiceIsRefused)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     EXPECT_EQ(Ask(*params, {"remove", "name: nobody\n"}).status, service_registry::ReplyStatus::Refused);
 }
 
-TEST(ProcessManagerTest, RegistryListGivesEveryServiceWithItsOrigin)
+TEST(TepegozTest, RegistryListGivesEveryServiceWithItsOrigin)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
     folder.Write("services.d/extra.yaml", Service("extra"));
     folder.Write("services.d/broken.yaml", "ProcessName: other\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = StartedWithProblems(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = StartedWithProblems(folder);
     const Answered answered = Ask(*params, {"list"});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     const config_section::ConfigValue* services = config_section::FindValue(answered.body, "services");
@@ -975,12 +975,12 @@ TEST(ProcessManagerTest, RegistryListGivesEveryServiceWithItsOrigin)
     EXPECT_NE(config_section::FindValue(services->children[2], "problem"), nullptr);
 }
 
-TEST(ProcessManagerTest, RegistryShowGivesTheDefinitionAsJsonAndYaml)
+TEST(TepegozTest, RegistryShowGivesTheDefinitionAsJsonAndYaml)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
     folder.Write("services.d/extra.yaml", Service("extra") + "Args: [\"8080\"]\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"show", "name: extra\n"});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "origin"), "registered");
@@ -992,56 +992,56 @@ TEST(ProcessManagerTest, RegistryShowGivesTheDefinitionAsJsonAndYaml)
     EXPECT_EQ(Ask(*params, {"show", "name: nobody\n"}).status, service_registry::ReplyStatus::Refused);
 }
 
-TEST(ProcessManagerTest, RegistryShowOfABrokenFileGivesItsText)
+TEST(TepegozTest, RegistryShowOfABrokenFileGivesItsText)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
     folder.Write("services.d/broken.yaml", "ProcessName: other\n");
-    std::unique_ptr<process_manager::ProcessManagerParams> params = StartedWithProblems(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = StartedWithProblems(folder);
     const Answered answered = Ask(*params, {"show", "name: broken\n"});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok) << answered.json;
     EXPECT_EQ(Field(answered, "fileText"), "ProcessName: other\n");
     EXPECT_FALSE(Field(answered, "problem").empty());
 }
 
-TEST(ProcessManagerTest, RegistryRequestThatIsNotUnderstoodIsAnError)
+TEST(TepegozTest, RegistryRequestThatIsNotUnderstoodIsAnError)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"frobnicate"});
     EXPECT_EQ(answered.status, service_registry::ReplyStatus::Error);
     EXPECT_FALSE(Field(answered, "message").empty());
 }
 
-TEST(ProcessManagerTest, RegistryVersionAnswersTheProtocolVersion)
+TEST(TepegozTest, RegistryVersionAnswersTheProtocolVersion)
 {
     const ScratchFolder folder{};
     folder.Write("main.yaml", auto_main);
-    std::unique_ptr<process_manager::ProcessManagerParams> params = Started(folder);
+    std::unique_ptr<tepegoz::TepegozParams> params = Started(folder);
     const Answered answered = Ask(*params, {"version"});
     ASSERT_EQ(answered.status, service_registry::ReplyStatus::Ok);
     EXPECT_EQ(Field(answered, "version"), std::to_string(service_registry::protocol_version));
 }
 
-TEST(ProcessManagerTest, RegistryWithoutASourceIsRefused)
+TEST(TepegozTest, RegistryWithoutASourceIsRefused)
 {
-    process_manager::ProcessManagerParams params{};
-    std::vector<process_manager::Process> retiring;
-    const service_registry::Reply reply = process_manager::ProcessManager::HandleRegistry(
+    tepegoz::TepegozParams params{};
+    std::vector<tepegoz::Process> retiring;
+    const service_registry::Reply reply = tepegoz::Tepegoz::HandleRegistry(
         params, retiring, {"add", "name: extra\ndefinition: {ExecutablePath: /bin/true}\n"});
     EXPECT_EQ(reply.status, service_registry::ReplyStatus::Refused);
 }
 
-TEST(ProcessManagerTest, RemoteRegistrationIsReadFromTheManagerSection)
+TEST(TepegozTest, RemoteRegistrationIsReadFromTheManagerSection)
 {
     std::vector<std::string> problems;
     config_section::ConfigValue document{};
     std::string error;
     ASSERT_EQ(config_section::ParseConfigText("Tepegoz:\n  RemoteRegistration: true\nServices: []\n", document, error),
               config_section::LoadCode::Ok);
-    EXPECT_TRUE(process_manager::ProcessManager::GenerateConfig(document, &problems)->remoteRegistration);
+    EXPECT_TRUE(tepegoz::Tepegoz::GenerateConfig(document, &problems)->remoteRegistration);
     EXPECT_TRUE(problems.empty());
     ASSERT_EQ(config_section::ParseConfigText("Services: []\n", document, error), config_section::LoadCode::Ok);
-    EXPECT_FALSE(process_manager::ProcessManager::GenerateConfig(document, &problems)->remoteRegistration);
+    EXPECT_FALSE(tepegoz::Tepegoz::GenerateConfig(document, &problems)->remoteRegistration);
 }

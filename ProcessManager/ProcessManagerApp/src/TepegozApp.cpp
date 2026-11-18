@@ -1,5 +1,5 @@
-#include "ProcessManagerApp.hpp"
-#include "ProcessManager.hpp"
+#include "TepegozApp.hpp"
+#include "Tepegoz.hpp"
 #include "ConfigSection.hpp"
 #include "ConfigSource.hpp"
 #include "Logger.hpp"
@@ -7,22 +7,22 @@
 #include <iostream>
 #include <zmq.hpp>
 
-namespace process_manager
+namespace tepegoz
 {
 
-bool ProcessManagerApp::StartUp(const std::string& configPath)
+bool TepegozApp::StartUp(const std::string& configPath)
 {
     InitializeLogger();
 
-    logger::Info("TEPEGOZ VERSION: %s", PROCESS_MANAGER_VERSION_FULL);
+    logger::Info("TEPEGOZ VERSION: %s", TEPEGOZ_VERSION_FULL);
 
 
     // A file named with --config is used as given; only the installed one may fall back to the share directory.
     const bool givenPath = !configPath.empty();
     config_source::LoadedConfig loaded;
-    if (!LoadConfig(givenPath ? configPath : PROCESS_MANAGER_CONFIG_FILE, !givenPath, loaded)) return false;
+    if (!LoadConfig(givenPath ? configPath : TEPEGOZ_CONFIG_FILE, !givenPath, loaded)) return false;
 
-    if (!InitializeProcessManager(loaded))
+    if (!InitializeManager(loaded))
     {
         logger::Error("Process Manager failed to start");
         return false;
@@ -31,20 +31,20 @@ bool ProcessManagerApp::StartUp(const std::string& configPath)
     return true;
 }
 
-void ProcessManagerApp::Run()
+void TepegozApp::Run()
 {
-    if (processManager) processManager->Run();
+    if (manager) manager->Run();
     logger::Debug("Exiting the supervision thread");
 }
 
 // Called from main's signal thread: only asks the supervision thread to stop; Run() returns after.
-void ProcessManagerApp::ShutdownSignalReceived(int signum)
+void TepegozApp::ShutdownSignalReceived(int signum)
 {
     logger::Warning(" ==== SHUTDOWN SIGNAL RECEIVED signum: %d  ==== ", signum);
-    if (processManager) processManager->RequestStop();
+    if (manager) manager->RequestStop();
 }
 
-bool ProcessManagerApp::LoadConfig(const std::string& configPath, bool allowFallback, config_source::LoadedConfig& loaded)
+bool TepegozApp::LoadConfig(const std::string& configPath, bool allowFallback, config_source::LoadedConfig& loaded)
 {
     std::string path = configPath;
     std::string error;
@@ -52,7 +52,7 @@ bool ProcessManagerApp::LoadConfig(const std::string& configPath, bool allowFall
     if (read == config_source::LoadCode::MainFileNotOpened && allowFallback)
     {
         logger::Warning("Config file could not found at %s", path.c_str());
-        path = PROCESS_MANAGER_SHARE_DIR"tepegoz.yaml";
+        path = TEPEGOZ_SHARE_DIR"tepegoz.yaml";
         logger::Warning("Searching config file at %s", path.c_str());
         read = config_source::ConfigSource{path}.Load(loaded, error); // its services.d is the one in the share directory
     }
@@ -85,19 +85,19 @@ bool ProcessManagerApp::LoadConfig(const std::string& configPath, bool allowFall
     return true;
 }
 
-bool ProcessManagerApp::InitializeProcessManager(const config_source::LoadedConfig& loaded)
+bool TepegozApp::InitializeManager(const config_source::LoadedConfig& loaded)
 {
     for (const std::string& problem : loaded.problems) // services.d and its files, logged like the problems below
     {
         logger::Error("%s", problem.c_str());
     }
-    auto config = ProcessManager::GenerateConfig(loaded.document);
+    auto config = Tepegoz::GenerateConfig(loaded.document);
     config->source = config_source::ConfigSource{loaded.mainFile};
     config->origins = loaded.origins;
     logger::Logger::Instance().SetMinimum(config->logLevel);
     try
     {
-        processManager = std::make_unique<ProcessManager>(std::move(config));
+        manager = std::make_unique<Tepegoz>(std::move(config));
     }
     catch (const zmq::error_t& e)
     {
@@ -105,38 +105,38 @@ bool ProcessManagerApp::InitializeProcessManager(const config_source::LoadedConf
         logger::Error("Process manager sockets could not be opened: %s", e.what());
         return false;
     }
-    auto cycleDetected = !processManager->StartUp();
+    auto cycleDetected = !manager->StartUp();
     return !cycleDetected;
 }
 
-void ProcessManagerApp::InitializeLogger()
+void TepegozApp::InitializeLogger()
 {
     logger::Settings settings;
-    settings.directory = PROCESS_MANAGER_LOG_DIR;
+    settings.directory = TEPEGOZ_LOG_FOLDER;
     const auto opened = logger::Logger::Instance().Open(settings);
     if (opened == logger::OpenCode::DirectoryFailed)
     {
-        logger::Error("File log directory creation error: \"%s\"; logging to the console only", PROCESS_MANAGER_LOG_DIR);
+        logger::Error("File log directory creation error: \"%s\"; logging to the console only", TEPEGOZ_LOG_FOLDER);
     }
     else if (opened == logger::OpenCode::FileFailed)
     {
-        logger::Error("No log file could be opened in \"%s\"; logging to the console only", PROCESS_MANAGER_LOG_DIR);
+        logger::Error("No log file could be opened in \"%s\"; logging to the console only", TEPEGOZ_LOG_FOLDER);
     }
 }
 
-void ProcessManagerApp::TearDown()
+void TepegozApp::TearDown()
 {
-    if (processManager) processManager->TearDown();
+    if (manager) manager->TearDown();
     logger::Logger::Instance().Close();
 }
 
-bool ProcessManagerApp::ValidateConfig(std::string config)
+bool TepegozApp::ValidateConfig(std::string config)
 {
     config_source::LoadedConfig loaded;
     if (!LoadConfig(config, false, loaded)) { return false; }
     std::vector<std::string> err = loaded.problems; // services.d and its files
-    auto params = ProcessManager::GenerateConfig(loaded.document, &err); // keys, values and service names
-    ProcessManager::SortByDependencies(err, params->processList); // duplicates, missing dependencies, cycles
+    auto params = Tepegoz::GenerateConfig(loaded.document, &err); // keys, values and service names
+    Tepegoz::SortByDependencies(err, params->processList); // duplicates, missing dependencies, cycles
     for (const auto& process : params->processList)
     {
         process.CheckConfig(err);
@@ -145,14 +145,14 @@ bool ProcessManagerApp::ValidateConfig(std::string config)
     return err.empty();
 }
 
-void ProcessManagerApp::PrintDependencyGraph(std::string config)
+void TepegozApp::PrintDependencyGraph(std::string config)
 {
     config_source::LoadedConfig loaded;
     if (!LoadConfig(config, false, loaded)) return;
 
     std::vector<std::string> err = loaded.problems; // services.d and its files
-    auto params = ProcessManager::GenerateConfig(loaded.document, &err);
-    ProcessManager::SortByDependencies(err, params->processList);
+    auto params = Tepegoz::GenerateConfig(loaded.document, &err);
+    Tepegoz::SortByDependencies(err, params->processList);
 
     PrintErrors(err);
     std::cout << "Start Order:" << std::endl;
@@ -163,7 +163,7 @@ void ProcessManagerApp::PrintDependencyGraph(std::string config)
     }
 }
 
-void ProcessManagerApp::PrintErrors(const std::vector<std::string>& errList)
+void TepegozApp::PrintErrors(const std::vector<std::string>& errList)
 {
     if (!errList.empty())
     {
@@ -182,4 +182,4 @@ void ProcessManagerApp::PrintErrors(const std::vector<std::string>& errList)
     }
 }
 
-} // namespace process_manager
+} // namespace tepegoz

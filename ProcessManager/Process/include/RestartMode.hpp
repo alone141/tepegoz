@@ -1,5 +1,5 @@
 #pragma once
-namespace process_manager
+namespace tepegoz
 {
 
 enum class RestartMode
@@ -10,4 +10,4 @@ enum class RestartMode
     UnlessStopped
 };
 
-} // namespace process_manager
+} // namespace tepegoz

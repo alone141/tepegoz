@@ -24,7 +24,7 @@ long long EpochMs(std::chrono::high_resolution_clock::time_point time)
 
 void PrintReports(const zmq::message_t& message)
 {
-    const std::size_t size = sizeof(process_manager::DetailedHealthReport);
+    const std::size_t size = sizeof(tepegoz::DetailedHealthReport);
     if (message.size() % size != 0)
     {
         std::printf("bad report of %zu bytes\n", message.size());
@@ -37,14 +37,14 @@ void PrintReports(const zmq::message_t& message)
     std::printf("report %lld %zu\n", now, count);
     for (std::size_t i = 0; i < count; ++i)
     {
-        process_manager::DetailedHealthReport report{};
+        tepegoz::DetailedHealthReport report{};
         std::memcpy(&report, static_cast<const char*>(message.data()) + i * size, size);
         report.processName[sizeof(report.processName) - 1] = '\0';
-        const process_manager::RuntimeHealth& health = report.runtimeHealth;
+        const tepegoz::RuntimeHealth& health = report.runtimeHealth;
         // pending: 1 while a reloaded definition waits for the service's next start.
         std::printf("service pid=%d state=%s restarts=%d missed=%d cpu_us=%llu mem=%llu started_ms=%lld pending=%d "
                     "name=%s\n",
-                    static_cast<int>(report.pid), process_manager::RuntimeStateToString(health.state), health.restartCount,
+                    static_cast<int>(report.pid), tepegoz::RuntimeStateToString(health.state), health.restartCount,
                     health.missedBeats, static_cast<unsigned long long>(report.cpuUsageInUsec),
                     static_cast<unsigned long long>(report.memoryUsageInBytes), EpochMs(health.startTime),
                     static_cast<int>(health.restartToApply), report.processName);

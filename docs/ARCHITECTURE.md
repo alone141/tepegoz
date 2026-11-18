@@ -48,7 +48,7 @@ The manager is a single process that runs the services as its children. All comm
 | `ProcessManager/CommandWatch/` | Follows a command in the health reports: where each service stands. |
 | `ProcessManager/StatusClient/` | The command line's ZeroMQ side: reads the reports for `status`, sends a command and follows it, and sends a reload and tells its answer. |
 | `ProcessManager/RegistryClient/` | The command line's `add`, `set`, `replace`, `remove`, `show` and `list`: builds a registry request from the words typed, sends it, and words the answer and the `list` table. |
-| `ProcessManager/ProcessManager/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `ProcessManagerCommands.hpp` holds the command format and the endpoints. |
+| `ProcessManager/ProcessManager/` | The supervision loop: services, commands, start order, health reports, GPU attribution. `TepegozCommands.hpp` holds the command format and the endpoints. |
 | `ProcessManager/Process/` | One service: its settings, starting, stopping, reaping, heartbeats, output, cgroups (`ProcessGroupBuilder`), and the health report layout (`RuntimeHealth.hpp`). |
 | `ProcessManager/NetworkManager/` | The ZeroMQ message broker. |
 | `ProcessManager/ConfigSection/` | Reads the YAML configuration (the only code that uses fkYAML) and reports problems. |
@@ -66,8 +66,8 @@ The manager is a single process that runs the services as its children. All comm
 
 Every module has the same layout and naming: `.hpp` headers in `include/`, sources in `src/`, tests in
 `tests/`, 4-space indentation, PascalCase types and functions, camelCase members. Two things still set
-the original modules (`ProcessManagerApp`, `ProcessManager`, `Process`) apart from the newer ones:
-- **Namespace:** they share `process_manager`, where each newer module has a snake_case namespace of
+the original modules (`TepegozApp`, `Tepegoz`, `Process`) apart from the newer ones:
+- **Namespace:** they share `tepegoz`, where each newer module has a snake_case namespace of
   its own.
 - **Public API:** their functions have no Doxygen blocks yet, and they report a failure as a `bool` or
   an `int` code, where the newer modules return `enum class` codes.
@@ -81,7 +81,7 @@ the original modules (`ProcessManagerApp`, `ProcessManager`, `Process`) apart fr
 | main | Start-up, then waits for the supervision thread and shuts down | — |
 | signal | `sigwait` for SIGINT and SIGTERM. The first asks the supervision loop to stop; the second ends the process at once. | — |
 | broker | `NetworkManager::Run`: relays messages between connected sockets | ROUTER `*:5557`, PUB `*:6669` |
-| supervision | `ProcessManager::Run`: the loop below | DEALER `BPM` → 5557, PUB `*:6667`, ROUTER `127.0.0.1:6671` (`*:6671` with `RemoteRegistration: true`) |
+| supervision | `Tepegoz::Run`: the loop below | DEALER `BPM` → 5557, PUB `*:6667`, ROUTER `127.0.0.1:6671` (`*:6671` with `RemoteRegistration: true`) |
 | GPU monitor | Samples NVML every second; a call stuck for 2 s is left behind | — |
 | journal server | Answers journal reads, running `journalctl` or `systemctl` for each, and lists the services' cgroups | ROUTER `*:6670` |
 
@@ -96,9 +96,9 @@ receives them; services start with no signal blocked.
 3. **Configuration:** loaded with `ConfigSource`: the main file, then each file of `services.d`, whose service is
    appended to the main file's `Services`. The merged document is kept, because `--start all` rebuilds the
    services from it. So are the loader and where each service was defined, for a reload.
-4. **Services:** `ProcessManager::GenerateConfig` turns the document into a list of `Process` objects. Unknown
+4. **Services:** `Tepegoz::GenerateConfig` turns the document into a list of `Process` objects. Unknown
    keys and bad values are logged.
-5. **Sockets and cgroups:** the `ProcessManager` constructor binds 6667 and connects its DEALER to the
+5. **Sockets and cgroups:** the `Tepegoz` constructor binds 6667 and connects its DEALER to the
    broker's address (the broker itself is bound in step 7; ZeroMQ connects once it is). Then `ProcessGroupBuilder` creates `task_pm`, moves the manager into it, and enables the `cpu` and
    `memory` controllers for the service cgroups.
 6. **Order and checks:** the services are sorted by `DependsOn` (Kahn's algorithm), and each one's paths are
@@ -110,7 +110,7 @@ receives them; services start with no signal blocked.
 
 ### The supervision loop
 
-One pass of `ProcessManager::Run`:
+One pass of `Tepegoz::Run`:
 
 ```
 start the next due Auto service (start order, grace periods, restart delays)
@@ -347,7 +347,7 @@ socket.send_multipart([b"add", json.dumps({"name": "camera", "definition": defin
 status, reply = socket.recv_multipart()   # b"ok", and the JSON object
 ```
 
-How a change is made, in `ProcessManager::HandleRegistry` (`ProcessManagerRegistry.cpp`):
+How a change is made, in `Tepegoz::HandleRegistry` (`TepegozRegistry.cpp`):
 1. **Name:** `service_registry::CheckName` and the reserved names. `replace`, `update` and `remove` need a file
    in `services.d` and refuse a service of the main file; `add` refuses a name that is anywhere already.
 2. **Definition:** `add` and `replace` take the one sent; `update` reads the file and applies `unset`, then `set`.
@@ -358,7 +358,7 @@ How a change is made, in `ProcessManager::HandleRegistry` (`ProcessManagerRegist
    dependencies of the services it was told to leave.
 4. **Writing:** `ServiceFiles` keeps a `Snapshot` of the file and the folder, then writes the YAML `EmitYaml` made
    to a dot file, which is renamed over the file, or deletes the file.
-5. **Reloading:** `ProcessManager::Reload` applies the change. If the reload is refused, the snapshot is put back.
+5. **Reloading:** `Tepegoz::Reload` applies the change. If the reload is refused, the snapshot is put back.
 6. **Answering:** the outcome is what the reload did to the service. `start: false` makes the new service Manual
    in the manager only, and `restart: true` restarts a running service, or applies the waiting definition of a
    stopped one.
@@ -582,7 +582,7 @@ The service registry has a worker of its own, so a registry that does not answer
 | `config_source_tests` | 41 | The main file with `services.d`: order, skipped and ignored files, origins, reading again, the folder's state, whether the main file takes services, and files overridden for a check |
 | `service_registry_tests` | 43 | Registry requests and their parameters, names, editing a definition, YAML that reads back the same, JSON, problems a change adds, writing, removing and restoring files |
 | `reload_plan_tests` | 33 | The reload plan: added, removed, changed, kept, unchanged and skipped services, what counts as a change, and the refusals |
-| `process_manager_tests` | 54 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all`; the reload of the manager's services, and every registry request, without its sockets |
+| `tepegoz_tests` | 54 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all`; the reload of the manager's services, and every registry request, without its sockets |
 | `process_tests` | 97 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health, a deferred definition |
 | `logger_tests` | 13 | Levels, files, rotation, journald prefixes |
 | `network_manager_tests` | 35 | Routing, identities, status and events |

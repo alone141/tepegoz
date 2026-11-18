@@ -1,4 +1,4 @@
-#include "ProcessManager.hpp"
+#include "Tepegoz.hpp"
 
 #include "ConfigSection.hpp"
 #include "ConfigSource.hpp"
@@ -16,7 +16,7 @@
 #include <zmq.hpp>
 #include <zmq_addon.hpp>
 
-namespace process_manager
+namespace tepegoz
 {
 
 namespace
@@ -104,7 +104,7 @@ bool IsEnabled(const config_section::ConfigValue& entry)
 }
 
 // A pointer, not std::optional: the caller acts on the service in the list.
-Process* FindProcess(ProcessManagerParams& params, std::string_view name)
+Process* FindProcess(TepegozParams& params, std::string_view name)
 {
     for (Process& process : params.processList)
     {
@@ -130,8 +130,8 @@ bool MainDefines(const config_source::LoadedConfig& loaded, std::string_view nam
 std::vector<std::string> ProblemsOf(const config_source::LoadedConfig& loaded)
 {
     std::vector<std::string> problems = loaded.problems;
-    const std::unique_ptr<ProcessManagerParams> built = ProcessManager::GenerateConfig(loaded.document, &problems);
-    ProcessManager::SortByDependencies(problems, built->processList);
+    const std::unique_ptr<TepegozParams> built = Tepegoz::GenerateConfig(loaded.document, &problems);
+    Tepegoz::SortByDependencies(problems, built->processList);
     for (const Process& process : built->processList)
     {
         process.CheckConfig(problems);
@@ -213,7 +213,7 @@ std::string ReloadCounts(const ReloadReport& report)
     return counts.Text();
 }
 
-void AddRunState(service_registry::JsonObject& object, ProcessManagerParams& params, std::string_view name)
+void AddRunState(service_registry::JsonObject& object, TepegozParams& params, std::string_view name)
 {
     const Process* process = FindProcess(params, name);
     object.AddFlag("loaded", process != nullptr);
@@ -228,7 +228,7 @@ std::string OriginWord(config_source::OriginKind kind)
     return kind == config_source::OriginKind::MainFile ? "main" : "registered";
 }
 
-service_registry::Reply ReplyVersion(const ProcessManagerParams& params)
+service_registry::Reply ReplyVersion(const TepegozParams& params)
 {
     service_registry::JsonObject object = Header(service_registry::Operation::Version);
     object.AddText("message", "service registry, protocol version " + std::to_string(service_registry::protocol_version));
@@ -236,7 +236,7 @@ service_registry::Reply ReplyVersion(const ProcessManagerParams& params)
     return service_registry::Reply{service_registry::ReplyStatus::Ok, object.Text()};
 }
 
-service_registry::Reply ReplyList(ProcessManagerParams& params)
+service_registry::Reply ReplyList(TepegozParams& params)
 {
     const service_registry::Operation operation = service_registry::Operation::List;
     config_source::LoadedConfig loaded{};
@@ -289,7 +289,7 @@ service_registry::Reply ReplyList(ProcessManagerParams& params)
     return service_registry::Reply{service_registry::ReplyStatus::Ok, object.Text()};
 }
 
-service_registry::Reply ReplyShow(ProcessManagerParams& params, const service_registry::Request& request)
+service_registry::Reply ReplyShow(TepegozParams& params, const service_registry::Request& request)
 {
     const service_registry::Operation operation = service_registry::Operation::Show;
     const std::string& name = request.name;
@@ -346,7 +346,7 @@ service_registry::Reply ReplyShow(ProcessManagerParams& params, const service_re
     return Refuse(operation, name, "there is no service named " + Quoted(name), {});
 }
 
-service_registry::Reply ReplyWritten(ProcessManagerParams& params, const service_registry::Request& request,
+service_registry::Reply ReplyWritten(TepegozParams& params, const service_registry::Request& request,
                                      const Written& written)
 {
     const std::string& name = request.name;
@@ -427,7 +427,7 @@ service_registry::Reply ReplyWritten(ProcessManagerParams& params, const service
     return service_registry::Reply{service_registry::ReplyStatus::Ok, object.Text()};
 }
 
-service_registry::Reply Change(ProcessManagerParams& params, std::vector<Process>& retiring,
+service_registry::Reply Change(TepegozParams& params, std::vector<Process>& retiring,
                                const service_registry::Request& request)
 {
     const service_registry::Operation operation = request.operation;
@@ -627,7 +627,7 @@ service_registry::Reply Change(ProcessManagerParams& params, std::vector<Process
     const Process* before = FindProcess(params, name);
     written.wasLoaded = before != nullptr;
     written.wasRunning = before != nullptr && before->HasPid();
-    written.report = ProcessManager::Reload(params, retiring);
+    written.report = Tepegoz::Reload(params, retiring);
     if (written.report.result != ReloadResult::Applied)
     {
         const bool restored = files.Restore(snapshot) == service_registry::StoreCode::Ok;
@@ -641,7 +641,7 @@ service_registry::Reply Change(ProcessManagerParams& params, std::vector<Process
 
 } // namespace
 
-service_registry::Reply ProcessManager::HandleRegistry(ProcessManagerParams& params, std::vector<Process>& retiring,
+service_registry::Reply Tepegoz::HandleRegistry(TepegozParams& params, std::vector<Process>& retiring,
                                                        const std::vector<std::string>& frames)
 {
     service_registry::Request request{};
@@ -668,7 +668,7 @@ service_registry::Reply ProcessManager::HandleRegistry(ProcessManagerParams& par
     }
 }
 
-void ProcessManager::BindRegistry()
+void Tepegoz::BindRegistry()
 {
     const bool remote = processParams->remoteRegistration;
     const char* endpoint = remote ? comm::registry_port_remote : comm::registry_port_local;
@@ -695,7 +695,7 @@ void ProcessManager::BindRegistry()
     logger::Info("Service registry listens on %s, for this machine only", endpoint);
 }
 
-void ProcessManager::ServeRegistry()
+void Tepegoz::ServeRegistry()
 {
     for (int i = 0; i < max_requests_per_cycle; ++i)
     {
@@ -745,4 +745,4 @@ void ProcessManager::ServeRegistry()
     }
 }
 
-} // namespace process_manager
+} // namespace tepegoz

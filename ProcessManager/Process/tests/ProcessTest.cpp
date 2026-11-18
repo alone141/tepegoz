@@ -52,7 +52,7 @@ std::string Service(std::string_view name, std::string_view program, std::string
     return yaml;
 }
 
-int Configure(process_manager::Process& process, const std::string& yaml)
+int Configure(tepegoz::Process& process, const std::string& yaml)
 {
     config_section::ConfigValue value{};
     std::string error{};
@@ -83,12 +83,12 @@ bool WaitUntil(Predicate done, std::chrono::milliseconds limit = wait_limit)
     return true;
 }
 
-bool WaitForExit(process_manager::Process& process)
+bool WaitForExit(tepegoz::Process& process)
 {
     return WaitUntil([&process]() { return process.ReapExit() > 0; });
 }
 
-bool WaitForStop(process_manager::Process& process)
+bool WaitForStop(tepegoz::Process& process)
 {
     return WaitUntil(
         [&process]()
@@ -99,7 +99,7 @@ bool WaitForStop(process_manager::Process& process)
         stop_limit);
 }
 
-bool StopAndWait(process_manager::Process& process)
+bool StopAndWait(tepegoz::Process& process)
 {
     process.Stop();
     return WaitForStop(process);
@@ -107,7 +107,7 @@ bool StopAndWait(process_manager::Process& process)
 
 // The time from just before the reap that sees the exit until NeedsRestart first says yes. The exit time the
 // process records is at or after the start of this measure, so the result is never shorter than the real wait.
-std::optional<std::chrono::milliseconds> TimeUntilRestartDue(process_manager::Process& process)
+std::optional<std::chrono::milliseconds> TimeUntilRestartDue(tepegoz::Process& process)
 {
     Clock::time_point beforeReap{};
     const bool reaped = WaitUntil(
@@ -132,7 +132,7 @@ std::optional<std::chrono::milliseconds> TimeUntilRestartDue(process_manager::Pr
 // Starts a program that ends by itself and tells whether the restart policy wants it back, with no delay.
 bool RestartDueAfterExit(std::string_view restartMode, std::string_view program, std::string_view args)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     const std::string settings = "Args: [" + std::string{args} + "]\nRestartMode: " + std::string{restartMode} +
                                  "\nRestartDelayMs: 0\nWorkMode: Auto\n";
     if (Configure(process, Service("ender", program, settings)) != 1)
@@ -155,7 +155,7 @@ bool RestartDueAfterExit(std::string_view restartMode, std::string_view program,
 // and tells whether the restart policy wants it back, with no delay.
 bool RestartDueAfterCleanExitReapedElsewhere(std::string_view restartMode)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     const std::string settings = "Args: [--code, 0, --after-ms, 0]\nRestartMode: " + std::string{restartMode} +
                                  "\nRestartDelayMs: 0\n";
     if (Configure(process, Service("stolen", "tpz_exit", settings)) != 1)
@@ -175,7 +175,7 @@ bool RestartDueAfterCleanExitReapedElsewhere(std::string_view restartMode)
 
     EXPECT_EQ(process.ReapExit(), pid);
     EXPECT_FALSE(process.HasPid());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Stopped);
     return process.NeedsRestart();
 }
 
@@ -287,7 +287,7 @@ private:
 // Whether this machine lets the Process module create its per-service cgroup directory.
 bool CgroupsAvailable()
 {
-    const std::filesystem::path parent = process_manager::ProcessGroupBuilder::GetInstance().GetParentGroupPath();
+    const std::filesystem::path parent = tepegoz::ProcessGroupBuilder::GetInstance().GetParentGroupPath();
     const std::filesystem::path probe = parent / ("task_probe_" + std::to_string(::getpid()));
     std::error_code error{};
     const bool created = std::filesystem::create_directories(probe, error);
@@ -305,27 +305,27 @@ bool CgroupsAvailable()
 
 TEST(ProcessTest, UpdateArgsReturnsOneForCompleteSection)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     EXPECT_EQ(Configure(process, Service("complete", "tpz_steady", "")), 1);
     EXPECT_EQ(process.GetProcessName(), "complete");
 }
 
 TEST(ProcessTest, UpdateArgsReturnsMinusOneWithoutProcessName)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     EXPECT_EQ(Configure(process, "ExecutablePath: " + Program("tpz_steady") + "\n"), -1);
     EXPECT_EQ(process.GetProcessName(), "");
 }
 
 TEST(ProcessTest, UpdateArgsReturnsMinusOneWithoutExecutablePath)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     EXPECT_EQ(Configure(process, "ProcessName: nopath\n"), -1);
 }
 
 TEST(ProcessTest, UpdateArgsKeepsProcessNameWhenItReturnsMinusOneForMissingExecutablePath)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     EXPECT_EQ(Configure(process, "ProcessName: half\nDependsOn: [other]\n"), -1);
     EXPECT_EQ(process.GetProcessName(), "half");
     EXPECT_TRUE(process.GetDependencyList().empty());
@@ -335,7 +335,7 @@ TEST(ProcessTest, UpdateArgsReturnsMinusTwoForReservedNames)
 {
     for (const std::string name : {"pm", "all", "BPM", "PMC", "GUI", "a/b"})
     {
-        process_manager::Process process{};
+        tepegoz::Process process{};
         EXPECT_EQ(Configure(process, "ProcessName: " + name + "\nExecutablePath: " + Program("tpz_steady") + "\n"), -2)
             << name;
     }
@@ -343,12 +343,12 @@ TEST(ProcessTest, UpdateArgsReturnsMinusTwoForReservedNames)
 
 TEST(ProcessTest, UpdateArgsReturnsMinusThreeForAKeyInBothSpellings)
 {
-    process_manager::Process environment{};
+    tepegoz::Process environment{};
     EXPECT_EQ(Configure(environment, Service("both", "tpz_steady",
                                              "EnvironmentVariables: {A: 1}\nEnviromentVariables: {B: 2}\n")),
               -3);
 
-    process_manager::Process inherit{};
+    tepegoz::Process inherit{};
     EXPECT_EQ(Configure(inherit, Service("both", "tpz_steady",
                                          "InheritParentEnvironment: false\nInheritParentEnviroment: true\n")),
               -3);
@@ -356,38 +356,38 @@ TEST(ProcessTest, UpdateArgsReturnsMinusThreeForAKeyInBothSpellings)
 
 TEST(ProcessTest, ReservedNameIsReportedBeforeMissingExecutablePath)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     EXPECT_EQ(Configure(process, "ProcessName: pm\n"), -2);
 }
 
 TEST(ProcessTest, ReservedNamesAreCaseSensitiveAndIncludeEmptyName)
 {
-    EXPECT_TRUE(process_manager::ProcessConfigParams::IsReservedName(""));
-    EXPECT_TRUE(process_manager::ProcessConfigParams::IsReservedName("x/y"));
-    EXPECT_TRUE(process_manager::ProcessConfigParams::IsReservedName("GUI"));
-    EXPECT_FALSE(process_manager::ProcessConfigParams::IsReservedName("PM"));
-    EXPECT_FALSE(process_manager::ProcessConfigParams::IsReservedName("gui"));
-    EXPECT_FALSE(process_manager::ProcessConfigParams::IsReservedName("service"));
+    EXPECT_TRUE(tepegoz::ProcessConfigParams::IsReservedName(""));
+    EXPECT_TRUE(tepegoz::ProcessConfigParams::IsReservedName("x/y"));
+    EXPECT_TRUE(tepegoz::ProcessConfigParams::IsReservedName("GUI"));
+    EXPECT_FALSE(tepegoz::ProcessConfigParams::IsReservedName("PM"));
+    EXPECT_FALSE(tepegoz::ProcessConfigParams::IsReservedName("gui"));
+    EXPECT_FALSE(tepegoz::ProcessConfigParams::IsReservedName("service"));
 }
 
 TEST(ProcessTest, DependencyListReadsSequenceOrSpaceSeparatedText)
 {
-    process_manager::Process listed{};
+    tepegoz::Process listed{};
     ASSERT_EQ(Configure(listed, Service("listed", "tpz_steady", "DependsOn: [first, second]\n")), 1);
     EXPECT_EQ(listed.GetDependencyList(), (std::vector<std::string>{"first", "second"}));
 
-    process_manager::Process text{};
+    tepegoz::Process text{};
     ASSERT_EQ(Configure(text, Service("text", "tpz_steady", "DependsOn: \"first  second\"\n")), 1);
     EXPECT_EQ(text.GetDependencyList(), (std::vector<std::string>{"first", "second"}));
 
-    process_manager::Process none{};
+    tepegoz::Process none{};
     ASSERT_EQ(Configure(none, Service("none", "tpz_steady", "")), 1);
     EXPECT_TRUE(none.GetDependencyList().empty());
 }
 
 TEST(ProcessTest, RestartAndStdioDefaultsAreTheDocumentedOnes)
 {
-    const process_manager::ProcessConfigParams defaults{};
+    const tepegoz::ProcessConfigParams defaults{};
     EXPECT_EQ(defaults.restartPolicy.maxRestarts, 5);
     EXPECT_FALSE(defaults.stdioPolicy.stdioAppend);
     EXPECT_EQ(defaults.stdioPolicy.stdioFilePath, std::filesystem::path{"/tmp/output.txt"});
@@ -401,9 +401,9 @@ TEST(ProcessTest, DefaultsInTheHeadersMatchTheConfigReader)
               config_section::LoadCode::Ok)
         << error;
     config_section::ConfigSection section{value, "test service"};
-    process_manager::ProcessConfigParams read{};
+    tepegoz::ProcessConfigParams read{};
     ASSERT_EQ(read.UpdateArgs(section), 1);
-    const process_manager::ProcessConfigParams defaults{};
+    const tepegoz::ProcessConfigParams defaults{};
 
     EXPECT_EQ(read.args, defaults.args);
     EXPECT_EQ(read.cwd, defaults.cwd);
@@ -435,12 +435,12 @@ TEST(ProcessTest, DefaultsInTheHeadersMatchTheConfigReader)
 
 TEST(ProcessTest, DefaultConstructedProcessHasNoPidAndNeedsStart)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     EXPECT_EQ(process.GetPid(), -1);
     EXPECT_FALSE(process.HasPid());
     EXPECT_TRUE(process.NeedsStart());
     EXPECT_FALSE(process.NeedsRestart());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Unknown);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Unknown);
     EXPECT_FALSE(process.IsRunning());
     EXPECT_FALSE(process.IsStarting());
     EXPECT_FALSE(process.IsStopping());
@@ -454,15 +454,15 @@ TEST(ProcessTest, DefaultConstructedProcessHasNoPidAndNeedsStart)
 
 TEST(ProcessTest, WorkModeDefaultsToManualAndFollowsConfigAndSetWorkMode)
 {
-    process_manager::Process unset{};
+    tepegoz::Process unset{};
     ASSERT_EQ(Configure(unset, Service("unset", "tpz_steady", "")), 1);
     EXPECT_TRUE(unset.IsWorkingManually());
-    unset.SetWorkMode(process_manager::WorkMode::Auto);
+    unset.SetWorkMode(tepegoz::WorkMode::Auto);
     EXPECT_FALSE(unset.IsWorkingManually());
-    unset.SetWorkMode(process_manager::WorkMode::Manual);
+    unset.SetWorkMode(tepegoz::WorkMode::Manual);
     EXPECT_TRUE(unset.IsWorkingManually());
 
-    process_manager::Process automatic{};
+    tepegoz::Process automatic{};
     ASSERT_EQ(Configure(automatic, Service("automatic", "tpz_steady", "WorkMode: auto\n")), 1);
     EXPECT_FALSE(automatic.IsWorkingManually());
 }
@@ -470,7 +470,7 @@ TEST(ProcessTest, WorkModeDefaultsToManualAndFollowsConfigAndSetWorkMode)
 TEST(ProcessTest, CheckConfigAcceptsValidService)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("valid", "tpz_steady",
                                          "Cwd: " + scratch.Path().string() + "\n" + scratch.FileSettings("out.txt"))),
               1);
@@ -481,7 +481,7 @@ TEST(ProcessTest, CheckConfigAcceptsValidService)
 
 TEST(ProcessTest, CheckConfigReportsEachProblemOfMissingExecutableOnce)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, "ProcessName: svc\nExecutablePath: /nonexistent/tpz_missing\n"), 1);
     std::vector<std::string> errors{"earlier"};
     process.CheckConfig(errors);
@@ -496,7 +496,7 @@ TEST(ProcessTest, CheckConfigReportsEachProblemOfMissingExecutableOnce)
 TEST(ProcessTest, CheckConfigReportsDirectoryAsExecutable)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, "ProcessName: svc\nExecutablePath: " + scratch.Path().string() + "\n"), 1);
     std::vector<std::string> errors{};
     process.CheckConfig(errors);
@@ -511,7 +511,7 @@ TEST(ProcessTest, CheckConfigAcceptsSymlinkToExecutable)
     const ScratchDirectory scratch{};
     const std::filesystem::path link = scratch.Path() / "steady_link";
     std::filesystem::create_symlink(Program("tpz_steady"), link);
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, "ProcessName: svc\nExecutablePath: " + link.string() + "\n"), 1);
     std::vector<std::string> errors{};
     process.CheckConfig(errors);
@@ -523,7 +523,7 @@ TEST(ProcessTest, CheckConfigReportsDanglingSymlinkAsMissingExecutable)
     const ScratchDirectory scratch{};
     const std::filesystem::path link = scratch.Path() / "dangling_link";
     std::filesystem::create_symlink(scratch.Path() / "nowhere", link);
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, "ProcessName: svc\nExecutablePath: " + link.string() + "\n"), 1);
     std::vector<std::string> errors{};
     process.CheckConfig(errors);
@@ -536,7 +536,7 @@ TEST(ProcessTest, CheckConfigReportsDanglingSymlinkAsMissingExecutable)
 
 TEST(ProcessTest, CheckConfigReportsMissingCwdTwice)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("svc", "tpz_steady", "Cwd: /nonexistent/tpz\n")), 1);
     std::vector<std::string> errors{};
     process.CheckConfig(errors);
@@ -545,7 +545,7 @@ TEST(ProcessTest, CheckConfigReportsMissingCwdTwice)
 
 TEST(ProcessTest, CheckConfigReportsMissingStdioFileDirectory)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("svc", "tpz_steady", "StdioMode: File\nStdioFilePath: /nonexistent/tpz/out.txt\n")),
               1);
     std::vector<std::string> errors{};
@@ -555,7 +555,7 @@ TEST(ProcessTest, CheckConfigReportsMissingStdioFileDirectory)
 
 TEST(ProcessTest, CheckConfigReportsEmptyStdioFilePath)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("svc", "tpz_steady", "StdioMode: File\nStdioFilePath: \"\"\n")), 1);
     std::vector<std::string> errors{};
     process.CheckConfig(errors);
@@ -564,7 +564,7 @@ TEST(ProcessTest, CheckConfigReportsEmptyStdioFilePath)
 
 TEST(ProcessTest, CheckConfigIgnoresStdioFilePathOutsideFileMode)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("svc", "tpz_steady", "StdioMode: Pipe\nStdioFilePath: /nonexistent/tpz/out.txt\n")),
               1);
     std::vector<std::string> errors{};
@@ -575,20 +575,20 @@ TEST(ProcessTest, CheckConfigIgnoresStdioFilePathOutsideFileMode)
 TEST(ProcessTest, HealthReportTruncatesNameAndCarriesPidAndState)
 {
     const std::string longName(70, 'n');
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service(longName, "tpz_steady", "")), 1);
 
-    const process_manager::DetailedHealthReport idle = process.GetHealthReport();
+    const tepegoz::DetailedHealthReport idle = process.GetHealthReport();
     EXPECT_EQ(std::string{idle.processName}, std::string(63, 'n'));
     EXPECT_EQ(idle.pid, -1);
-    EXPECT_EQ(idle.runtimeHealth.state, process_manager::RuntimeState::Unknown);
-    EXPECT_EQ(idle.gpuUsage.state, process_manager::GpuUsageState::NotSampled);
+    EXPECT_EQ(idle.runtimeHealth.state, tepegoz::RuntimeState::Unknown);
+    EXPECT_EQ(idle.gpuUsage.state, tepegoz::GpuUsageState::NotSampled);
 
     process.StartProcess();
     ASSERT_TRUE(process.HasPid());
-    const process_manager::DetailedHealthReport running = process.GetHealthReport();
+    const tepegoz::DetailedHealthReport running = process.GetHealthReport();
     EXPECT_EQ(running.pid, process.GetPid());
-    EXPECT_EQ(running.runtimeHealth.state, process_manager::RuntimeState::Running);
+    EXPECT_EQ(running.runtimeHealth.state, tepegoz::RuntimeState::Running);
     EXPECT_EQ(running.runtimeHealth.restartCount, 0);
     EXPECT_EQ(running.runtimeHealth.missedBeats, 0);
     EXPECT_EQ(running.runtimeHealth.startTime, process.GetRuntimeStats().startTime);
@@ -599,7 +599,7 @@ TEST(ProcessTest, HealthReportTruncatesNameAndCarriesPidAndState)
 
 TEST(ProcessTest, StartGivesRunningProcessWithPidInItsOwnProcessGroup)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("start", "tpz_steady", "")), 1);
     process.StartProcess();
     ASSERT_TRUE(process.HasPid());
@@ -609,7 +609,7 @@ TEST(ProcessTest, StartGivesRunningProcessWithPidInItsOwnProcessGroup)
     EXPECT_EQ(::getpgid(pid), pid);
     EXPECT_TRUE(process.IsRunning());
     EXPECT_FALSE(process.IsStarting());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Running);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Running);
     EXPECT_FALSE(process.NeedsStart());
     EXPECT_FALSE(process.NeedsRestart());
     EXPECT_EQ(process.ReapExit(), -1);
@@ -624,7 +624,7 @@ TEST(ProcessTest, StartGivesRunningProcessWithPidInItsOwnProcessGroup)
 
 TEST(ProcessTest, StartAndAutoRestartWhileRunningKeepTheSamePid)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("twice", "tpz_steady", "")), 1);
     process.StartProcess();
     const pid_t pid = process.GetPid();
@@ -637,7 +637,7 @@ TEST(ProcessTest, StartAndAutoRestartWhileRunningKeepTheSamePid)
 
 TEST(ProcessTest, CleanExitIsReapedAndShownAsStopped)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("clean", "tpz_exit", "Args: [--code, 0, --after-ms, 0]\nRestartDelayMs: 0\n")), 1);
     process.StartProcess();
     const pid_t pid = process.GetPid();
@@ -653,7 +653,7 @@ TEST(ProcessTest, CleanExitIsReapedAndShownAsStopped)
     EXPECT_EQ(reaped, pid);
     EXPECT_FALSE(process.HasPid());
     EXPECT_EQ(process.GetPid(), -1);
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Stopped);
     EXPECT_FALSE(process.IsRunning());
     EXPECT_EQ(process.ReapExit(), 0);
     EXPECT_FALSE(process.NeedsStart());
@@ -664,7 +664,7 @@ TEST(ProcessTest, CleanExitIsReapedAndShownAsStopped)
 
 TEST(ProcessTest, RestartCountCountsEveryLaunchAfterTheFirst)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("counted", "tpz_exit", "Args: [--code, 0, --after-ms, 0]\n")), 1);
     process.StartProcess();
     EXPECT_EQ(process.GetRuntimeStats().restartCount, 0);
@@ -679,7 +679,7 @@ TEST(ProcessTest, RestartCountCountsEveryLaunchAfterTheFirst)
 
 TEST(ProcessTest, MissingExecutableStartsAsRunningThenExitsAsFailure)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, "ProcessName: missing\nExecutablePath: /nonexistent/tpz_missing\nStdioMode: NullDevice\n"
                                  "RestartDelayMs: 0\n"),
               1);
@@ -692,7 +692,7 @@ TEST(ProcessTest, MissingExecutableStartsAsRunningThenExitsAsFailure)
 
 TEST(ProcessTest, UnwritableStdioFileMakesChildExitAsFailure)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("nofile", "tpz_steady",
                                          "StdioMode: File\nStdioFilePath: /nonexistent/tpz/out.txt\nRestartDelayMs: 0\n")),
               1);
@@ -742,7 +742,7 @@ TEST(ProcessTest, NeverDoesNotRestartAfterFailure)
 
 TEST(ProcessTest, AlwaysRestartsAfterStop)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("always", "tpz_steady", "RestartMode: Always\nRestartDelayMs: 0\n")), 1);
     process.StartProcess();
     ASSERT_TRUE(StopAndWait(process));
@@ -757,7 +757,7 @@ TEST(ProcessTest, UnlessStoppedRestartsAfterCleanExit)
 
 TEST(ProcessTest, UnlessStoppedKeepsStoppedServiceStoppedUntilTheNextStart)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("unless", "tpz_exit",
                                          "Args: [--code, 0, --after-ms, 300]\nRestartMode: UnlessStopped\n"
                                          "RestartDelayMs: 0\n")),
@@ -774,7 +774,7 @@ TEST(ProcessTest, UnlessStoppedKeepsStoppedServiceStoppedUntilTheNextStart)
 
 TEST(ProcessTest, UnlessStoppedStopWhileARestartIsDueCancelsIt)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("unless", "tpz_exit",
                                          "Args: [--code, 3, --after-ms, 0]\nRestartMode: UnlessStopped\n"
                                          "RestartDelayMs: 0\n")),
@@ -800,7 +800,7 @@ TEST(ProcessTest, AlwaysRestartsExitReapedElsewhere)
 
 TEST(ProcessTest, RestartDelayGrowsByBackoffMultiplierOnEachRestartInARow)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("backoff", "tpz_exit",
                                          "Args: [--code, 3, --after-ms, 0]\nRestartDelayMs: 100\nBackoffMultiplier: 2\n"
                                          "MaxRestarts: 5\n")),
@@ -829,7 +829,7 @@ TEST(ProcessTest, RestartDelayGrowsByBackoffMultiplierOnEachRestartInARow)
 
 TEST(ProcessTest, RestartLimitStopsAutomaticRestarts)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("limited", "tpz_exit",
                                          "Args: [--code, 3, --after-ms, 0]\nRestartDelayMs: 10\nBackoffMultiplier: 1\n"
                                          "MaxRestarts: 2\nWorkMode: Auto\n")),
@@ -849,7 +849,7 @@ TEST(ProcessTest, RestartLimitStopsAutomaticRestarts)
 
 TEST(ProcessTest, ManualStartRearmsRestartLimit)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("rearmed", "tpz_exit",
                                          "Args: [--code, 3, --after-ms, 0]\nRestartDelayMs: 10\nBackoffMultiplier: 1\n"
                                          "MaxRestarts: 1\n")),
@@ -867,7 +867,7 @@ TEST(ProcessTest, ManualStartRearmsRestartLimit)
 
 TEST(ProcessTest, ZeroMaxRestartsNeverRestarts)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("zero", "tpz_exit",
                                          "Args: [--code, 3, --after-ms, 0]\nRestartDelayMs: 0\nMaxRestarts: 0\n")),
               1);
@@ -878,7 +878,7 @@ TEST(ProcessTest, ZeroMaxRestartsNeverRestarts)
 
 TEST(ProcessTest, RunAsLongAsRestartResetMsStartsANewRestartSeries)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("reset", "tpz_exit",
                                          "Args: [--code, 3, --after-ms, 0]\nRestartDelayMs: 0\nMaxRestarts: 1\n"
                                          "RestartResetMs: 0\n")),
@@ -898,19 +898,19 @@ TEST(ProcessTest, RunAsLongAsRestartResetMsStartsANewRestartSeries)
 
 TEST(ProcessTest, StopWithoutPidDoesNothing)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("idle", "tpz_steady", "")), 1);
     process.Stop();
     EXPECT_FALSE(process.IsStopping());
     process.RequestStopAndEscalate();
     EXPECT_FALSE(process.IsStopping());
     process.AdvanceStop();
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Unknown);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Unknown);
 }
 
 TEST(ProcessTest, StopEndsServiceThatHonoursSigtermWithoutForceKill)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("graceful", "tpz_steady",
                                          "Args: [--stop-delay-ms, 100]\nForceKillTimeoutMs: 5000\nRestartDelayMs: 0\n")),
               1);
@@ -928,14 +928,14 @@ TEST(ProcessTest, StopEndsServiceThatHonoursSigtermWithoutForceKill)
     EXPECT_LT(took, std::chrono::milliseconds{4000});
     EXPECT_FALSE(process.HasPid());
     EXPECT_FALSE(IsAlive(pid));
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Stopped);
     EXPECT_FALSE(process.NeedsRestart());
 }
 
 TEST(ProcessTest, StopKillsServiceAndChildIgnoringSigtermAfterForceKillTimeout)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("stubborn", "tpz_stubborn",
                                          "Args: [--child, --period-ms, 50]\nForceKillTimeoutMs: 1000\nRestartDelayMs: 0\n" +
                                              scratch.FileSettings("out.txt"))),
@@ -968,7 +968,7 @@ TEST(ProcessTest, StopKillsServiceAndChildIgnoringSigtermAfterForceKillTimeout)
 TEST(ProcessTest, ForceKillTimeoutBelowOneSecondIsRaisedToOneSecond)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("quick", "tpz_stubborn",
                                          "Args: [--period-ms, 50]\nForceKillTimeoutMs: 1\n" + scratch.FileSettings("out.txt"))),
               1);
@@ -983,7 +983,7 @@ TEST(ProcessTest, ForceKillTimeoutBelowOneSecondIsRaisedToOneSecond)
 TEST(ProcessTest, StopKillsChildrenInTheServiceProcessGroup)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("forker", "tpz_forker",
                                          "Args: [--children, 2, --period-ms, 50, --child-lifetime-ms, 5000]\n" +
                                              scratch.FileSettings("out.txt"))),
@@ -1011,7 +1011,7 @@ TEST(ProcessTest, WithoutCgroupsStopLeavesSetsidEscapeeRunning)
     }
 
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("escape", "tpz_forker",
                                          "Args: [--children, 1, --escapee, --period-ms, 50, --child-lifetime-ms, 5000]\n" +
                                              scratch.FileSettings("out.txt"))),
@@ -1033,7 +1033,7 @@ TEST(ProcessTest, WithoutCgroupsStopLeavesSetsidEscapeeRunning)
 TEST(ProcessTest, ChildrenOfLeaderThatExitsOnItsOwnAreStoppedBeforeARestart)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("orphans", "tpz_forker",
                                          "Args: [--children, 1, --crash-parent-after-ms, 200, --period-ms, 50, "
                                          "--child-lifetime-ms, 5000]\nRestartDelayMs: 0\n" +
@@ -1046,7 +1046,7 @@ TEST(ProcessTest, ChildrenOfLeaderThatExitsOnItsOwnAreStoppedBeforeARestart)
     ASSERT_GT(child, 0);
 
     EXPECT_TRUE(process.IsStopping());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Stopped);
     EXPECT_FALSE(process.NeedsRestart());
     const bool stopped = WaitForStop(process);
     const bool childAlive = IsAlive(child);
@@ -1060,7 +1060,7 @@ TEST(ProcessTest, ChildrenOfLeaderThatExitsOnItsOwnAreStoppedBeforeARestart)
 TEST(ProcessTest, StartWhileLeftoversAreStoppedWaitsForThem)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("waits", "tpz_forker",
                                          "Args: [--children, 1, --crash-parent-after-ms, 200, --period-ms, 50, "
                                          "--child-lifetime-ms, 5000]\n" +
@@ -1088,7 +1088,7 @@ TEST(ProcessTest, StartWhileLeftoversAreStoppedWaitsForThem)
 
 TEST(ProcessTest, RestartRequestSurvivesTheStopUntilTheNextStart)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("restart", "tpz_steady", "")), 1);
     process.StartProcess();
     const pid_t first = process.GetPid();
@@ -1108,7 +1108,7 @@ TEST(ProcessTest, RestartRequestSurvivesTheStopUntilTheNextStart)
 
 TEST(ProcessTest, StopDuringRestartClearsTheRestartRequest)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("cancel", "tpz_steady", "")), 1);
     process.StartProcess();
     process.Restart();
@@ -1121,7 +1121,7 @@ TEST(ProcessTest, StopDuringRestartClearsTheRestartRequest)
 
 TEST(ProcessTest, RequestStopAndEscalateBlocksUntilStopped)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("blocking", "tpz_steady", "")), 1);
     process.StartProcess();
     const pid_t pid = process.GetPid();
@@ -1129,14 +1129,14 @@ TEST(ProcessTest, RequestStopAndEscalateBlocksUntilStopped)
     EXPECT_FALSE(process.IsStopping());
     EXPECT_FALSE(process.HasPid());
     EXPECT_FALSE(IsAlive(pid));
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Stopped);
 }
 
 TEST(ProcessTest, DestructorStopsTheRunningChild)
 {
     pid_t pid = -1;
     {
-        process_manager::Process process{};
+        tepegoz::Process process{};
         ASSERT_EQ(Configure(process, Service("scoped", "tpz_steady", "")), 1);
         process.StartProcess();
         pid = process.GetPid();
@@ -1148,12 +1148,12 @@ TEST(ProcessTest, DestructorStopsTheRunningChild)
 
 TEST(ProcessTest, MoveConstructionHandsTheChildOver)
 {
-    process_manager::Process source{};
+    tepegoz::Process source{};
     ASSERT_EQ(Configure(source, Service("moved", "tpz_steady", "")), 1);
     source.StartProcess();
     const pid_t pid = source.GetPid();
 
-    process_manager::Process target{std::move(source)};
+    tepegoz::Process target{std::move(source)};
     EXPECT_FALSE(source.HasPid());
     EXPECT_EQ(source.GetPid(), -1);
     EXPECT_EQ(target.GetPid(), pid);
@@ -1164,12 +1164,12 @@ TEST(ProcessTest, MoveConstructionHandsTheChildOver)
 
 TEST(ProcessTest, MoveAssignmentStopsTheChildItReplaces)
 {
-    process_manager::Process source{};
+    tepegoz::Process source{};
     ASSERT_EQ(Configure(source, Service("incoming", "tpz_steady", "")), 1);
     source.StartProcess();
     const pid_t incoming = source.GetPid();
 
-    process_manager::Process target{};
+    tepegoz::Process target{};
     ASSERT_EQ(Configure(target, Service("replaced", "tpz_steady", "")), 1);
     target.StartProcess();
     const pid_t replaced = target.GetPid();
@@ -1185,7 +1185,7 @@ TEST(ProcessTest, MoveAssignmentStopsTheChildItReplaces)
 TEST(ProcessTest, MoveConstructionHandsOverTheStopOfLeftovers)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process source{};
+    tepegoz::Process source{};
     ASSERT_EQ(Configure(source, Service("handed", "tpz_forker",
                                         "Args: [--children, 1, --crash-parent-after-ms, 200, --period-ms, 50, "
                                         "--child-lifetime-ms, 5000]\n" +
@@ -1196,7 +1196,7 @@ TEST(ProcessTest, MoveConstructionHandsOverTheStopOfLeftovers)
     ASSERT_TRUE(WaitForExit(source));
     ASSERT_TRUE(source.IsStopping());
 
-    process_manager::Process target{std::move(source)};
+    tepegoz::Process target{std::move(source)};
     EXPECT_FALSE(source.IsStopping());
     EXPECT_TRUE(target.IsStopping());
     const bool stopped = WaitForStop(target);
@@ -1209,7 +1209,7 @@ TEST(ProcessTest, MoveConstructionHandsOverTheStopOfLeftovers)
 TEST(ProcessTest, ArgsListKeepsItemWithSpacesInOnePiece)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("args", "tpz_env", "Args: [--show, HOME, two words, plain]\n" +
                                                                scratch.FileSettings("out.txt"))),
               1);
@@ -1225,7 +1225,7 @@ TEST(ProcessTest, ArgsListKeepsItemWithSpacesInOnePiece)
 TEST(ProcessTest, ArgsTextIsSplitAtSpaces)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process,
                         Service("args", "tpz_env", "Args: --show HOME two words\n" + scratch.FileSettings("out.txt"))),
               1);
@@ -1240,7 +1240,7 @@ TEST(ProcessTest, ArgsTextIsSplitAtSpaces)
 TEST(ProcessTest, OverrideStartupArgsReplacesConfiguredArgs)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("override", "tpz_env", "Args: [--show, HOME, extra]\n" +
                                                                    scratch.FileSettings("out.txt"))),
               1);
@@ -1256,7 +1256,7 @@ TEST(ProcessTest, EnvironmentVariablesAreAddedToTheInheritedEnvironment)
 {
     const ScratchDirectory scratch{};
     ASSERT_EQ(::setenv("TPZ_INHERITED", "yes", 1), 0);
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("env", "tpz_env",
                                          "Args: [--show, TPZ_COLOR, --show, TPZ_EMPTY, --show, TPZ_INHERITED]\n"
                                          "EnvironmentVariables: {TPZ_COLOR: blue, TPZ_EMPTY: \"\"}\n" +
@@ -1274,7 +1274,7 @@ TEST(ProcessTest, EnvironmentVariablesAreAddedToTheInheritedEnvironment)
 TEST(ProcessTest, ClearedEnvironmentHoldsOnlyTheConfiguredVariables)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("cleared", "tpz_env",
                                          "Args: [--all-env]\nInheritParentEnvironment: false\n"
                                          "EnvironmentVariables: TPZ_ONLY=this\n" +
@@ -1291,7 +1291,7 @@ TEST(ProcessTest, ClearedEnvironmentHoldsOnlyTheConfiguredVariables)
 TEST(ProcessTest, OldSpellingsOfTheEnvironmentKeysStillWork)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("old", "tpz_env",
                                          "Args: [--all-env]\nInheritParentEnviroment: false\n"
                                          "EnviromentVariables: TPZ_ONLY=this\n" +
@@ -1307,7 +1307,7 @@ TEST(ProcessTest, OldSpellingsOfTheEnvironmentKeysStillWork)
 TEST(ProcessTest, UseDisplaySetsDisplayAndXauthority)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("display", "tpz_env",
                                          "UseDisplay: true\nDisplay: \":7\"\nXAuthority: /tmp/tpz.Xauthority\n" +
                                              scratch.FileSettings("out.txt"))),
@@ -1322,7 +1322,7 @@ TEST(ProcessTest, UseDisplaySetsDisplayAndXauthority)
 TEST(ProcessTest, CwdBecomesTheChildWorkingDirectory)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("cwd", "tpz_env",
                                          "Cwd: " + scratch.Path().string() + "\n" + scratch.FileSettings("out.txt"))),
               1);
@@ -1336,7 +1336,7 @@ TEST(ProcessTest, MissingCwdStillStartsTheChildInTheManagerDirectory)
 {
     const ScratchDirectory scratch{};
     const WorkingDirectory here{scratch.Path()};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("nocwd", "tpz_env", "Cwd: /nonexistent/tpz\n" + scratch.FileSettings("out.txt"))),
               1);
     process.StartProcess();
@@ -1350,7 +1350,7 @@ TEST(ProcessTest, StdioFileIsTruncatedOnEachStartByDefault)
 {
     const ScratchDirectory scratch{};
     const std::filesystem::path out = scratch.Path() / "out.txt";
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("truncated", "tpz_env", scratch.FileSettings("out.txt"))), 1);
     process.StartProcess();
     ASSERT_TRUE(WaitForText(out, "env JOURNAL_STREAM"));
@@ -1366,7 +1366,7 @@ TEST(ProcessTest, StdioAppendKeepsEarlierOutput)
 {
     const ScratchDirectory scratch{};
     const std::filesystem::path out = scratch.Path() / "out.txt";
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("appended", "tpz_env", "StdioAppend: true\n" + scratch.FileSettings("out.txt"))),
               1);
     process.StartProcess();
@@ -1386,7 +1386,7 @@ TEST(ProcessTest, PipeOutputIsLoggedLineByLineUnderTheServiceName)
     ASSERT_NE(log, nullptr);
     logger::Logger::Instance().SetConsole(log, false);
 
-    process_manager::Process process{};
+    tepegoz::Process process{};
     const int configured = Configure(process, Service("piped", "tpz_env", "Args: [--show, TPZ_PIPE]\nStdioMode: Pipe\n"));
     process.StartProcess();
     const bool logged = WaitUntil(
@@ -1423,12 +1423,12 @@ TEST(ProcessTest, PipeOutputIsLoggedLineByLineUnderTheServiceName)
 
 TEST(ProcessTest, HealthCheckStartsInStartingStateUntilFirstHeartbeat)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("health", "tpz_steady", "CheckHealth: true\nGracePeriodMs: 2000\n")), 1);
     process.StartProcess();
     EXPECT_TRUE(process.IsStarting());
     EXPECT_FALSE(process.IsRunning());
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Starting);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Starting);
 
     process.HeartbeatReceived();
     EXPECT_TRUE(process.IsRunning());
@@ -1438,21 +1438,21 @@ TEST(ProcessTest, HealthCheckStartsInStartingStateUntilFirstHeartbeat)
 
 TEST(ProcessTest, HeartbeatWithoutHealthCheckChangesNothing)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("nohealth", "tpz_steady", "GracePeriodMs: 0\nHeartbeatPeriodMs: 1\n")), 1);
     process.StartProcess();
-    const process_manager::RuntimeHealth before = process.GetRuntimeStats();
+    const tepegoz::RuntimeHealth before = process.GetRuntimeStats();
     std::this_thread::sleep_for(std::chrono::milliseconds{20});
     process.HeartbeatReceived();
     process.CheckHeartbeat();
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Running);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Running);
     EXPECT_EQ(process.GetRuntimeStats().lastSeen, before.lastSeen);
     EXPECT_EQ(process.GetRuntimeStats().missedBeats, 0);
 }
 
 TEST(ProcessTest, GracePeriodEndsAfterGracePeriodMs)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("grace", "tpz_steady", "GracePeriodMs: 100\n")), 1);
     const std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     process.StartProcess();
@@ -1463,7 +1463,7 @@ TEST(ProcessTest, GracePeriodEndsAfterGracePeriodMs)
 
 TEST(ProcessTest, ZeroGracePeriodMeansNoGracePeriod)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("nograce", "tpz_steady", "GracePeriodMs: 0\n")), 1);
     process.StartProcess();
     EXPECT_FALSE(process.IsGracePeriod());
@@ -1471,7 +1471,7 @@ TEST(ProcessTest, ZeroGracePeriodMeansNoGracePeriod)
 
 TEST(ProcessTest, CheckHeartbeatDoesNothingDuringGracePeriod)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("graceful", "tpz_steady",
                                          "CheckHealth: true\nGracePeriodMs: 5000\nHeartbeatPeriodMs: 1\n"
                                          "MissedHeartbeatThreshold: 1\n")),
@@ -1487,7 +1487,7 @@ TEST(ProcessTest, CheckHeartbeatDoesNothingDuringGracePeriod)
 
 TEST(ProcessTest, MissedHeartbeatsAfterGracePeriodMakeServiceUnhealthy)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("silent", "tpz_steady",
                                          "CheckHealth: true\nGracePeriodMs: 0\nHeartbeatPeriodMs: 20\n"
                                          "MissedHeartbeatThreshold: 3\n")),
@@ -1500,7 +1500,7 @@ TEST(ProcessTest, MissedHeartbeatsAfterGracePeriodMakeServiceUnhealthy)
         [&process]()
         {
             process.CheckHeartbeat();
-            return process.GetRuntimeState() == process_manager::RuntimeState::Unhealthy;
+            return process.GetRuntimeState() == tepegoz::RuntimeState::Unhealthy;
         }));
     EXPECT_GE(Clock::now() - begin, std::chrono::milliseconds{60});
     EXPECT_GE(process.GetRuntimeStats().missedBeats, 3);
@@ -1511,7 +1511,7 @@ TEST(ProcessTest, MissedHeartbeatsAfterGracePeriodMakeServiceUnhealthy)
 
 TEST(ProcessTest, HeartbeatBringsUnhealthyServiceBackToRunning)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("flaky", "tpz_steady",
                                          "CheckHealth: true\nGracePeriodMs: 0\nHeartbeatPeriodMs: 10\n"
                                          "MissedHeartbeatThreshold: 1\n")),
@@ -1521,7 +1521,7 @@ TEST(ProcessTest, HeartbeatBringsUnhealthyServiceBackToRunning)
         [&process]()
         {
             process.CheckHeartbeat();
-            return process.GetRuntimeState() == process_manager::RuntimeState::Unhealthy;
+            return process.GetRuntimeState() == tepegoz::RuntimeState::Unhealthy;
         }));
     const Clock::time_point lastSeenBefore = process.GetRuntimeStats().lastSeen;
 
@@ -1534,7 +1534,7 @@ TEST(ProcessTest, HeartbeatBringsUnhealthyServiceBackToRunning)
 
 TEST(ProcessTest, UnhealthyServiceNeedsRestartAndItsStopCountsAsFailureDespiteCleanExit)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("unresponsive", "tpz_steady",
                                          "CheckHealth: true\nGracePeriodMs: 0\nHeartbeatPeriodMs: 10\n"
                                          "MissedHeartbeatThreshold: 2\nRestartDelayMs: 0\n")),
@@ -1544,7 +1544,7 @@ TEST(ProcessTest, UnhealthyServiceNeedsRestartAndItsStopCountsAsFailureDespiteCl
         [&process]()
         {
             process.CheckHeartbeat();
-            return process.GetRuntimeState() == process_manager::RuntimeState::Unhealthy;
+            return process.GetRuntimeState() == tepegoz::RuntimeState::Unhealthy;
         }));
     EXPECT_TRUE(process.NeedsRestart());
 
@@ -1552,7 +1552,7 @@ TEST(ProcessTest, UnhealthyServiceNeedsRestartAndItsStopCountsAsFailureDespiteCl
     EXPECT_TRUE(process.IsStopping());
     EXPECT_FALSE(process.IsRestartRequested());
     ASSERT_TRUE(WaitForStop(process));
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Stopped);
     EXPECT_TRUE(process.NeedsRestart());
 
     process.AutoRestart();
@@ -1563,7 +1563,7 @@ TEST(ProcessTest, UnhealthyServiceNeedsRestartAndItsStopCountsAsFailureDespiteCl
 
 TEST(ProcessTest, NeverModeDoesNotRestartUnhealthyService)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("ignored", "tpz_steady",
                                          "CheckHealth: true\nGracePeriodMs: 0\nHeartbeatPeriodMs: 10\n"
                                          "MissedHeartbeatThreshold: 1\nRestartMode: Never\n")),
@@ -1573,14 +1573,14 @@ TEST(ProcessTest, NeverModeDoesNotRestartUnhealthyService)
         [&process]()
         {
             process.CheckHeartbeat();
-            return process.GetRuntimeState() == process_manager::RuntimeState::Unhealthy;
+            return process.GetRuntimeState() == tepegoz::RuntimeState::Unhealthy;
         }));
     EXPECT_FALSE(process.NeedsRestart());
 }
 
 TEST(ProcessTest, SuspendedHealthCheckIgnoresHeartbeatsUntilNextStart)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("suspended", "tpz_steady",
                                          "CheckHealth: true\nGracePeriodMs: 0\nHeartbeatPeriodMs: 1\n"
                                          "MissedHeartbeatThreshold: 1\n")),
@@ -1603,7 +1603,7 @@ TEST(ProcessTest, SuspendedHealthCheckIgnoresHeartbeatsUntilNextStart)
 
 TEST(ProcessTest, HeartbeatsAfterExitLeaveServiceStopped)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("late", "tpz_steady",
                                          "CheckHealth: true\nGracePeriodMs: 0\nHeartbeatPeriodMs: 1\n"
                                          "MissedHeartbeatThreshold: 1\n")),
@@ -1612,9 +1612,9 @@ TEST(ProcessTest, HeartbeatsAfterExitLeaveServiceStopped)
     ASSERT_TRUE(StopAndWait(process));
     std::this_thread::sleep_for(std::chrono::milliseconds{10});
     process.HeartbeatReceived();
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Stopped);
     process.CheckHeartbeat();
-    EXPECT_EQ(process.GetRuntimeState(), process_manager::RuntimeState::Stopped);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Stopped);
     EXPECT_EQ(process.GetRuntimeStats().missedBeats, 0);
 }
 
@@ -1627,14 +1627,14 @@ TEST(ProcessTest, WithoutCgroupsUsageIsZeroAndCgroupMembershipIsIgnored)
         GTEST_SKIP() << "cgroups are available here; this pins the path without them";
     }
 
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("nocgroup", "tpz_steady", "")), 1);
     process.StartProcess();
     ASSERT_TRUE(process.HasPid());
     EXPECT_TRUE(process.IsRunning());
 
     const std::filesystem::path own =
-        process_manager::ProcessGroupBuilder::GetInstance().GetParentGroupPath() / "task_nocgroup";
+        tepegoz::ProcessGroupBuilder::GetInstance().GetParentGroupPath() / "task_nocgroup";
     EXPECT_FALSE(std::filesystem::exists(own));
     EXPECT_FALSE(process.IsMember(1, 1, own / "child"));
     EXPECT_EQ(process.GetMemoryUsageInBytes(), 0u);
@@ -1658,7 +1658,7 @@ TEST(ProcessTest, UsageBeforeFirstStartIsReadRelativeToTheWorkingDirectory)
     }
 
     const WorkingDirectory here{scratch.Path()};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("relative", "tpz_steady", "")), 1);
     EXPECT_EQ(process.GetMemoryUsageInBytes(), 4242u);
     EXPECT_EQ(process.GetCpuUsageInUsec(), 777u);
@@ -1669,7 +1669,7 @@ TEST(ProcessTest, UsageBeforeFirstStartIsReadRelativeToTheWorkingDirectory)
 TEST(ProcessTest, DeferredDefinitionLeavesTheRunningChildAlone)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("waits", "tpz_env", "Args: [--show, TPZ_OLD]\n" +
                                                                scratch.FileSettings("out.txt"))),
               1);
@@ -1678,7 +1678,7 @@ TEST(ProcessTest, DeferredDefinitionLeavesTheRunningChildAlone)
     const pid_t pid = process.GetPid();
     const Clock::time_point started = process.GetRuntimeStats().startTime;
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("waits", "tpz_env", "Args: [--show, TPZ_NEW]\n" + scratch.FileSettings("out.txt"))),
               1);
     process.DeferDefinition(next);
@@ -1692,11 +1692,11 @@ TEST(ProcessTest, DeferredDefinitionLeavesTheRunningChildAlone)
 
 TEST(ProcessTest, HealthReportMarksADeferredDefinition)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("marked", "tpz_steady", "")), 1);
     EXPECT_EQ(process.GetHealthReport().runtimeHealth.restartToApply, 0);
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("marked", "tpz_steady", "Args: [--period-ms, 50]\n")), 1);
     process.DeferDefinition(next);
     EXPECT_EQ(process.GetHealthReport().runtimeHealth.restartToApply, 1);
@@ -1705,14 +1705,14 @@ TEST(ProcessTest, HealthReportMarksADeferredDefinition)
 TEST(ProcessTest, NextStartUsesTheDeferredDefinitionAndClearsTheMark)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("applies", "tpz_env", "Args: [--show, TPZ_OLD]\n" +
                                                                  scratch.FileSettings("out.txt"))),
               1);
     process.StartProcess();
     ASSERT_TRUE(WaitForText(scratch.Path() / "out.txt", "env TPZ_OLD"));
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("applies", "tpz_env", "Args: [--show, TPZ_NEW]\n" +
                                                               scratch.FileSettings("out.txt"))),
               1);
@@ -1729,13 +1729,13 @@ TEST(ProcessTest, NextStartUsesTheDeferredDefinitionAndClearsTheMark)
 TEST(ProcessTest, AutomaticRestartUsesTheDeferredDefinition)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("restarted", "tpz_exit",
                                          "Args: [--code, 1, --after-ms, 300]\nRestartDelayMs: 0\nWorkMode: Auto\n")),
               1);
     process.StartProcess();
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("restarted", "tpz_env", "Args: [--show, TPZ_NEW]\nWorkMode: Auto\n" +
                                                                 scratch.FileSettings("out.txt"))),
               1);
@@ -1750,15 +1750,15 @@ TEST(ProcessTest, AutomaticRestartUsesTheDeferredDefinition)
 
 TEST(ProcessTest, DeferredDefinitionKeepsAStoppedServiceStopped)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("stopped", "tpz_steady", "WorkMode: Auto\nRestartMode: Always\nRestartDelayMs: 0\n")),
               1);
     process.StartProcess();
     // What --kill does: Manual, then the stop.
-    process.SetWorkMode(process_manager::WorkMode::Manual);
+    process.SetWorkMode(tepegoz::WorkMode::Manual);
     ASSERT_TRUE(StopAndWait(process));
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("stopped", "tpz_steady", "WorkMode: Auto\nRestartMode: Always\nArgs: [--period-ms, 50]\n")),
               1);
     process.DeferDefinition(next);
@@ -1770,10 +1770,10 @@ TEST(ProcessTest, DeferredDefinitionKeepsAStoppedServiceStopped)
 
 TEST(ProcessTest, DeferredWorkModeComesWithTheDefinition)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("mode", "tpz_steady", "WorkMode: Manual\n")), 1);
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("mode", "tpz_steady", "WorkMode: Auto\n")), 1);
     process.DeferDefinition(next);
     EXPECT_TRUE(process.IsWorkingManually());
@@ -1783,15 +1783,15 @@ TEST(ProcessTest, DeferredWorkModeComesWithTheDefinition)
 
 TEST(ProcessTest, RestartRequestKeepsTheWorkModeItWasGiven)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("kept", "tpz_steady", "WorkMode: Auto\n")), 1);
     process.StartProcess();
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("kept", "tpz_steady", "WorkMode: Manual\n")), 1);
     process.DeferDefinition(next);
     // What --restart does with a running service: Auto, then the restart.
-    process.SetWorkMode(process_manager::WorkMode::Auto);
+    process.SetWorkMode(tepegoz::WorkMode::Auto);
     process.Restart();
     ASSERT_TRUE(WaitForStop(process));
     ASSERT_TRUE(process.IsRestartRequested());
@@ -1803,10 +1803,10 @@ TEST(ProcessTest, RestartRequestKeepsTheWorkModeItWasGiven)
 
 TEST(ProcessTest, ApplyDeferredDefinitionTakesItWithoutStarting)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("now", "tpz_steady", "DependsOn: [old]\n")), 1);
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("now", "tpz_steady", "DependsOn: [new]\n")), 1);
     process.DeferDefinition(next);
     process.ApplyDeferredDefinition();
@@ -1817,12 +1817,12 @@ TEST(ProcessTest, ApplyDeferredDefinitionTakesItWithoutStarting)
 
 TEST(ProcessTest, LaterDeferredDefinitionReplacesAnEarlierOne)
 {
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("twice", "tpz_steady", "DependsOn: [old]\n")), 1);
 
-    process_manager::Process first{};
+    tepegoz::Process first{};
     ASSERT_EQ(Configure(first, Service("twice", "tpz_steady", "DependsOn: [first]\n")), 1);
-    process_manager::Process second{};
+    tepegoz::Process second{};
     ASSERT_EQ(Configure(second, Service("twice", "tpz_steady", "DependsOn: [second]\n")), 1);
     process.DeferDefinition(first);
     process.DeferDefinition(second);
@@ -1833,12 +1833,12 @@ TEST(ProcessTest, LaterDeferredDefinitionReplacesAnEarlierOne)
 TEST(ProcessTest, OverrideStartupArgsReachesTheDeferredDefinition)
 {
     const ScratchDirectory scratch{};
-    process_manager::Process process{};
+    tepegoz::Process process{};
     ASSERT_EQ(Configure(process, Service("override", "tpz_env", "Args: [--show, TPZ_OLD]\n" +
                                                                   scratch.FileSettings("out.txt"))),
               1);
 
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("override", "tpz_env", "Args: [--show, TPZ_NEW]\n" +
                                                                scratch.FileSettings("out.txt"))),
               1);
@@ -1851,15 +1851,15 @@ TEST(ProcessTest, OverrideStartupArgsReachesTheDeferredDefinition)
 
 TEST(ProcessTest, MoveConstructionCarriesTheDeferredDefinition)
 {
-    process_manager::Process source{};
+    tepegoz::Process source{};
     ASSERT_EQ(Configure(source, Service("carried", "tpz_steady", "")), 1);
     source.StartProcess();
     const pid_t pid = source.GetPid();
-    process_manager::Process next{};
+    tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("carried", "tpz_steady", "Args: [--period-ms, 50]\n")), 1);
     source.DeferDefinition(next);
 
-    process_manager::Process target{std::move(source)};
+    tepegoz::Process target{std::move(source)};
     EXPECT_TRUE(target.HasDeferredDefinition());
     EXPECT_FALSE(source.HasDeferredDefinition());
     EXPECT_EQ(target.GetPid(), pid);

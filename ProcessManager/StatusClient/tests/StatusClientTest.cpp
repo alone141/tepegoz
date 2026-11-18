@@ -2,7 +2,7 @@
 
 #include "StatusClient.hpp"
 #include "CommandWatch.hpp"
-#include "ProcessManagerCommands.hpp"
+#include "TepegozCommands.hpp"
 #include "RuntimeHealth.hpp"
 #include "StatusTable.hpp"
 
@@ -27,15 +27,15 @@ namespace
 constexpr std::chrono::milliseconds report_period{100};
 constexpr std::chrono::seconds short_timeout{2};
 
-process_manager::ReloadReport Answer(process_manager::ReloadResult result)
+tepegoz::ReloadReport Answer(tepegoz::ReloadResult result)
 {
-    process_manager::ReloadReport answer{};
-    answer.command = process_manager::CommandCode::ReloadConfig;
+    tepegoz::ReloadReport answer{};
+    answer.command = tepegoz::CommandCode::ReloadConfig;
     answer.result = result;
     return answer;
 }
 
-std::string AnswerBytes(const process_manager::ReloadReport& answer)
+std::string AnswerBytes(const tepegoz::ReloadReport& answer)
 {
     std::string bytes(sizeof(answer), '\0');
     std::memcpy(bytes.data(), &answer, sizeof(answer));
@@ -50,10 +50,10 @@ status_table::ServiceSample Sample(const std::string& name, bool marked)
     return sample;
 }
 
-process_manager::DetailedHealthReport Record(const std::string& name, process_manager::RuntimeState state,
+tepegoz::DetailedHealthReport Record(const std::string& name, tepegoz::RuntimeState state,
                                                    int pid)
 {
-    process_manager::DetailedHealthReport record{};
+    tepegoz::DetailedHealthReport record{};
     std::strncpy(record.processName, name.c_str(), sizeof(record.processName) - 1);
     record.pid = pid;
     record.runtimeHealth.state = state;
@@ -64,9 +64,9 @@ process_manager::DetailedHealthReport Record(const std::string& name, process_ma
     return record;
 }
 
-std::string Bytes(const std::vector<process_manager::DetailedHealthReport>& records)
+std::string Bytes(const std::vector<tepegoz::DetailedHealthReport>& records)
 {
-    std::string bytes(records.size() * sizeof(process_manager::DetailedHealthReport), '\0');
+    std::string bytes(records.size() * sizeof(tepegoz::DetailedHealthReport), '\0');
     std::memcpy(bytes.data(), records.data(), bytes.size());
     return bytes;
 }
@@ -76,7 +76,7 @@ std::string Bytes(const std::vector<process_manager::DetailedHealthReport>& reco
 class FakeManager
 {
 public:
-    explicit FakeManager(std::vector<process_manager::DetailedHealthReport> services)
+    explicit FakeManager(std::vector<tepegoz::DetailedHealthReport> services)
         : services{std::move(services)}
         , publisher{context, zmq::socket_type::pub}
         , broker{context, zmq::socket_type::router}
@@ -106,8 +106,8 @@ public:
     }
 
     // What a reload answers, and the services it leaves.
-    void OnReload(const process_manager::ReloadReport& answer,
-                  std::vector<process_manager::DetailedHealthReport> servicesAfter)
+    void OnReload(const tepegoz::ReloadReport& answer,
+                  std::vector<tepegoz::DetailedHealthReport> servicesAfter)
     {
         const std::lock_guard<std::mutex> lock{mutex};
         reloadAnswer = answer;
@@ -128,13 +128,13 @@ private:
         }
 
         services = reloaded;
-        if (args == process_manager::reload_without_reply)
+        if (args == tepegoz::reload_without_reply)
         {
             return;
         }
 
         (void)broker.send(zmq::buffer(sender), zmq::send_flags::sndmore);
-        (void)broker.send(zmq::buffer(process_manager::comm::process_manager_id), zmq::send_flags::sndmore);
+        (void)broker.send(zmq::buffer(tepegoz::comm::tepegoz_id), zmq::send_flags::sndmore);
         (void)broker.send(zmq::buffer(&reloadAnswer, sizeof(reloadAnswer)), zmq::send_flags::none);
     }
 
@@ -149,36 +149,36 @@ private:
             {
                 std::vector<zmq::message_t> frames{};
                 (void)zmq::recv_multipart(broker, std::back_inserter(frames));
-                process_manager::CommandMessage command{};
+                tepegoz::CommandMessage command{};
                 std::memcpy(&command, frames.back().data(), std::min(frames.back().size(), sizeof(command)));
                 const std::lock_guard<std::mutex> lock{mutex};
                 received.push_back(frames.front().to_string() + " " + std::to_string(static_cast<int>(command.command)) + " " +
                                    command.serviceName);
-                if (command.command == process_manager::CommandCode::ReloadConfig)
+                if (command.command == tepegoz::CommandCode::ReloadConfig)
                 {
                     Reload(frames.front().to_string(), std::string{command.args});
                 }
-                for (process_manager::DetailedHealthReport& service : services)
+                for (tepegoz::DetailedHealthReport& service : services)
                 {
                     if (ignoreCommands || std::string_view{service.processName} != command.serviceName)
                     {
                         continue;
                     }
-                    if (command.command == process_manager::CommandCode::StopService)
+                    if (command.command == tepegoz::CommandCode::StopService)
                     {
                         service.pid = -1;
-                        service.runtimeHealth.state = process_manager::RuntimeState::Stopped;
+                        service.runtimeHealth.state = tepegoz::RuntimeState::Stopped;
                     }
                     else
                     {
                         service.pid = nextPid++;
-                        service.runtimeHealth.state = process_manager::RuntimeState::Running;
+                        service.runtimeHealth.state = tepegoz::RuntimeState::Running;
                     }
                 }
             }
 
             const std::lock_guard<std::mutex> lock{mutex};
-            for (process_manager::DetailedHealthReport& service : services)
+            for (tepegoz::DetailedHealthReport& service : services)
             {
                 service.snapshotTime = std::chrono::high_resolution_clock::now();
                 service.cpuUsageInUsec += 20000;
@@ -189,9 +189,9 @@ private:
     }
 
     mutable std::mutex mutex;
-    std::vector<process_manager::DetailedHealthReport> services;
-    process_manager::ReloadReport reloadAnswer{};
-    std::vector<process_manager::DetailedHealthReport> reloaded;
+    std::vector<tepegoz::DetailedHealthReport> services;
+    tepegoz::ReloadReport reloadAnswer{};
+    std::vector<tepegoz::DetailedHealthReport> reloaded;
     std::vector<std::string> received;
     zmq::context_t context{1};
     zmq::socket_t publisher;
@@ -204,8 +204,8 @@ private:
 
 TEST(StatusClientTest, ParsesEveryRecord)
 {
-    const std::string bytes = Bytes({Record("a", process_manager::RuntimeState::Running, 10),
-                                     Record("b", process_manager::RuntimeState::Unhealthy, 11)});
+    const std::string bytes = Bytes({Record("a", tepegoz::RuntimeState::Running, 10),
+                                     Record("b", tepegoz::RuntimeState::Unhealthy, 11)});
     std::vector<status_table::ServiceSample> samples{};
     ASSERT_EQ(status_client::ParseReport(bytes, samples), status_client::ParseCode::Ok);
     ASSERT_EQ(samples.size(), 2u);
@@ -217,7 +217,7 @@ TEST(StatusClientTest, ParsesEveryRecord)
 
 TEST(StatusClientTest, PartialRecordIsBadSize)
 {
-    const std::string bytes = Bytes({Record("a", process_manager::RuntimeState::Running, 10)});
+    const std::string bytes = Bytes({Record("a", tepegoz::RuntimeState::Running, 10)});
     std::vector<status_table::ServiceSample> samples{};
     EXPECT_EQ(status_client::ParseReport(bytes.substr(1), samples), status_client::ParseCode::BadSize);
     EXPECT_TRUE(samples.empty());
@@ -225,8 +225,8 @@ TEST(StatusClientTest, PartialRecordIsBadSize)
 
 TEST(StatusClientTest, PrintStatusShowsEveryService)
 {
-    FakeManager manager{{Record("control_loop", process_manager::RuntimeState::Running, 10),
-                         Record("telemetry_bridge", process_manager::RuntimeState::Stopped, -1)}};
+    FakeManager manager{{Record("control_loop", tepegoz::RuntimeState::Running, 10),
+                         Record("telemetry_bridge", tepegoz::RuntimeState::Stopped, -1)}};
     testing::internal::CaptureStdout();
     const status_client::StatusCode code = status_client::PrintStatus(manager.endpoints);
     const std::string out = testing::internal::GetCapturedStdout();
@@ -261,7 +261,7 @@ TEST(StatusClientTest, PrintStatusWithoutManagerSaysSo)
 
 TEST(StatusClientTest, StopIsFollowedUntilStopped)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
     testing::internal::CaptureStdout();
     const status_client::CommandCode code =
         status_client::SendCommand(command_watch::Command::Stop, "a", manager.endpoints, true, short_timeout);
@@ -272,7 +272,7 @@ TEST(StatusClientTest, StopIsFollowedUntilStopped)
 
 TEST(StatusClientTest, RestartShowsTheNewProcess)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
     testing::internal::CaptureStdout();
     const status_client::CommandCode code =
         status_client::SendCommand(command_watch::Command::Restart, "a", manager.endpoints, true, short_timeout);
@@ -282,7 +282,7 @@ TEST(StatusClientTest, RestartShowsTheNewProcess)
 
 TEST(StatusClientTest, UnknownServiceIsNotSent)
 {
-    FakeManager manager{{Record("viewer", process_manager::RuntimeState::Running, 10)}};
+    FakeManager manager{{Record("viewer", tepegoz::RuntimeState::Running, 10)}};
     testing::internal::CaptureStderr();
     const status_client::CommandCode code =
         status_client::SendCommand(command_watch::Command::Stop, "viewr", manager.endpoints, true, short_timeout);
@@ -294,7 +294,7 @@ TEST(StatusClientTest, UnknownServiceIsNotSent)
 
 TEST(StatusClientTest, IgnoredCommandTimesOut)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
     manager.ignoreCommands = true;
     testing::internal::CaptureStdout();
     const status_client::CommandCode code =
@@ -307,7 +307,7 @@ TEST(StatusClientTest, IgnoredCommandTimesOut)
 
 TEST(StatusClientTest, WithoutFollowingNothingIsPrinted)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
     testing::internal::CaptureStdout();
     const status_client::CommandCode code =
         status_client::SendCommand(command_watch::Command::Stop, "a", manager.endpoints, false, short_timeout);
@@ -323,7 +323,7 @@ TEST(StatusClientTest, WithoutFollowingNothingIsPrinted)
 
 TEST(StatusClientTest, UnreachableBrokerIsReported)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
     status_client::Endpoints endpoints = manager.endpoints;
     endpoints.commands = "tcp://127.0.0.1:1";
     testing::internal::CaptureStderr();
@@ -362,9 +362,9 @@ TEST(StatusClientTest, ExitCodesFollowTheOutcome)
 
 TEST(StatusClientTest, ParseReportCarriesTheRestartMark)
 {
-    process_manager::DetailedHealthReport marked = Record("a", process_manager::RuntimeState::Running, 10);
+    tepegoz::DetailedHealthReport marked = Record("a", tepegoz::RuntimeState::Running, 10);
     marked.runtimeHealth.restartToApply = 1;
-    const std::string bytes = Bytes({marked, Record("b", process_manager::RuntimeState::Running, 11)});
+    const std::string bytes = Bytes({marked, Record("b", tepegoz::RuntimeState::Running, 11)});
     std::vector<status_table::ServiceSample> samples{};
     ASSERT_EQ(status_client::ParseReport(bytes, samples), status_client::ParseCode::Ok);
     ASSERT_EQ(samples.size(), 2u);
@@ -374,7 +374,7 @@ TEST(StatusClientTest, ParseReportCarriesTheRestartMark)
 
 TEST(StatusClientTest, RestartMarkIsTheByteAfterTheState)
 {
-    process_manager::DetailedHealthReport record{};
+    tepegoz::DetailedHealthReport record{};
     record.runtimeHealth.restartToApply = 1;
     unsigned char bytes[sizeof(record)]{};
     std::memcpy(bytes, &record, sizeof(record));
@@ -383,7 +383,7 @@ TEST(StatusClientTest, RestartMarkIsTheByteAfterTheState)
 
 TEST(StatusClientTest, ParseReloadReplyReadsTheCounts)
 {
-    process_manager::ReloadReport answer = Answer(process_manager::ReloadResult::Applied);
+    tepegoz::ReloadReport answer = Answer(tepegoz::ReloadResult::Applied);
     answer.added = 2;
     answer.removed = 1;
     answer.changed = 3;
@@ -405,7 +405,7 @@ TEST(StatusClientTest, ParseReloadReplyReadsTheCounts)
 TEST(StatusClientTest, ParseReloadReplyWordsTheRefusal)
 {
     status_client::ReloadReply reply{};
-    ASSERT_EQ(status_client::ParseReloadReply(AnswerBytes(Answer(process_manager::ReloadResult::FolderNotReadable)),
+    ASSERT_EQ(status_client::ParseReloadReply(AnswerBytes(Answer(tepegoz::ReloadResult::FolderNotReadable)),
                                               reply),
               status_client::ParseCode::Ok);
     EXPECT_FALSE(reply.applied);
@@ -415,14 +415,14 @@ TEST(StatusClientTest, ParseReloadReplyWordsTheRefusal)
 TEST(StatusClientTest, ParseReloadReplyRefusesAnotherSize)
 {
     status_client::ReloadReply reply{};
-    const std::string bytes = AnswerBytes(Answer(process_manager::ReloadResult::Applied));
+    const std::string bytes = AnswerBytes(Answer(tepegoz::ReloadResult::Applied));
     EXPECT_EQ(status_client::ParseReloadReply(bytes.substr(1), reply), status_client::ParseCode::BadSize);
 }
 
 TEST(StatusClientTest, ParseReloadReplyRefusesAnotherCommand)
 {
-    process_manager::ReloadReport answer = Answer(process_manager::ReloadResult::Applied);
-    answer.command = process_manager::CommandCode::GetVersionInfo;
+    tepegoz::ReloadReport answer = Answer(tepegoz::ReloadResult::Applied);
+    answer.command = tepegoz::CommandCode::GetVersionInfo;
     status_client::ReloadReply reply{};
     EXPECT_EQ(status_client::ParseReloadReply(AnswerBytes(answer), reply), status_client::ParseCode::WrongCommand);
 }
@@ -467,14 +467,14 @@ TEST(StatusClientTest, DescribeRefusedReloadSaysNothingChanged)
 
 TEST(StatusClientTest, AppliedReloadIsToldWithTheNames)
 {
-    FakeManager manager{{Record("kept", process_manager::RuntimeState::Running, 10),
-                         Record("gone", process_manager::RuntimeState::Running, 11)}};
-    process_manager::ReloadReport answer = Answer(process_manager::ReloadResult::Applied);
+    FakeManager manager{{Record("kept", tepegoz::RuntimeState::Running, 10),
+                         Record("gone", tepegoz::RuntimeState::Running, 11)}};
+    tepegoz::ReloadReport answer = Answer(tepegoz::ReloadResult::Applied);
     answer.added = 1;
     answer.removed = 1;
     answer.unchanged = 1;
-    manager.OnReload(answer, {Record("kept", process_manager::RuntimeState::Running, 10),
-                              Record("new", process_manager::RuntimeState::Stopped, -1)});
+    manager.OnReload(answer, {Record("kept", tepegoz::RuntimeState::Running, 10),
+                              Record("new", tepegoz::RuntimeState::Stopped, -1)});
     testing::internal::CaptureStdout();
     const status_client::ReloadCode code = status_client::SendReload(manager.endpoints, true, short_timeout);
     EXPECT_EQ(testing::internal::GetCapturedStdout(),
@@ -488,9 +488,9 @@ TEST(StatusClientTest, AppliedReloadIsToldWithTheNames)
 
 TEST(StatusClientTest, RefusedReloadExitsWithOne)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
-    manager.OnReload(Answer(process_manager::ReloadResult::MainFileSyntaxError),
-                     {Record("a", process_manager::RuntimeState::Running, 10)});
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
+    manager.OnReload(Answer(tepegoz::ReloadResult::MainFileSyntaxError),
+                     {Record("a", tepegoz::RuntimeState::Running, 10)});
     testing::internal::CaptureStderr();
     const status_client::ReloadCode code = status_client::SendReload(manager.endpoints, true, short_timeout);
     EXPECT_NE(testing::internal::GetCapturedStderr().find("Reload refused: the configuration file is not valid YAML"),
@@ -501,7 +501,7 @@ TEST(StatusClientTest, RefusedReloadExitsWithOne)
 
 TEST(StatusClientTest, UnansweredReloadTimesOut)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
     manager.ignoreCommands = true;
     testing::internal::CaptureStderr();
     const status_client::ReloadCode code = status_client::SendReload(manager.endpoints, true, std::chrono::seconds{1});
@@ -513,8 +513,8 @@ TEST(StatusClientTest, UnansweredReloadTimesOut)
 
 TEST(StatusClientTest, ReloadWithoutWaitingAsksForNoAnswer)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
-    manager.OnReload(Answer(process_manager::ReloadResult::Applied), {Record("a", process_manager::RuntimeState::Running, 10)});
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
+    manager.OnReload(Answer(tepegoz::ReloadResult::Applied), {Record("a", tepegoz::RuntimeState::Running, 10)});
     testing::internal::CaptureStdout();
     const status_client::ReloadCode code = status_client::SendReload(manager.endpoints, false, short_timeout);
     EXPECT_EQ(testing::internal::GetCapturedStdout(), "");
@@ -530,7 +530,7 @@ TEST(StatusClientTest, ReloadWithoutWaitingAsksForNoAnswer)
 
 TEST(StatusClientTest, ReloadToAnUnreachableBrokerIsReported)
 {
-    FakeManager manager{{Record("a", process_manager::RuntimeState::Running, 10)}};
+    FakeManager manager{{Record("a", tepegoz::RuntimeState::Running, 10)}};
     status_client::Endpoints endpoints = manager.endpoints;
     endpoints.commands = "tcp://127.0.0.1:1";
     testing::internal::CaptureStderr();

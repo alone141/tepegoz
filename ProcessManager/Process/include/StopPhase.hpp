@@ -1,5 +1,5 @@
 #pragma once
-namespace process_manager
+namespace tepegoz
 {
 
 enum class StopPhase
@@ -9,4 +9,4 @@ enum class StopPhase
     Killing
 };
 
-} // namespace process_manager
+} // namespace tepegoz
