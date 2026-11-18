@@ -74,6 +74,7 @@ from network_status import (
     parse_message,
 )
 from network_view import NetworkPage
+from brand import mark_icon, mark_pixmap, use_own_taskbar_button
 from log_recorder import DEFAULT_FOLDER, LogRecorder
 from journal_view import (  # noqa: F401  re-exported: former home of these names
     JournalView,
@@ -1096,6 +1097,7 @@ class GozWindow(FramelessMainWindow):
         )
 
         self.setWindowTitle("Göz")
+        self.setWindowIcon(mark_icon())
         fit_to_screen(self, QSize(1180, 760), minimum=QSize(900, 600))
 
         self._prev: Dict[str, Tuple[int, int]] = {}   # name → (cpu_usec, snap_ns)
@@ -1157,10 +1159,19 @@ class GozWindow(FramelessMainWindow):
         # The window has no system title bar: the toolbar's row is its title bar.
         self.set_title_bar(toolbar).setStyleSheet(TOOLBAR_STYLE)
 
+        # The mark and the name, closer together than the toolbar's spacing.
+        brand = QWidget()
+        brand_row = QHBoxLayout(brand)
+        brand_row.setContentsMargins(4, 0, 4, 0)
+        brand_row.setSpacing(6)
         title = QLabel("Göz")
         title.setFont(ui_font(1.1, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {TEXT}; padding: 0 4px;")
-        toolbar.addWidget(title)
+        title.setStyleSheet(f"color: {TEXT};")
+        mark = QLabel()
+        mark.setPixmap(mark_pixmap(title.fontMetrics().height(), self.devicePixelRatioF()))
+        brand_row.addWidget(mark)
+        brand_row.addWidget(title)
+        toolbar.addWidget(brand)
 
         self.lbl_status = QLabel()
         toolbar.addWidget(self.lbl_status)
@@ -2191,7 +2202,13 @@ def main():
     )
     args = parser.parse_args()
 
+    use_own_taskbar_button()
     app = QApplication(sys.argv)
+    # X11 matches a window to goz.desktop by this class name, Wayland by the desktop file name: either way the
+    # desktop shows the icon installed with that entry.
+    app.setApplicationName("goz")
+    app.setDesktopFileName("goz")
+    app.setWindowIcon(mark_icon())
     apply_dark_theme(app)
 
     win = GozWindow(

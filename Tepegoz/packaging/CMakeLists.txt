@@ -1,11 +1,11 @@
 # What cmake --install sets up besides the programs: the configuration, the log directory, the systemd unit, the
-# monitor GUI with its launcher, and, last, the unit enabled so the manager starts at boot.
+# monitor GUI with its launcher and menu entry, and, last, the unit enabled so the manager starts at boot.
 
 set(TEPEGOZ_CONFIG_SOURCE "" CACHE FILEPATH
     "tepegoz.yaml to install; empty installs a starter configuration with no services")
 set(TEPEGOZ_SYSTEMD_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system" CACHE PATH
     "Directory of the installed tepegoz.service")
-option(TEPEGOZ_INSTALL_GUI "Install the monitor GUI (Goz) and its goz launcher" ON)
+option(TEPEGOZ_INSTALL_GUI "Install the monitor GUI (Goz), its goz launcher and its menu entry" ON)
 option(TEPEGOZ_ENABLE_SERVICE "Enable tepegoz.service after installing, when installing as root on systemd" ON)
 
 cmake_path(ABSOLUTE_PATH TEPEGOZ_BIN_INSTALL_DIR BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}" OUTPUT_VARIABLE installed_bin_dir)
@@ -49,6 +49,12 @@ if(TEPEGOZ_INSTALL_GUI AND EXISTS "${gui_dir}/goz.py")
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
         DESTINATION ${TEPEGOZ_BIN_INSTALL_DIR}
     )
+    # Goz in the desktop's application menu, with its mark as the icon. The GUI draws the mark itself, so the
+    # SVG goes only to the icon theme.
+    set(INSTALLED_LAUNCHER "${installed_bin_dir}/goz")
+    configure_file(goz.desktop.in ${CMAKE_CURRENT_BINARY_DIR}/goz.desktop @ONLY NEWLINE_STYLE UNIX)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/goz.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES ${gui_dir}/goz.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 elseif(TEPEGOZ_INSTALL_GUI)
     message(STATUS "No Goz folder next to the project: the monitor GUI is not installed")
 endif()

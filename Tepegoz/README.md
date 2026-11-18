@@ -37,8 +37,9 @@ sudo systemctl start tepegoz
 - **The systemd unit:** `tepegoz.service` runs the manager with `Delegate=yes`, which its cgroups
   need. Installing as root on a running systemd also enables the unit, so the manager starts at boot. It is not
   started at install time. A staged install (`DESTDIR`) only installs the file.
-- **The monitor GUI:** installed in `share/tepegoz/gui/`, with its launcher `goz` in `bin/`. It
-  needs Python 3 with PyQt6 and pyzmq, which the install does not provide.
+- **The monitor GUI:** installed in `share/tepegoz/gui/`, with its launcher `goz` in `bin/` and its menu entry
+  `share/applications/goz.desktop`, whose icon is `share/icons/hicolor/scalable/apps/goz.svg`. It needs Python 3
+  with PyQt6 and pyzmq, which the install does not provide.
 - **The test setup (when the tests are built):** `keepalive` and the `tpz_*` test programs next to the manager,
   and their scenario configs and driver in `share/tepegoz/test-setup/` (see `TestServices/README.md`).
 
@@ -61,7 +62,7 @@ the manager and the unit. Each path can also be set on its own; directories end 
 | `TEPEGOZ_INSTALL_GUI` | `ON` | installing the GUI and `goz` |
 | `TEPEGOZ_ENABLE_SERVICE` | `ON` | enabling the unit when installing as root on a running systemd |
 
-The version the manager logs at start is the one in the root `project()` call.
+The version the manager logs at start, under its eye, is the one in the root `project()` call.
 
 ### Configuration
 `tepegoz.yaml`, written by `tepegoz generate` with every key documented.
@@ -197,6 +198,12 @@ targets `ProcessManager`, `ProcessManagerApp` and `process_manager_tests` are `T
   the service is defined. New option `--registry ENDPOINT`; `--host` and the HOST field set it too. Without a
   registry that answers, these actions are greyed out with the reason. `mock_publisher.py` answers the registry
   as well, and the GUI has its first tests, `Goz/tests/test_service_registry.py`.
+- Göz has a mark, an eye: the window's icon, which the taskbar and Alt+Tab show (on Windows, under a taskbar
+  button of its own instead of Python's), and next to its name in the title row. `cmake --install` adds a menu
+  entry, `share/applications/goz.desktop`, with the mark as its icon in `share/icons/hicolor/scalable/apps/`. The
+  README shows the mark too. The new `brand.py` draws it and writes `goz.svg` from the same shapes.
+- The manager's log starts with an eye, 15 lines of Braille characters, above the version line. A console without
+  UTF-8 or a Braille font shows those lines garbled.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of

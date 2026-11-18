@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Göz
+GenericName=Process monitor
+Comment=Watch, start and stop the services Tepegöz runs
+Exec=@INSTALLED_LAUNCHER@
+Icon=goz
+Terminal=false
+Categories=System;Monitor;
+StartupWMClass=goz

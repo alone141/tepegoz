@@ -26,7 +26,7 @@ The install puts these in place:
 | Its configuration | `/etc/tepegoz/tepegoz.yaml` (an existing one is kept) |
 | Its log files | `/var/log/tepegoz/TepegozLog/` |
 | The systemd service | `tepegoz.service`, enabled so it starts at boot |
-| The monitor GUI | `/usr/share/tepegoz/gui/`, started with `goz` |
+| The monitor GUI | `/usr/share/tepegoz/gui/`, started with `goz` or from the application menu |
 
 The installed configuration starts no service yet. To install your own file instead, add
 `-DTEPEGOZ_CONFIG_SOURCE=/path/to/tepegoz.yaml` to the first command.

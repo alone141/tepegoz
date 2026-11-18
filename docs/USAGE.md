@@ -36,6 +36,7 @@ ZeroMQ library.
 | Log directory | `/var/log/tepegoz/TepegozLog/` | |
 | systemd unit | `/usr/lib/systemd/system/tepegoz.service` | Enabled when installed as root on a running systemd. Not started. |
 | Monitor GUI | `/usr/share/tepegoz/gui/`, launcher `/usr/bin/goz` | |
+| Menu entry | `/usr/share/applications/goz.desktop`, icon `/usr/share/icons/hicolor/scalable/apps/goz.svg` | Göz in the desktop's application menu. |
 | Test programs (tests built) | `/usr/bin/keepalive`, `/usr/bin/tpz_*`, `/usr/share/tepegoz/test-setup/` | See [Testing with TestServices](#testing-with-testservices). |
 
 The paths are built into the manager and the unit when you configure, so set the prefix then rather than with
@@ -537,7 +538,8 @@ The variables are set in this order:
 
 ## Monitor GUI
 
-The monitor GUI is called Göz, "eye", and its launcher `goz`.
+The monitor GUI is called Göz, "eye", and its launcher `goz`. Its mark, an eye, is the window's icon and stands
+next to its name in the title row. Installed, Göz is also in the desktop's application menu.
 
 ### Starting it
 

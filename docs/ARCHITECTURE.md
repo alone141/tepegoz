@@ -518,6 +518,7 @@ A forked child never logs, because it may hold no lock between `fork` and `exec`
 | `registry_view.py` | The service dialog: Add, Edit and Duplicate. |
 | `ui_scale.py` | Font and window sizes that follow the screen. |
 | `window_frame.py` | The main window without the system title bar: the toolbar's row is the title bar, with the window buttons, and the window's border resizes it. |
+| `brand.py`, `goz.svg` | The mark, an eye: drawn with QPainter for the window icon and the title row, so the GUI needs no SVG module, and written from the same shapes as `goz.svg` for the menu entry and the README. `tests/test_brand.py` checks the two agree. |
 | `mock_publisher.py` | A stand-in manager for working on the GUI, its service registry included. |
 
 Each data source has a worker on its own `QThread`. A worker sends Qt signals to the window, which updates the
@@ -602,7 +603,8 @@ The service registry has a worker of its own, so a registry that does not answer
   fixed ports, so ctest does not run it.
 - The GUI's registry logic, its worker and its service dialog have a unittest module,
   `Goz/tests/test_service_registry.py`. It runs the worker and the window offscreen against
-  `mock_publisher.py`'s registry on ports the system picks:
+  `mock_publisher.py`'s registry on ports the system picks. `Goz/tests/test_brand.py` checks that `goz.svg`
+  and the painted mark agree and that the window shows it. Both run with
   `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s Goz/tests`. The rest of the GUI is
   checked against `mock_publisher.py` or a running manager.
 
