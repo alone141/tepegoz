@@ -114,6 +114,9 @@ The manager writes its log in three places:
 Lines about one service start with its name in brackets, for example `[server] pid 1234 exited with code 1`.
 Services in `Pipe` mode have their output logged the same way: `[server] <the line it printed>`.
 
+Each start of the manager begins its log with an eye, 15 lines of Braille characters, and then its version:
+`TEPEGOZ VERSION: 0.2.0`. A console without UTF-8 or a Braille font shows the eye's lines garbled.
+
 ## Command line
 
 `tepegoz [COMMAND] [OPTIONS]` (named `TepegozApp` in a build tree).

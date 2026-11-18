@@ -92,7 +92,8 @@ receives them; services start with no signal blocked.
 
 1. **Command line:** read with cxxopts. `validate`, `graph`, `generate`, `status` and the command options do their
    work and exit here.
-2. **Logger:** opened, with the log file directory.
+2. **Logger:** opened, with the log file directory. Its first lines are the eye (`eye_rows` in `TepegozApp.cpp`)
+   and the version.
 3. **Configuration:** loaded with `ConfigSource`: the main file, then each file of `services.d`, whose service is
    appended to the main file's `Services`. The merged document is kept, because `--start all` rebuilds the
    services from it. So are the loader and where each service was defined, for a reload.

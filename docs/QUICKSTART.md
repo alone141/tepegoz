@@ -153,5 +153,6 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 | A service keeps restarting, then stays stopped | Its Journal tab, and lines such as `[name] pid 1234 exited with code 1` in the manager's log. After `MaxRestarts` restarts in a row, the manager leaves it stopped. |
 | A service turns **Unhealthy** | It has `CheckHealth: true` but sends no heartbeats. See *Health checks* in [USAGE.md](USAGE.md). |
 | CPU and memory read 0 | The manager has no cgroups: it is not running under the installed systemd unit, or not as root. |
+| The log starts with 15 lines of boxes or odd characters | Nothing is wrong: that is the manager's eye, drawn in Braille characters, on a console without UTF-8 or a Braille font. |
 | `validate` says `ExecutablePath does not exists` | The path is wrong. Paths must be absolute. |
 | `validate` says `ExecutablePath access denied` | The file is not executable: `chmod +x` it. |
