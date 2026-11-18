@@ -114,11 +114,11 @@ are no longer needed, `/var/log/processmanager/`. Scripts that call `iltaren-Pro
 
 In the source, the folders `ProcessManager/` and `ProcessManagerGui/` are now `Tepegoz/` and `Goz/`, so a build is
 configured with `cmake -S Tepegoz`; inside, `ProcessManager/ProcessManager/` and `ProcessManager/ProcessManagerApp/`
-are `Tepegoz/Tepegoz/` and `Tepegoz/TepegozApp/`. In the code, the namespace `process_manager` is now `tepegoz`, and the classes `ProcessManager`,
-`ProcessManagerApp`, `ProcessManagerParams` and `IProcessManager` are `Tepegoz`, `TepegozApp`, `TepegozParams`
-and `ITepegoz`, in files of the same names. The CMake project is `tepegoz`; the targets `ProcessManager`,
-`ProcessManagerApp` and `process_manager_tests` are `Tepegoz`, `TepegozApp` and `tepegoz_tests`; the macros
-`PROCESS_MANAGER_*` are `TEPEGOZ_*`.
+are `Tepegoz/Tepegoz/` and `Tepegoz/TepegozApp/`. In the code, the namespace `process_manager` is now `tepegoz`,
+and the classes `ProcessManager`, `ProcessManagerApp`, `ProcessManagerParams` and `IProcessManager` are `Tepegoz`,
+`TepegozApp`, `TepegozParams` and `ITepegoz`, in files of the same names. The CMake project is `tepegoz`; the
+targets `ProcessManager`, `ProcessManagerApp` and `process_manager_tests` are `Tepegoz`, `TepegozApp` and
+`tepegoz_tests`; the macros `PROCESS_MANAGER_*` are `TEPEGOZ_*`.
 
 - Services can be registered one per file, in the `services.d` folder next to the configuration file the manager
   reads. Each `<ProcessName>.yaml` holds the keys of one `Services` entry. The files are read in file name order,
