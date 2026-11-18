@@ -1,4 +1,4 @@
-// pmt_hog: keeps threads busy for a share of the time and holds memory, for the CPU and memory figures.
+// tpz_hog: keeps threads busy for a share of the time and holds memory, for the CPU and memory figures.
 
 #include "TestService.hpp"
 
@@ -43,8 +43,8 @@ void Burn(int percent)
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_hog");
-    cxxopts::Options options{"pmt_hog", "Burns CPU and holds memory until SIGTERM."};
+    test_service::SetProgramName("tpz_hog");
+    cxxopts::Options options{"tpz_hog", "Burns CPU and holds memory until SIGTERM."};
     options.add_options()
         ("cpu-percent", "Busy share of each thread, 0 to 100", cxxopts::value<int>()->default_value("50"))
         ("threads", "Busy threads", cxxopts::value<int>()->default_value("1"))

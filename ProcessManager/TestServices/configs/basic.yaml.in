@@ -8,20 +8,20 @@ Tepegoz:
 
 Services:
   - ProcessName: first
-    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_steady
     Args: [--period-ms, 2000]
     StdioMode: Pipe
     GracePeriodMs: 500
 
   - ProcessName: second
-    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_steady
     Args: [--period-ms, 2000]
     StdioMode: Pipe
     GracePeriodMs: 500
     DependsOn: [first]
 
   - ProcessName: third
-    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_steady
     Args: [--period-ms, 2000]
     StdioMode: Pipe
     GracePeriodMs: 500
@@ -29,7 +29,7 @@ Services:
 
   # Waits for --start manual.
   - ProcessName: manual
-    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_steady
     Args: [--period-ms, 2000]
     StdioMode: Pipe
     WorkMode: Manual

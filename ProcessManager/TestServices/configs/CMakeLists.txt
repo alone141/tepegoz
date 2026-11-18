@@ -6,11 +6,11 @@ cmake_path(ABSOLUTE_PATH TEPEGOZ_BIN_INSTALL_DIR BASE_DIRECTORY "${CMAKE_INSTALL
 
 foreach(scenario IN LISTS scenarios)
     # The build tree's folder is only known at generate time, so file(GENERATE) fills in the generator expression.
-    set(PMT_BIN_DIR "$<TARGET_FILE_DIR:pmt_steady>")
+    set(TPZ_BIN_DIR "$<TARGET_FILE_DIR:tpz_steady>")
     configure_file(${scenario}.yaml.in ${CMAKE_CURRENT_BINARY_DIR}/unresolved/${scenario}.yaml @ONLY NEWLINE_STYLE UNIX)
     file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${scenario}.yaml INPUT ${CMAKE_CURRENT_BINARY_DIR}/unresolved/${scenario}.yaml)
 
-    set(PMT_BIN_DIR "${installed_bin_dir}")
+    set(TPZ_BIN_DIR "${installed_bin_dir}")
     configure_file(${scenario}.yaml.in ${CMAKE_CURRENT_BINARY_DIR}/install/${scenario}.yaml @ONLY NEWLINE_STYLE UNIX)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/${scenario}.yaml DESTINATION ${TEPEGOZ_SHARE_DIR}test-setup)
 endforeach()

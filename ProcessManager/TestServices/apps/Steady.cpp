@@ -1,4 +1,4 @@
-// pmt_steady: prints a line every period and stops on SIGTERM, optionally taking its time.
+// tpz_steady: prints a line every period and stops on SIGTERM, optionally taking its time.
 
 #include "TestService.hpp"
 
@@ -9,8 +9,8 @@
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_steady");
-    cxxopts::Options options{"pmt_steady", "Prints a line every period and stops cleanly on SIGTERM."};
+    test_service::SetProgramName("tpz_steady");
+    cxxopts::Options options{"tpz_steady", "Prints a line every period and stops cleanly on SIGTERM."};
     options.add_options()
         ("period-ms", "Time between lines", cxxopts::value<int>()->default_value("1000"))
         ("stop-delay-ms", "Time it takes to stop after SIGTERM", cxxopts::value<int>()->default_value("0"))

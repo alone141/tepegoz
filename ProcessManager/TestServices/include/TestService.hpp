@@ -43,7 +43,7 @@ enum class BeatCode
 
 /**
  * @brief Set the name that starts every line the program prints.
- * @param name Program name, such as pmt_steady.
+ * @param name Program name, such as tpz_steady.
  */
 void SetProgramName(std::string_view name);
 

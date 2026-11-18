@@ -1,4 +1,4 @@
-// pmt_watch: prints the manager's detailed health reports as text, one line per service, for scripts and people.
+// tpz_watch: prints the manager's detailed health reports as text, one line per service, for scripts and people.
 
 #include "TestService.hpp"
 
@@ -59,8 +59,8 @@ void PrintReports(const zmq::message_t& message)
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_watch");
-    cxxopts::Options options{"pmt_watch", "Prints the manager's health reports: a 'report <epoch ms> <count>' line, "
+    test_service::SetProgramName("tpz_watch");
+    cxxopts::Options options{"tpz_watch", "Prints the manager's health reports: a 'report <epoch ms> <count>' line, "
                                           "then one 'service ...' line per service."};
     options.add_options()
         ("endpoint", "Health report endpoint", cxxopts::value<std::string>()->default_value(std::string{test_service::default_health_endpoint}))

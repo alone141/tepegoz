@@ -1,4 +1,4 @@
-// pmt_env: prints what it was started with (arguments, working directory, ids, environment), then waits.
+// tpz_env: prints what it was started with (arguments, working directory, ids, environment), then waits.
 
 #include "TestService.hpp"
 
@@ -32,7 +32,7 @@ void SayVariable(const std::string& name)
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_env");
+    test_service::SetProgramName("tpz_env");
     // The arguments first, as received: they are what is being tested.
     test_service::Say("argc " + std::to_string(argc));
     for (int i = 1; i < argc; ++i)
@@ -40,7 +40,7 @@ int main(int argc, char** argv)
         test_service::Say("argv[" + std::to_string(i) + "]='" + argv[i] + "'");
     }
 
-    cxxopts::Options options{"pmt_env", "Prints its arguments, working directory, ids and environment, then waits."};
+    cxxopts::Options options{"tpz_env", "Prints its arguments, working directory, ids and environment, then waits."};
     options.allow_unrecognised_options();
     options.add_options()
         ("show", "Also print this variable; can be repeated", cxxopts::value<std::vector<std::string>>())

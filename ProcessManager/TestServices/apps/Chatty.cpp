@@ -1,4 +1,4 @@
-// pmt_chatty: writes numbered lines to stdout and stderr at a steady rate, long or without newlines if asked.
+// tpz_chatty: writes numbered lines to stdout and stderr at a steady rate, long or without newlines if asked.
 
 #include "TestService.hpp"
 
@@ -10,8 +10,8 @@
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_chatty");
-    cxxopts::Options options{"pmt_chatty", "Writes numbered lines at --rate per second until SIGTERM or --duration-ms."};
+    test_service::SetProgramName("tpz_chatty");
+    cxxopts::Options options{"tpz_chatty", "Writes numbered lines at --rate per second until SIGTERM or --duration-ms."};
     options.add_options()
         ("rate", "Lines per second", cxxopts::value<int>()->default_value("10"))
         ("line-bytes", "Length of each line, newline not counted", cxxopts::value<int>()->default_value("60"))

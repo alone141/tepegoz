@@ -39,7 +39,7 @@ sudo systemctl start tepegoz
   started at install time. A staged install (`DESTDIR`) only installs the file.
 - **The monitor GUI:** installed in `share/tepegoz/gui/`, with its launcher `goz` in `bin/`. It
   needs Python 3 with PyQt6 and pyzmq, which the install does not provide.
-- **The test setup (when the tests are built):** `keepalive` and the `pmt_*` test programs next to the manager,
+- **The test setup (when the tests are built):** `keepalive` and the `tpz_*` test programs next to the manager,
   and their scenario configs and driver in `share/tepegoz/test-setup/` (see `TestServices/README.md`).
 
 The paths are fixed when the build is configured and follow `CMAKE_INSTALL_PREFIX`. With `/usr`:
@@ -87,11 +87,13 @@ so a machine that runs an earlier version needs the steps below before it runs t
 | Its main file | `process_monitor_gui.py` | `goz.py` |
 | The manager's row in its sidebar | `processmanager` | `tepegoz` |
 | Its default folder for recorded logs | `~/ProcessMonitorLogs` | `~/GozLogs` |
+| The test programs, when the tests are built | `pmt_steady` and the other `pmt_*` | `tpz_steady` and the other `tpz_*` |
 
 A configuration that still has a `ProcessManager:` section is reported as having an unknown key, and its
-settings are not read. Configuring the build with a `PM_*` variable stops and names the new one; `cmake -U 'PM_*'
-build` removes them from an older build folder. `cmake --install` does not enable `tepegoz.service` while
-`processmanager.service` is enabled, since two managers would fight over the same ports; it says how to switch.
+settings are not read. Configuring the build with a `PM_*` variable stops and names the new one;
+`cmake -U 'PM_*' build` removes them from an older build folder. `cmake --install` does not enable
+`tepegoz.service` while `processmanager.service` is enabled, since two managers would fight over the same ports;
+it says how to switch.
 
 On a machine that runs an earlier version, as root (the paths are those of the prefix `/usr`):
 ```text
@@ -106,8 +108,9 @@ systemctl start tepegoz
 ```
 Then remove what the earlier version installed: `/usr/bin/iltaren-ProcessManager`, `/usr/bin/process-monitor`,
 `/usr/lib/systemd/system/processmanager.service` (then `systemctl daemon-reload`), `/etc/processmanager/`,
-`/usr/share/processmanager/` and, once its logs are no longer needed, `/var/log/processmanager/`. Scripts that
-call `iltaren-ProcessManager` or `systemctl ... processmanager` need the new names.
+`/usr/share/processmanager/`, the test programs `/usr/bin/pmt_*` if they were installed, and, once its logs
+are no longer needed, `/var/log/processmanager/`. Scripts that call `iltaren-ProcessManager` or
+`systemctl ... processmanager` need the new names.
 
 - Services can be registered one per file, in the `services.d` folder next to the configuration file the manager
   reads. Each `<ProcessName>.yaml` holds the keys of one `Services` entry. The files are read in file name order,
@@ -164,7 +167,7 @@ call `iltaren-ProcessManager` or `systemctl ... processmanager` need the new nam
   that would add a problem writes nothing. Only registered services can be changed this way; `show` and `list`
   cover every service. Requests are a YAML or JSON mapping, and replies one JSON object, so the GUI needs no
   YAML reader. The port listens on 127.0.0.1 only, unless the new `Tepegoz` key `RemoteRegistration` is
-  true. It has no authentication, so whoever reaches it can make the manager run any program. `pmt_request`,
+  true. It has no authentication, so whoever reaches it can make the manager run any program. `tpz_request`,
   a new test program, sends requests by hand.
 - The command line registers services through the running manager: `add NAME EXECUTABLE [ARG...]` (arguments
   that start with `-` after `--`), `add NAME --from FILE`, `set NAME Key=Value... [--unset Key]`,

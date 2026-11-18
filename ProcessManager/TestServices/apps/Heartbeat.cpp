@@ -1,4 +1,4 @@
-// pmt_heartbeat: sends the manager heartbeats as a service, and can start late, stop beating or flap.
+// tpz_heartbeat: sends the manager heartbeats as a service, and can start late, stop beating or flap.
 
 #include "TestService.hpp"
 
@@ -9,8 +9,8 @@
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_heartbeat");
-    cxxopts::Options options{"pmt_heartbeat", "Sends heartbeats to the manager as --name, its ProcessName."};
+    test_service::SetProgramName("tpz_heartbeat");
+    cxxopts::Options options{"tpz_heartbeat", "Sends heartbeats to the manager as --name, its ProcessName."};
     options.add_options()
         ("name", "ProcessName of the service (required)", cxxopts::value<std::string>())
         ("endpoint", "Broker endpoint", cxxopts::value<std::string>()->default_value(std::string{test_service::default_command_endpoint}))

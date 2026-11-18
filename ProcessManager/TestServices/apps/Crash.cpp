@@ -1,4 +1,4 @@
-// pmt_crash: runs for a while, then dies by the signal it is given.
+// tpz_crash: runs for a while, then dies by the signal it is given.
 
 #include "TestService.hpp"
 
@@ -53,8 +53,8 @@ std::optional<int> SignalNumber(std::string_view name)
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_crash");
-    cxxopts::Options options{"pmt_crash", "Runs for --after-ms, then raises --signal. SIGTERM before that ends it with 0."};
+    test_service::SetProgramName("tpz_crash");
+    cxxopts::Options options{"tpz_crash", "Runs for --after-ms, then raises --signal. SIGTERM before that ends it with 0."};
     options.add_options()
         ("signal", "SEGV, ABRT, KILL, TERM, HUP, INT, PIPE, BUS, FPE or USR1", cxxopts::value<std::string>()->default_value("SEGV"))
         ("after-ms", "Run time before the signal", cxxopts::value<int>()->default_value("1000"));

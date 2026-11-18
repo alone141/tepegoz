@@ -1,4 +1,4 @@
-// pmt_stubborn: ignores SIGTERM, so only SIGKILL stops it; optionally with a child that ignores it too.
+// tpz_stubborn: ignores SIGTERM, so only SIGKILL stops it; optionally with a child that ignores it too.
 
 #include "TestService.hpp"
 
@@ -42,8 +42,8 @@ void Run(std::string_view who, std::chrono::milliseconds period)
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_stubborn");
-    cxxopts::Options options{"pmt_stubborn", "Counts and ignores SIGTERM; only SIGKILL (or SIGINT) stops it."};
+    test_service::SetProgramName("tpz_stubborn");
+    cxxopts::Options options{"tpz_stubborn", "Counts and ignores SIGTERM; only SIGKILL (or SIGINT) stops it."};
     options.add_options()
         ("child", "Start a child in the same process group that ignores SIGTERM too")
         ("period-ms", "Time between lines", cxxopts::value<int>()->default_value("1000"));

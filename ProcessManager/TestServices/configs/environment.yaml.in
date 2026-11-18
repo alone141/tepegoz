@@ -9,7 +9,7 @@ Tepegoz:
 Services:
   # A list keeps "two words" as one argument.
   - ProcessName: args_list
-    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_env
     Args: [--show, HOME, two words, plain]
     StdioMode: Pipe
     GracePeriodMs: 100
@@ -17,52 +17,52 @@ Services:
 
   # A text is split at spaces.
   - ProcessName: args_text
-    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_env
     Args: --show HOME two words
     StdioMode: Pipe
     GracePeriodMs: 100
     RestartMode: Never
 
   - ProcessName: env_vars
-    ExecutablePath: @PMT_BIN_DIR@/pmt_env
-    Args: [--show, PMT_COLOR, --show, PMT_EMPTY]
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_env
+    Args: [--show, TPZ_COLOR, --show, TPZ_EMPTY]
     StdioMode: Pipe
     GracePeriodMs: 100
     RestartMode: Never
     EnvironmentVariables:
-      PMT_COLOR: blue
-      PMT_EMPTY: ""
+      TPZ_COLOR: blue
+      TPZ_EMPTY: ""
 
-  # Starts from an empty environment: only PMT_ONLY is set.
+  # Starts from an empty environment: only TPZ_ONLY is set.
   - ProcessName: env_cleared
-    ExecutablePath: @PMT_BIN_DIR@/pmt_env
-    Args: [--show, PMT_ONLY, --all-env]
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_env
+    Args: [--show, TPZ_ONLY, --all-env]
     StdioMode: Pipe
     GracePeriodMs: 100
     RestartMode: Never
     InheritParentEnvironment: false
     EnvironmentVariables:
-      PMT_ONLY: this
+      TPZ_ONLY: this
 
   - ProcessName: display
-    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_env
     StdioMode: Pipe
     GracePeriodMs: 100
     RestartMode: Never
     UseDisplay: true
     Display: ":7"
-    XAuthority: /tmp/pmt.Xauthority
+    XAuthority: /tmp/tpz.Xauthority
 
   - ProcessName: cwd_tmp
-    ExecutablePath: @PMT_BIN_DIR@/pmt_env
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_env
     Cwd: /tmp
     StdioMode: Pipe
     GracePeriodMs: 100
     RestartMode: Never
 
   - ProcessName: cwd_missing
-    ExecutablePath: @PMT_BIN_DIR@/pmt_env
-    Cwd: /nonexistent/pmt
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_env
+    Cwd: /nonexistent/tpz
     StdioMode: Pipe
     GracePeriodMs: 100
     RestartMode: Never

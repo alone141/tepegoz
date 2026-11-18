@@ -1,8 +1,8 @@
-# registry: services registered through the manager's service registry (port 6671), with pmt_request and with the
+# registry: services registered through the manager's service registry (port 6671), with tpz_request and with the
 # command line's add, set, show, replace, list and remove.
 # The driver copies this config into the scenario's run folder, where the registry makes services.d next to it.
 # Run:   tepegoz --config registry.yaml
-#        pmt_request add '{"name": "extra", "definition": {"ExecutablePath": "/bin/sleep", "Args": ["60"]}}'
+#        tpz_request add '{"name": "extra", "definition": {"ExecutablePath": "/bin/sleep", "Args": ["60"]}}'
 #        tepegoz add other /bin/sleep 60
 
 Tepegoz:
@@ -11,7 +11,7 @@ Tepegoz:
 
 Services:
   - ProcessName: anchor
-    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_steady
     Args: [--period-ms, 2000]
     StdioMode: Pipe
     GracePeriodMs: 500

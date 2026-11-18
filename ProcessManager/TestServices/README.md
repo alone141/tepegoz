@@ -9,19 +9,19 @@ Each program prints `HH:MM:SS.mmm name[pid]: message` lines and takes `--help`.
 
 | Program | What it does | Main options |
 |---|---|---|
-| `pmt_steady` | Prints a line every period; on SIGTERM takes its time and exits | `--period-ms`, `--stop-delay-ms`, `--exit-code` |
-| `pmt_exit` | Runs for a while, then exits with a code | `--code`, `--after-ms` |
-| `pmt_crash` | Runs for a while, then dies by a signal (no core file) | `--signal SEGV\|ABRT\|KILL\|TERM\|HUP\|INT\|PIPE\|BUS\|FPE\|USR1`, `--after-ms` |
-| `pmt_stubborn` | Counts and ignores SIGTERM; only SIGKILL stops it | `--child` (a child that ignores it too), `--period-ms` |
-| `pmt_heartbeat` | Sends heartbeats as the service, like a real one | `--name` (its ProcessName), `--period-ms`, `--first-beat-ms`, `--beats N`, `--flap-ms` |
-| `pmt_forker` | Starts children; one can escape with `setsid()`; the parent can crash | `--children`, `--escapee`, `--crash-parent-after-ms`, `--child-lifetime-ms` |
-| `pmt_chatty` | Writes numbered lines to stdout and stderr | `--rate`, `--line-bytes`, `--stderr-every`, `--no-newline`, `--duration-ms` |
-| `pmt_env` | Prints its arguments, working directory, ids and environment, then waits | `--show NAME`, `--all-env`, `--exit-after-ms` |
-| `pmt_hog` | Keeps threads busy and holds memory | `--cpu-percent`, `--threads`, `--memory-mb` |
-| `pmt_watch` | Prints the manager's health reports as text, one line per service; `pending=1` marks a service whose reloaded definition waits for its next start | `--once`, `--timeout-ms`, `--endpoint` |
-| `pmt_request` | Sends one request, its frames given as arguments, to the service registry (port 6671) by default, and prints each frame of the reply on a line | `--endpoint`, `--timeout-ms` |
+| `tpz_steady` | Prints a line every period; on SIGTERM takes its time and exits | `--period-ms`, `--stop-delay-ms`, `--exit-code` |
+| `tpz_exit` | Runs for a while, then exits with a code | `--code`, `--after-ms` |
+| `tpz_crash` | Runs for a while, then dies by a signal (no core file) | `--signal SEGV\|ABRT\|KILL\|TERM\|HUP\|INT\|PIPE\|BUS\|FPE\|USR1`, `--after-ms` |
+| `tpz_stubborn` | Counts and ignores SIGTERM; only SIGKILL stops it | `--child` (a child that ignores it too), `--period-ms` |
+| `tpz_heartbeat` | Sends heartbeats as the service, like a real one | `--name` (its ProcessName), `--period-ms`, `--first-beat-ms`, `--beats N`, `--flap-ms` |
+| `tpz_forker` | Starts children; one can escape with `setsid()`; the parent can crash | `--children`, `--escapee`, `--crash-parent-after-ms`, `--child-lifetime-ms` |
+| `tpz_chatty` | Writes numbered lines to stdout and stderr | `--rate`, `--line-bytes`, `--stderr-every`, `--no-newline`, `--duration-ms` |
+| `tpz_env` | Prints its arguments, working directory, ids and environment, then waits | `--show NAME`, `--all-env`, `--exit-after-ms` |
+| `tpz_hog` | Keeps threads busy and holds memory | `--cpu-percent`, `--threads`, `--memory-mb` |
+| `tpz_watch` | Prints the manager's health reports as text, one line per service; `pending=1` marks a service whose reloaded definition waits for its next start | `--once`, `--timeout-ms`, `--endpoint` |
+| `tpz_request` | Sends one request, its frames given as arguments, to the service registry (port 6671) by default, and prints each frame of the reply on a line | `--endpoint`, `--timeout-ms` |
 
-`pmt_heartbeat` only counts for a service with `CheckHealth: true` and a `--name` equal to its `ProcessName`.
+`tpz_heartbeat` only counts for a service with `CheckHealth: true` and a `--name` equal to its `ProcessName`.
 
 ## Scenario configs
 
@@ -41,7 +41,7 @@ puts copies with the installed paths in `share/tepegoz/test-setup/`.
 | `everything` | One service of each kind, for watching in the monitor GUI |
 | `registered` | A service that only a file in `services.d` defines, between two of the config's services in the start order, and `--start all` |
 | `reload` | `reload` while the manager runs: a new file, an edited file (the mark, then `--restart`), a reformatted file, a deleted file, a broken file, a broken main file, `--no-wait`, and the exit codes |
-| `registry` | Registering through port 6671 with `pmt_request`: a refused add that writes nothing, an add that starts, a held add, an update (the mark), a replace with restart, show, list, a main-file service that cannot be replaced, and a remove refused for a dependent, then forced. Then the same with the command line's `add`, `set`, `show`, `replace`, `list` and `remove`, and their exit codes |
+| `registry` | Registering through port 6671 with `tpz_request`: a refused add that writes nothing, an add that starts, a held add, an update (the mark), a replace with restart, show, list, a main-file service that cannot be replaced, and a remove refused for a dependent, then forced. Then the same with the command line's `add`, `set`, `show`, `replace`, `list` and `remove`, and their exit codes |
 
 `validate` reports one error for `environment` on purpose: `cwd_missing` names a working directory that does not
 exist, to show that the service still starts.
@@ -51,7 +51,7 @@ into the scenario's run folder and writes `services.d/registered.yaml` next to i
 `.txt` file and a subfolder that the manager ignores. To run it by hand, make such a folder next to a copy of the
 config.
 
-`reload` is placed the same way, with `edited.yaml` (`pmt_env`, which prints `PMT_MARK`), `doomed.yaml` and
+`reload` is placed the same way, with `edited.yaml` (`tpz_env`, which prints `TPZ_MARK`), `doomed.yaml` and
 `fragile.yaml` in `services.d`. The driver then changes these files and the copied config while the manager
 runs, and runs `reload` after each change. It checks that unchanged services keep their pids, that an edited
 service keeps running with the mark until `--restart` starts it with its new definition, and that a broken main
@@ -59,7 +59,7 @@ file makes `reload` exit with 1 and changes nothing. Exit code 2, no answer with
 tests only, since a running manager always answers.
 
 `registry` is copied into the run folder too, without a `services.d`: the first add that the manager accepts
-makes it. The driver first sends requests with `pmt_request`, their parameters as JSON, as the GUI will. Then it
+makes it. The driver first sends requests with `tpz_request`, their parameters as JSON, as the GUI will. Then it
 runs the command line: `add` with a relative program and arguments after `--`, `add --dry-run`, `set`,
 `show > camera.yaml` with an edit and `replace --from camera.yaml --restart`, `list`, `remove` of a needed
 service (exit code 1) and with `--force`, and a refused `add` (exit code 1).
@@ -68,14 +68,14 @@ Run one by hand and watch it:
 
 ```bash
 build/ProcessManagerApp/src/ProcessManagerApp --config build/TestServices/configs/basic.yaml
-build/TestServices/apps/pmt_watch
+build/TestServices/apps/tpz_watch
 build/ProcessManagerApp/src/ProcessManagerApp --kill second
 ```
 
 ## The driver
 
 `scripts/run_scenarios.py` runs the scenarios one after another. For each, it starts the manager, follows its
-reports through `pmt_watch`, sends commands, and checks states, restart counts, timings and output. It needs only
+reports through `tpz_watch`, sends commands, and checks states, restart counts, timings and output. It needs only
 Python 3.7 or newer, and the manager's ports (5557, 6667, 6669) free, so stop any running manager first.
 
 ```bash

@@ -23,7 +23,7 @@ namespace
 
 volatile std::sig_atomic_t stopRequested = 0;
 volatile std::sig_atomic_t termCount = 0;
-std::string programName = "pmt";
+std::string programName = "tpz";
 
 void OnStopSignal(int)
 {

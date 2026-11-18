@@ -1,4 +1,4 @@
-// pmt_forker: starts children in its process group and, optionally, one that escapes into a session of its own;
+// tpz_forker: starts children in its process group and, optionally, one that escapes into a session of its own;
 // the parent can crash and leave them behind.
 
 #include "TestService.hpp"
@@ -42,8 +42,8 @@ void RunChild(const std::string& who, std::chrono::milliseconds period, std::chr
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_forker");
-    cxxopts::Options options{"pmt_forker", "Starts children; the parent stops on SIGTERM and leaves them to the manager."};
+    test_service::SetProgramName("tpz_forker");
+    cxxopts::Options options{"tpz_forker", "Starts children; the parent stops on SIGTERM and leaves them to the manager."};
     options.add_options()
         ("children", "Children in the parent's process group", cxxopts::value<int>()->default_value("2"))
         ("escapee", "Also start a child that calls setsid(), leaving the process group")

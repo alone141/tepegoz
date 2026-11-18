@@ -1,6 +1,6 @@
 """Runs the TestServices scenarios under the real manager and checks what it does.
 
-Each scenario starts the manager with one of the scenario configs, follows its health reports through pmt_watch,
+Each scenario starts the manager with one of the scenario configs, follows its health reports through tpz_watch,
 sends commands through the manager's own command line, and checks the states, restart counts and output that
 follow. It needs Python 3.7 or newer and nothing else, and the manager's ports (5557, 6667, 6669) free.
 
@@ -66,7 +66,7 @@ REPORT_LINE = re.compile(
 
 
 class Watch:
-    """Follows the manager's health reports through pmt_watch."""
+    """Follows the manager's health reports through tpz_watch."""
 
     def __init__(self, exe: str):
         self.lock = threading.Lock()
@@ -189,10 +189,10 @@ class Manager:
 
     def request(self, operation: str,
                 parameters: Optional[Dict[str, object]] = None) -> Tuple[str, Dict[str, object]]:
-        """A service registry request through pmt_request, with its parameters as JSON: the reply's status and
+        """A service registry request through tpz_request, with its parameters as JSON: the reply's status and
         object."""
         frames = [operation] + ([json.dumps(parameters)] if parameters is not None else [])
-        result = subprocess.run([os.path.join(self.paths.bin_dir, "pmt_request"), "--"] + frames,
+        result = subprocess.run([os.path.join(self.paths.bin_dir, "tpz_request"), "--"] + frames,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=30)
         lines = result.stdout.splitlines()
         if result.returncode != 0 or len(lines) < 2:
@@ -223,18 +223,18 @@ class Manager:
         return [line.split(marker, 1)[1] for line in self.log().splitlines() if marker in line]
 
     def said(self, name: str) -> List[str]:
-        """The test program's own messages: the text after its "pmt_x[pid]: " prefix."""
+        """The test program's own messages: the text after its "tpz_x[pid]: " prefix."""
         return [line.split("]: ", 1)[1] for line in self.service_lines(name) if "]: " in line]
 
     def chatter(self, name: str) -> List[str]:
-        """pmt_chatty's numbered lines among the service's lines, leaving out the manager's own events."""
+        """tpz_chatty's numbered lines among the service's lines, leaving out the manager's own events."""
         return [line for line in self.service_lines(name) if re.search(r"(stdout|stderr) line \d+|^x+$", line)]
 
     def start_times(self, name: str) -> List[float]:
         """When each run of the service printed "started", in seconds of the day, from its own time stamps."""
         times = []
         for line in self.service_lines(name):
-            match = re.match(r"^(\d\d):(\d\d):(\d\d\.\d{3}) pmt_\w+\[\d+\]: started", line)
+            match = re.match(r"^(\d\d):(\d\d):(\d\d\.\d{3}) tpz_\w+\[\d+\]: started", line)
             if match:
                 times.append(int(match[1]) * 3600 + int(match[2]) * 60 + float(match[3]))
         return times
@@ -516,8 +516,8 @@ def scenario_stdio(c: Context) -> None:
     c.results.note("partial: 3 s of output without newlines gave %d log lines, the longest %d bytes" %
                    (len(partial), max((len(line) for line in partial), default=0)))
 
-    with open("/tmp/pmt_to_file.txt", errors="replace") as output:
-        c.results.check("stdout line" in output.read(), "to_file: output goes to /tmp/pmt_to_file.txt")
+    with open("/tmp/tpz_to_file.txt", errors="replace") as output:
+        c.results.check("stdout line" in output.read(), "to_file: output goes to /tmp/tpz_to_file.txt")
     c.results.check(not c.manager.chatter("to_file"), "to_file: none of it is in the manager's log")
 
     old = {name: c.watch.get(name).pid for name in ("to_file", "to_file_append")}
@@ -526,11 +526,11 @@ def scenario_stdio(c: Context) -> None:
     for name in old:
         c.watch.wait(name, lambda r, pid=old[name]: is_running(r) and r.pid != pid, 8)
     time.sleep(1.5)
-    for name, path, runs, why in (("to_file", "/tmp/pmt_to_file.txt", 1, "a restart starts the file again"),
-                                  ("to_file_append", "/tmp/pmt_to_file_append.txt", 2,
+    for name, path, runs, why in (("to_file", "/tmp/tpz_to_file.txt", 1, "a restart starts the file again"),
+                                  ("to_file_append", "/tmp/tpz_to_file_append.txt", 2,
                                    "a restart adds to the file (StdioAppend: true)")):
         with open(path, errors="replace") as output:
-            found = len(re.findall(r"pmt_chatty\[\d+\]: started", output.read()))
+            found = len(re.findall(r"tpz_chatty\[\d+\]: started", output.read()))
         c.results.check(found == runs, "%s: %s (%d runs in the file)" % (name, why, found))
 
     c.results.check(not c.manager.chatter("discarded"), "discarded: nothing of it is in the manager's log")
@@ -553,18 +553,18 @@ def scenario_environment(c: Context) -> None:
                     "args_list: a list keeps 'two words' as one argument %s" % argv("args_list"))
     c.results.check(argv("args_text") == ["--show", "HOME", "two", "words"],
                     "args_text: a text is split at spaces %s" % argv("args_text"))
-    c.results.check(said("env_vars", "env PMT_COLOR='blue'"), "env_vars: PMT_COLOR=blue is set")
-    c.results.note("env_vars: PMT_EMPTY: \"\" gives %s" %
-                   next((line for line in c.manager.said("env_vars") if line.startswith("env PMT_EMPTY")), "nothing"))
+    c.results.check(said("env_vars", "env TPZ_COLOR='blue'"), "env_vars: TPZ_COLOR=blue is set")
+    c.results.note("env_vars: TPZ_EMPTY: \"\" gives %s" %
+                   next((line for line in c.manager.said("env_vars") if line.startswith("env TPZ_EMPTY")), "nothing"))
     count = numbers(c.manager.said("env_cleared"), r"^environment has (\d+) variables")
-    c.results.check(said("env_cleared", "env PMT_ONLY='this'") and said("env_cleared", "env PATH unset"),
-                    "env_cleared: starts with PMT_ONLY and without PATH (%s variables in all)" %
+    c.results.check(said("env_cleared", "env TPZ_ONLY='this'") and said("env_cleared", "env PATH unset"),
+                    "env_cleared: starts with TPZ_ONLY and without PATH (%s variables in all)" %
                     (count[0] if count else "?"))
-    c.results.check(said("display", "env DISPLAY=':7'") and said("display", "env XAUTHORITY='/tmp/pmt.Xauthority'"),
+    c.results.check(said("display", "env DISPLAY=':7'") and said("display", "env XAUTHORITY='/tmp/tpz.Xauthority'"),
                     "display: DISPLAY and XAUTHORITY are set from Display and XAuthority")
     c.results.check(said("cwd_tmp", "cwd /tmp"), "cwd_tmp: runs in /tmp")
     cwd = next((line for line in c.manager.said("cwd_missing") if line.startswith("cwd ")), None)
-    c.results.note("cwd_missing (Cwd /nonexistent/pmt): %s" %
+    c.results.note("cwd_missing (Cwd /nonexistent/tpz): %s" %
                    ("it still runs, in %s" % cwd[4:] if cwd else "it did not start"))
 
 
@@ -621,18 +621,18 @@ def steady_service(paths: Paths, name: str) -> str:
             "ExecutablePath: '%s'\n"
             "Args: [--period-ms, 2000]\n"
             "StdioMode: Pipe\n"
-            "GracePeriodMs: 500\n" % (name, os.path.abspath(os.path.join(paths.bin_dir, "pmt_steady"))))
+            "GracePeriodMs: 500\n" % (name, os.path.abspath(os.path.join(paths.bin_dir, "tpz_steady"))))
 
 
 def marked_service(paths: Paths, mark: str) -> str:
-    """edited: pmt_env, which prints PMT_MARK as its definition sets it."""
+    """edited: tpz_env, which prints TPZ_MARK as its definition sets it."""
     return ("ProcessName: edited\n"
             "ExecutablePath: '%s'\n"
-            "Args: [--show, PMT_MARK]\n"
+            "Args: [--show, TPZ_MARK]\n"
             "EnvironmentVariables:\n"
-            "  PMT_MARK: %s\n"
+            "  TPZ_MARK: %s\n"
             "StdioMode: Pipe\n"
-            "GracePeriodMs: 500\n" % (os.path.abspath(os.path.join(paths.bin_dir, "pmt_env")), mark))
+            "GracePeriodMs: 500\n" % (os.path.abspath(os.path.join(paths.bin_dir, "tpz_env")), mark))
 
 
 def write(path: str, text: str) -> None:
@@ -662,7 +662,7 @@ def scenario_reload(c: Context) -> None:
     write(os.path.join(folder, "fragile.yaml"),
           "# reformatted, not changed\nGracePeriodMs:   500\nStdioMode: Pipe\nArgs:\n  - --period-ms\n  - 2000\n" +
           "ExecutablePath: '%s'\nProcessName: fragile\n" %
-          os.path.abspath(os.path.join(c.paths.bin_dir, "pmt_steady")))
+          os.path.abspath(os.path.join(c.paths.bin_dir, "tpz_steady")))
     code, out = c.manager.reload()
     c.results.check(code == 0 and "restart to apply their new definition: edited" in out,
                     "an edited file, then reload: exit code 0, and it names edited as waiting for a restart (%s)" %
@@ -670,9 +670,9 @@ def scenario_reload(c: Context) -> None:
     edited = c.watch.wait("edited", lambda r: r.pending == 1, 5)
     c.results.check(edited is not None and edited.pid == pids["edited"] and is_running(edited),
                     "edited keeps running with the same pid, marked restart to apply")
-    c.results.check(any("env PMT_MARK='one'" in line for line in c.manager.said("edited")) and
-                    not any("env PMT_MARK='two'" in line for line in c.manager.said("edited")),
-                    "it still runs its old definition: it printed PMT_MARK='one' and not 'two'")
+    c.results.check(any("env TPZ_MARK='one'" in line for line in c.manager.said("edited")) and
+                    not any("env TPZ_MARK='two'" in line for line in c.manager.said("edited")),
+                    "it still runs its old definition: it printed TPZ_MARK='one' and not 'two'")
     fragile = c.watch.get("fragile")
     c.results.check(fragile.pid == pids["fragile"] and fragile.pending == 0,
                     "fragile, only reformatted, keeps its pid and is not marked")
@@ -686,10 +686,10 @@ def scenario_reload(c: Context) -> None:
                     "--restart edited starts it with a new pid and clears the mark")
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and \
-            not any("env PMT_MARK='two'" in line for line in c.manager.said("edited")):
+            not any("env TPZ_MARK='two'" in line for line in c.manager.said("edited")):
         time.sleep(0.1)
-    c.results.check(any("env PMT_MARK='two'" in line for line in c.manager.said("edited")),
-                    "the new run has the new definition: it prints PMT_MARK='two'")
+    c.results.check(any("env TPZ_MARK='two'" in line for line in c.manager.said("edited")),
+                    "the new run has the new definition: it prints TPZ_MARK='two'")
     pids["edited"] = edited.pid if edited else -1
 
     os.remove(os.path.join(folder, "doomed.yaml"))
@@ -733,15 +733,15 @@ def scenario_reload(c: Context) -> None:
 
 
 def steady_definition(paths: Paths) -> Dict[str, object]:
-    """A pmt_steady service as a registry request carries it: a JSON object."""
-    return {"ExecutablePath": os.path.abspath(os.path.join(paths.bin_dir, "pmt_steady")),
+    """A tpz_steady service as a registry request carries it: a JSON object."""
+    return {"ExecutablePath": os.path.abspath(os.path.join(paths.bin_dir, "tpz_steady")),
             "Args": ["--period-ms", "2000"], "StdioMode": "Pipe", "GracePeriodMs": 500}
 
 
 def marked_definition(paths: Paths, mark: str) -> Dict[str, object]:
-    """pmt_env, which prints PMT_MARK as its definition sets it."""
-    return {"ExecutablePath": os.path.abspath(os.path.join(paths.bin_dir, "pmt_env")),
-            "Args": ["--show", "PMT_MARK"], "EnvironmentVariables": {"PMT_MARK": mark},
+    """tpz_env, which prints TPZ_MARK as its definition sets it."""
+    return {"ExecutablePath": os.path.abspath(os.path.join(paths.bin_dir, "tpz_env")),
+            "Args": ["--show", "TPZ_MARK"], "EnvironmentVariables": {"TPZ_MARK": mark},
             "StdioMode": "Pipe", "GracePeriodMs": 500}
 
 
@@ -764,7 +764,7 @@ def scenario_registry(c: Context) -> None:
     status, reply = c.manager.request("version")
     c.results.check(status == "ok" and reply.get("version") == 1, "version: protocol version 1 (%s)" % status)
 
-    status, reply = c.manager.request("add", {"name": "missing", "definition": {"ExecutablePath": "/nonexistent/pmt"}})
+    status, reply = c.manager.request("add", {"name": "missing", "definition": {"ExecutablePath": "/nonexistent/tpz"}})
     c.results.check(status == "refused" and
                     any("ExecutablePath does not exists" in problem for problem in reply.get("problems", [])),
                     "add of a missing executable is refused and names the problem (%s)" % reply.get("message"))
@@ -789,31 +789,31 @@ def scenario_registry(c: Context) -> None:
     definition = marked_definition(c.paths, "one")
     status, reply = c.manager.request("add", {"name": "edited", "definition": definition})
     edited = c.watch.wait("edited", is_running, 10)
-    if not c.results.check(status == "ok" and edited is not None, "edited, a pmt_env, is registered and runs"):
+    if not c.results.check(status == "ok" and edited is not None, "edited, a tpz_env, is registered and runs"):
         return
     pid = edited.pid
 
     status, reply = c.manager.request("update",
-                                      {"name": "edited", "set": {"EnvironmentVariables": {"PMT_MARK": "two"}}})
+                                      {"name": "edited", "set": {"EnvironmentVariables": {"TPZ_MARK": "two"}}})
     c.results.check(status == "ok" and reply.get("outcome") == "waiting",
                     "update: the new definition waits for a restart (%s)" % reply.get("message"))
     marked = c.watch.wait("edited", lambda report: report.pending == 1, 5)
     c.results.check(marked is not None and marked.pid == pid, "edited keeps its pid and is marked restart to apply")
 
-    definition["EnvironmentVariables"] = {"PMT_MARK": "three"}
+    definition["EnvironmentVariables"] = {"TPZ_MARK": "three"}
     status, reply = c.manager.request("replace", {"name": "edited", "definition": definition, "restart": True})
     c.results.check(status == "ok" and reply.get("outcome") == "restarting",
                     "replace with restart: it restarts at once (%s)" % reply.get("message"))
     restarted = c.watch.wait("edited", lambda report: is_running(report) and report.pid != pid and report.pending == 0,
                              10)
     c.results.check(restarted is not None, "edited runs with a new pid and without the mark")
-    c.results.check(wait_said(c, "edited", "env PMT_MARK='three'", 5),
-                    "and with the replaced definition: it prints PMT_MARK='three'")
+    c.results.check(wait_said(c, "edited", "env TPZ_MARK='three'", 5),
+                    "and with the replaced definition: it prints TPZ_MARK='three'")
 
     status, reply = c.manager.request("show", {"name": "edited"})
     shown = reply.get("definition") or {}
     c.results.check(status == "ok" and reply.get("origin") == "registered" and
-                    shown.get("EnvironmentVariables") == {"PMT_MARK": "three"} and shown.get("Args") == definition["Args"],
+                    shown.get("EnvironmentVariables") == {"TPZ_MARK": "three"} and shown.get("Args") == definition["Args"],
                     "show gives the definition on disk, as JSON")
 
     status, reply = c.manager.request("list")
@@ -871,7 +871,7 @@ def table_rows(text: str) -> Dict[str, List[str]]:
 def registry_verbs(c: Context, folder: str) -> None:
     """The same registry through the command line's verbs: add, set, show, replace, list and remove."""
     workdir = os.path.dirname(c.manager.config)
-    steady = os.path.join(c.paths.bin_dir, "pmt_steady")
+    steady = os.path.join(c.paths.bin_dir, "tpz_steady")
     relative = os.path.relpath(steady, workdir)
     code, out, err = c.manager.cli(["add", "camera", relative, "--", "--period-ms", "1500"], cwd=workdir)
     camera = c.watch.wait("camera", is_running, 10)
@@ -931,7 +931,7 @@ def registry_verbs(c: Context, folder: str) -> None:
                     not os.path.exists(os.path.join(folder, "camera.yaml")),
                     "remove camera --force: exit code 0, and camera and its file are gone (%d)" % code)
 
-    code, out, err = c.manager.cli(["add", "ghost", "/nonexistent/pmt"])
+    code, out, err = c.manager.cli(["add", "ghost", "/nonexistent/tpz"])
     c.results.check(code == 1 and "ExecutablePath does not exists" in err and
                     not os.path.exists(os.path.join(folder, "ghost.yaml")),
                     "add of a missing program: exit code 1, it prints the problem, and nothing is written (%s)" %
@@ -939,7 +939,7 @@ def registry_verbs(c: Context, folder: str) -> None:
 
 
 def prepare_stdio(paths: Paths) -> None:
-    for path in ("/tmp/pmt_to_file.txt", "/tmp/pmt_to_file_append.txt"):
+    for path in ("/tmp/tpz_to_file.txt", "/tmp/tpz_to_file_append.txt"):
         if os.path.exists(path):
             os.remove(path)
 
@@ -956,7 +956,7 @@ def place_registered(paths: Paths, config: str, workdir: str) -> str:
                       "Args: [--period-ms, 2000]\n"
                       "StdioMode: Pipe\n"
                       "GracePeriodMs: 500\n"
-                      "DependsOn: [anchor]\n" % os.path.abspath(os.path.join(paths.bin_dir, "pmt_steady")))
+                      "DependsOn: [anchor]\n" % os.path.abspath(os.path.join(paths.bin_dir, "tpz_steady")))
     # The manager ignores these; each would be a problem if it read them.
     for ignored in (".registered.yaml.tmp", ".hidden.yaml", "notes.txt", os.path.join("subfolder", "other.yaml")):
         with open(os.path.join(folder, ignored), "w") as junk:
@@ -1027,7 +1027,7 @@ def validate(paths: Paths, scenario: str, config: str, results: Results) -> None
 
 
 def leftovers(bin_dir: str) -> List[Tuple[int, str]]:
-    """Test programs still running from bin_dir, other than pmt_watch."""
+    """Test programs still running from bin_dir, other than tpz_watch."""
     found = []
     real_bin = os.path.realpath(bin_dir)
     for entry in os.listdir("/proc"):
@@ -1038,7 +1038,7 @@ def leftovers(bin_dir: str) -> List[Tuple[int, str]]:
         except OSError:
             continue
         name = os.path.basename(exe)
-        if os.path.dirname(exe) == real_bin and name.startswith("pmt_") and name != "pmt_watch":
+        if os.path.dirname(exe) == real_bin and name.startswith("tpz_") and name != "tpz_watch":
             if pid_alive(int(entry)):
                 found.append((int(entry), name))
     return found
@@ -1057,7 +1057,7 @@ def run_scenario(name: str, paths: Paths, run_dir: str) -> Results:
         PREPARE[name](paths)
 
     manager = Manager(paths, config, workdir)
-    watch = Watch(os.path.join(paths.bin_dir, "pmt_watch"))
+    watch = Watch(os.path.join(paths.bin_dir, "tpz_watch"))
     try:
         if results.check(watch.wait_reports(FIRST_REPORT_LIMIT_S), "the manager publishes health reports"):
             SCENARIOS[name](Context(manager, watch, results, paths))
@@ -1112,7 +1112,7 @@ def main() -> int:
     parser.add_argument("--build-dir", help="a build tree with ENABLE_TEST on")
     parser.add_argument("--prefix", help="the install prefix of the manager and the test programs")
     parser.add_argument("--manager", help="the manager program")
-    parser.add_argument("--bin-dir", help="the folder of the pmt_* programs")
+    parser.add_argument("--bin-dir", help="the folder of the tpz_* programs")
     parser.add_argument("--configs", help="the folder of the scenario configs")
     parser.add_argument("--list", action="store_true", help="list the scenarios and exit")
     args = parser.parse_args()
@@ -1125,7 +1125,7 @@ def main() -> int:
     if unknown:
         print("Unknown scenario: %s. Use --list." % ", ".join(unknown), file=sys.stderr)
         return 2
-    for what, path in (("manager", paths.manager), ("pmt_watch", os.path.join(paths.bin_dir, "pmt_watch")),
+    for what, path in (("manager", paths.manager), ("tpz_watch", os.path.join(paths.bin_dir, "tpz_watch")),
                        ("configs", paths.configs)):
         if not path or not os.path.exists(path):
             print("No %s at '%s': give --build-dir or --prefix (see --help)." % (what, path), file=sys.stderr)
@@ -1136,7 +1136,7 @@ def main() -> int:
               ", ".join(map(str, busy)), file=sys.stderr)
         return 2
 
-    run_dir = tempfile.mkdtemp(prefix="pmt_run_")
+    run_dir = tempfile.mkdtemp(prefix="tpz_run_")
     print("Manager logs go to %s" % run_dir, flush=True)
     all_results = [run_scenario(name, paths, run_dir) for name in (args.scenarios or list(SCENARIOS))]
 

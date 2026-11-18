@@ -1,4 +1,4 @@
-// pmt_request: sends one request to a ZeroMQ ROUTER, such as the manager's service registry, and prints the reply,
+// tpz_request: sends one request to a ZeroMQ ROUTER, such as the manager's service registry, and prints the reply,
 // one line per frame. The request's frames are the arguments after the options.
 
 #include "TestService.hpp"
@@ -28,8 +28,8 @@ constexpr int no_reply_exit_code = 2;
 
 int main(int argc, char** argv)
 {
-    test_service::SetProgramName("pmt_request");
-    cxxopts::Options options{"pmt_request", "Sends the frames given after the options as one request, and prints each "
+    test_service::SetProgramName("tpz_request");
+    cxxopts::Options options{"tpz_request", "Sends the frames given after the options as one request, and prints each "
                                             "frame of the reply on a line of its own."};
     options.add_options()
         ("endpoint", "Where the request goes", cxxopts::value<std::string>()->default_value(std::string{test_service::default_registry_endpoint}))
@@ -45,7 +45,7 @@ int main(int argc, char** argv)
 
     if (result.count("frames") == 0)
     {
-        std::fprintf(stderr, "pmt_request: give the request's frames after the options\n");
+        std::fprintf(stderr, "tpz_request: give the request's frames after the options\n");
         return 1;
     }
 
@@ -64,14 +64,14 @@ int main(int argc, char** argv)
     zmq::poll(items, 1, std::chrono::milliseconds{timeoutMs});
     if ((items[0].revents & ZMQ_POLLIN) == 0)
     {
-        std::fprintf(stderr, "pmt_request: no reply within %d ms\n", timeoutMs);
+        std::fprintf(stderr, "tpz_request: no reply within %d ms\n", timeoutMs);
         return test_service::no_reply_exit_code;
     }
 
     std::vector<zmq::message_t> reply;
     if (!zmq::recv_multipart(dealer, std::back_inserter(reply)).has_value())
     {
-        std::fprintf(stderr, "pmt_request: the reply could not be read\n");
+        std::fprintf(stderr, "tpz_request: the reply could not be read\n");
         return test_service::no_reply_exit_code;
     }
 

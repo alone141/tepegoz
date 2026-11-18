@@ -7,13 +7,13 @@ Tepegoz:
 Services:
   # About half a core and 64 MB.
   - ProcessName: hog
-    ExecutablePath: @PMT_BIN_DIR@/pmt_hog
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_hog
     Args: [--cpu-percent, 50, --memory-mb, 64]
     StdioMode: Pipe
     GracePeriodMs: 200
 
   - ProcessName: idle
-    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_steady
     Args: [--period-ms, 5000]
     StdioMode: Pipe
     GracePeriodMs: 200

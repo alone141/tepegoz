@@ -30,7 +30,7 @@ std::vector<char*> Arguments(std::vector<std::string>& texts)
 
 test_service::OptionsCode Parse(std::vector<std::string> texts, cxxopts::ParseResult& out)
 {
-    cxxopts::Options options{"pmt_test", "test"};
+    cxxopts::Options options{"tpz_test", "test"};
     options.add_options()("period-ms", "period", cxxopts::value<int>()->default_value("1000"));
     std::vector<char*> arguments = Arguments(texts);
     return test_service::ParseOptions(options, static_cast<int>(arguments.size()), arguments.data(), out);
@@ -41,14 +41,14 @@ test_service::OptionsCode Parse(std::vector<std::string> texts, cxxopts::ParseRe
 TEST(TestServiceTest, ParseOptionsReadsKnownOption)
 {
     cxxopts::ParseResult result{};
-    EXPECT_EQ(Parse({"pmt_test", "--period-ms", "250"}, result), test_service::OptionsCode::Ok);
+    EXPECT_EQ(Parse({"tpz_test", "--period-ms", "250"}, result), test_service::OptionsCode::Ok);
     EXPECT_EQ(result["period-ms"].as<int>(), 250);
 }
 
 TEST(TestServiceTest, ParseOptionsReportsHelp)
 {
     cxxopts::ParseResult result{};
-    const test_service::OptionsCode code = Parse({"pmt_test", "--help"}, result);
+    const test_service::OptionsCode code = Parse({"tpz_test", "--help"}, result);
     EXPECT_EQ(code, test_service::OptionsCode::Help);
     EXPECT_EQ(test_service::ExitCodeOf(code), 0);
 }
@@ -56,7 +56,7 @@ TEST(TestServiceTest, ParseOptionsReportsHelp)
 TEST(TestServiceTest, ParseOptionsRejectsUnknownOption)
 {
     cxxopts::ParseResult result{};
-    const test_service::OptionsCode code = Parse({"pmt_test", "--no-such-option"}, result);
+    const test_service::OptionsCode code = Parse({"tpz_test", "--no-such-option"}, result);
     EXPECT_EQ(code, test_service::OptionsCode::Invalid);
     EXPECT_EQ(test_service::ExitCodeOf(code), test_service::exit_invalid_options);
 }
@@ -64,7 +64,7 @@ TEST(TestServiceTest, ParseOptionsRejectsUnknownOption)
 TEST(TestServiceTest, ParseOptionsRejectsOptionWithoutValue)
 {
     cxxopts::ParseResult result{};
-    EXPECT_EQ(Parse({"pmt_test", "--period-ms"}, result), test_service::OptionsCode::Invalid);
+    EXPECT_EQ(Parse({"tpz_test", "--period-ms"}, result), test_service::OptionsCode::Invalid);
 }
 
 TEST(TestServiceTest, SleepWithoutStopRunsItsTime)

@@ -10,14 +10,14 @@ Tepegoz:
 
 Services:
   - ProcessName: anchor
-    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_steady
     Args: [--period-ms, 2000]
     StdioMode: Pipe
     GracePeriodMs: 500
 
   # Depends on registered, which services.d/registered.yaml defines.
   - ProcessName: follower
-    ExecutablePath: @PMT_BIN_DIR@/pmt_steady
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_steady
     Args: [--period-ms, 2000]
     StdioMode: Pipe
     GracePeriodMs: 500

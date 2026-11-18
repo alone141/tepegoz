@@ -6,7 +6,7 @@ Tepegoz:
 
 Services:
   - ProcessName: hb_ok
-    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_heartbeat
     Args: [--name, hb_ok, --period-ms, 500]
     StdioMode: Pipe
     CheckHealth: true
@@ -16,7 +16,7 @@ Services:
 
   # Stops beating after 3 s but keeps running: Unhealthy, then restarted.
   - ProcessName: hb_silent
-    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_heartbeat
     Args: [--name, hb_silent, --period-ms, 500, --beats, 6]
     StdioMode: Pipe
     CheckHealth: true
@@ -29,7 +29,7 @@ Services:
 
   # The same with RestartMode Never: stays Unhealthy and running.
   - ProcessName: hb_silent_never
-    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_heartbeat
     Args: [--name, hb_silent_never, --period-ms, 500, --beats, 6]
     StdioMode: Pipe
     CheckHealth: true
@@ -40,7 +40,7 @@ Services:
 
   # First heartbeat 4 s after the start, 2 s after the grace period ends.
   - ProcessName: hb_late
-    ExecutablePath: @PMT_BIN_DIR@/pmt_heartbeat
+    ExecutablePath: @TPZ_BIN_DIR@/tpz_heartbeat
     Args: [--name, hb_late, --period-ms, 500, --first-beat-ms, 4000]
     StdioMode: Pipe
     CheckHealth: true

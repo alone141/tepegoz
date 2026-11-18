@@ -36,7 +36,7 @@ ZeroMQ library.
 | Log directory | `/var/log/tepegoz/TepegozLog/` | |
 | systemd unit | `/usr/lib/systemd/system/tepegoz.service` | Enabled when installed as root on a running systemd. Not started. |
 | Monitor GUI | `/usr/share/tepegoz/gui/`, launcher `/usr/bin/goz` | |
-| Test programs (tests built) | `/usr/bin/keepalive`, `/usr/bin/pmt_*`, `/usr/share/tepegoz/test-setup/` | See [Testing with TestServices](#testing-with-testservices). |
+| Test programs (tests built) | `/usr/bin/keepalive`, `/usr/bin/tpz_*`, `/usr/share/tepegoz/test-setup/` | See [Testing with TestServices](#testing-with-testservices). |
 
 The paths are built into the manager and the unit when you configure, so set the prefix then rather than with
 `cmake --install --prefix`. These cache variables change the install:
@@ -713,10 +713,10 @@ python3 ProcessManagerGui/goz.py
 | Port | Direction | Used by | Content |
 |---|---|---|---|
 | 5557 | Clients connect to the manager | Services (heartbeats), the command line, the GUI | Message broker (ZeroMQ ROUTER) |
-| 6667 | Clients subscribe | GUI, `status`, `pmt_watch` | Detailed health reports, every 500 ms and at once when a service's state changes |
+| 6667 | Clients subscribe | GUI, `status`, `tpz_watch` | Detailed health reports, every 500 ms and at once when a service's state changes |
 | 6669 | Clients subscribe | GUI | Broker status every second, and broker events (JSON) |
 | 6670 | Clients connect to the manager | GUI | Journal server |
-| 6671 | Clients connect to the manager | The command line, the GUI, `pmt_request` | Service registry: registers, changes and removes services. 127.0.0.1 only, unless `RemoteRegistration: true` |
+| 6671 | Clients connect to the manager | The command line, the GUI, `tpz_request` | Service registry: registers, changes and removes services. 127.0.0.1 only, unless `RemoteRegistration: true` |
 
 The manager listens on every interface, except on 6671, which listens on 127.0.0.1 unless `RemoteRegistration:
 true`. There is no authentication: anyone who can reach these ports can read the logs and send commands, and
