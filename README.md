@@ -10,5 +10,5 @@ state, resource use and logs, and starts and stops them, from the same machine o
 | Folder | Contents |
 |---|---|
 | `manager/` | The manager (C++20, CMake). Its `README.md` has the build requirements and release notes. |
-| `gui/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
+| `gui/` | Göz, the monitor GUI (Python 3.8 or newer, PyQt6, pyzmq). |
 | `docs/` | The documents above. |

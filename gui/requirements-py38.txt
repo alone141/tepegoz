@@ -1,0 +1,14 @@
+# What Goz needs on Python 3.8, which is what Ubuntu 20.04 has:
+#     python3 -m pip install --user -r requirements-py38.txt
+# On a newer Python, "python3 -m pip install --user PyQt6 pyzmq" is enough and this file is not needed.
+#
+# - PyQt6 6.7.1 is the newest PyQt6 that runs on Python 3.8, and PyQt6-Qt6 6.7.3 the newest Qt it accepts.
+# - PyQt6-sip 13.8.0 is the newest with a file built for Python 3.8. Left to itself, pip takes 13.9.0, which has
+#   none, and has to compile it.
+# - pip must be 20.3 or newer to read these files. Ubuntu 20.04's own pip, 20.0.2, is too old.
+#
+# docs/USAGE.md, "What it needs", has the steps, also for a machine without a network.
+PyQt6==6.7.1
+PyQt6-Qt6==6.7.3
+PyQt6-sip==13.8.0
+pyzmq==27.1.0

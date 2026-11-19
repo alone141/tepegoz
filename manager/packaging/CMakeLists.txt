@@ -43,6 +43,8 @@ set(gui_dir "${PROJECT_SOURCE_DIR}/../gui")
 if(TEPEGOZ_INSTALL_GUI AND EXISTS "${gui_dir}/goz.py")
     file(GLOB gui_sources CONFIGURE_DEPENDS "${gui_dir}/*.py")
     install(FILES ${gui_sources} DESTINATION ${GUI_INSTALL_DIR})
+    # The package versions for Python 3.8 (Ubuntu 20.04); the launcher names this file when they are missing.
+    install(FILES ${gui_dir}/requirements-py38.txt DESTINATION ${GUI_INSTALL_DIR})
     configure_file(goz.in ${CMAKE_CURRENT_BINARY_DIR}/goz @ONLY NEWLINE_STYLE UNIX)
     install(
         PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/goz

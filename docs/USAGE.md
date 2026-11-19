@@ -35,7 +35,7 @@ ZeroMQ library.
 | Fallback configuration | `/usr/share/tepegoz/tepegoz.yaml` | Read when the file above is missing. |
 | Log directory | `/var/log/tepegoz/TepegozLog/` | |
 | systemd unit | `/usr/lib/systemd/system/tepegoz.service` | Enabled when installed as root on a running systemd. Not started. |
-| Monitor GUI | `/usr/share/tepegoz/gui/`, launcher `/usr/bin/goz` | |
+| Monitor GUI | `/usr/share/tepegoz/gui/`, launcher `/usr/bin/goz` | Needs Python with PyQt6 and pyzmq, which are not installed: see [What it needs](#what-it-needs). |
 | Menu entry | `/usr/share/applications/goz.desktop`, icon `/usr/share/icons/hicolor/scalable/apps/goz.svg` | Göz in the desktop's application menu. |
 | Test programs (tests built) | `/usr/bin/keepalive`, `/usr/bin/tpz_*`, `/usr/share/tepegoz/test-setup/` | See [Testing with TestServices](#testing-with-testservices). |
 
@@ -544,6 +544,59 @@ The variables are set in this order:
 The monitor GUI is called Göz, "eye", and its launcher `goz`. Its mark, an eye, is the window's icon and stands
 next to its name in the title row. Installed, Göz is also in the desktop's application menu.
 
+### What it needs
+
+Python 3.8 or newer with PyQt6 6.7 or newer and pyzmq, on Linux or Windows. `cmake --install` installs Göz but
+not these:
+
+```bash
+python3 -m pip install --user PyQt6 pyzmq
+```
+
+`--user` installs for the user who runs the command, so every user who starts Göz needs it.
+
+#### Ubuntu 20.04
+
+Ubuntu 20.04 has Python 3.8 and pip 20.0.2, and the command above does not work there.
+
+- **The versions:** PyQt6 6.7.1 is the newest PyQt6 that runs on Python 3.8. `requirements-py38.txt`, in `gui/`
+  and installed in `/usr/share/tepegoz/gui/`, names the four packages in the versions that fit.
+- **pip:** Ubuntu's own pip cannot read these package files and answers `No matching distribution found for
+  PyQt6`. It takes pip 20.3 or newer; 25.0.1 is the newest for Python 3.8.
+- **Two system packages:** to open a window, Qt 6.7 needs `libxcb-cursor0`, and on Python 3.8 pip needs
+  `python3-distutils`. An Ubuntu desktop installs neither by itself. Without the first, Göz stops when it
+  starts, with a message from Qt that names the package; without the second, pip stops with `No module named
+  'distutils.cmd'`.
+
+With a network (`python3-pip` brings `python3-distutils`):
+
+```bash
+sudo apt install libxcb-cursor0 python3-pip
+python3 -m pip install --user --upgrade pip
+python3 -m pip install --user -r /usr/share/tepegoz/gui/requirements-py38.txt
+```
+
+Without a network, fetch the package files on a machine that has one, from the source folder. That machine
+needs Python with pip 20.3 or newer and can run another system, Windows included:
+
+```bash
+python3 -m pip download --dest goz-packages --only-binary=:all: --python-version 3.8 --implementation cp \
+    --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 -r gui/requirements-py38.txt pip==25.0.1
+```
+
+That puts five files, 86 MB together, in `goz-packages`. Carry the folder to the Ubuntu 20.04 machine and
+install from it there:
+
+```bash
+python3 goz-packages/pip-25.0.1-py3-none-any.whl/pip install --user --no-index --find-links goz-packages \
+    -r /usr/share/tepegoz/gui/requirements-py38.txt
+```
+
+This runs the carried pip straight from its file, so the machine's own pip does not matter. The two system
+packages have to be carried as well, when the machine lacks them: `apt download libxcb-cursor0
+python3-distutils` on an Ubuntu 20.04 machine with a network gives their two files, and `sudo dpkg -i` installs
+them. `libxcb-cursor0` is in Ubuntu's `universe` archive.
+
 ### Starting it
 
 ```bash
@@ -552,7 +605,7 @@ goz --host 10.0.0.5                  # a manager on another machine
 python3 gui/goz.py --host 10.0.0.5   # straight from the source folder
 ```
 
-It needs Python 3 with PyQt6 and pyzmq. It runs on Linux and Windows.
+When PyQt6 or pyzmq is missing, `goz` says so and prints the command that installs them on that machine.
 
 | Option | Default | Meaning |
 |---|---|---|

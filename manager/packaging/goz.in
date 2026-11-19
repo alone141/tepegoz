@@ -1,8 +1,17 @@
 #!/bin/sh
 # Starts the process manager's monitor GUI, installed by cmake --install in @GUI_INSTALL_DIR@.
 # Its options follow; --host <machine> watches a manager on another machine, --help lists the rest.
-if ! python3 -c 'import PyQt6.QtWidgets, zmq' 2>/dev/null; then
-    echo "goz needs Python 3 with PyQt6 and pyzmq (python3 -m pip install PyQt6 pyzmq)." >&2
+if ! problem=$(python3 -c 'import PyQt6.QtWidgets, zmq' 2>&1); then
+    echo "goz cannot start: $(printf '%s\n' "$problem" | tail -n 1)" >&2
+    echo "It needs Python 3.8 or newer with PyQt6 6.7 or newer and pyzmq:" >&2
+    if python3 -c 'import sys; sys.exit(sys.version_info[:2] != (3, 8))' 2>/dev/null; then
+        # Python 3.8, as on Ubuntu 20.04: only the versions in that file fit, and its own pip cannot read them.
+        echo "  python3 -m pip install --user -r @GUI_INSTALL_DIR@/requirements-py38.txt" >&2
+        echo "This machine has Python 3.8, so pip must be 20.3 or newer; Ubuntu 20.04's own is older." >&2
+    else
+        echo "  python3 -m pip install --user PyQt6 pyzmq" >&2
+    fi
+    echo "The usage guide (docs/USAGE.md, \"What it needs\") has the steps, also without a network." >&2
     exit 1
 fi
 exec python3 -B "@GUI_INSTALL_DIR@/goz.py" "$@"

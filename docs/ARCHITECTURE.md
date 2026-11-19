@@ -61,7 +61,7 @@ The manager is a single process that runs the services as its children. All comm
 | `manager/TestServices/` | Test programs, scenario configurations and the scenario driver. |
 | `manager/packaging/` | What `cmake --install` sets up besides the programs. |
 | `manager/third_party/` | libzmq, cppzmq, cxxopts, fkYAML and GoogleTest, unchanged upstream releases. |
-| `gui/` | Göz, the monitor GUI (Python 3, PyQt6, pyzmq). |
+| `gui/` | Göz, the monitor GUI (Python 3.8 or newer, PyQt6, pyzmq). |
 | `docs/` | These documents. |
 
 Every module has the same layout and naming: `.hpp` headers in `include/`, sources in `src/`, tests in
@@ -607,7 +607,9 @@ The service registry has a worker of its own, so a registry that does not answer
   `mock_publisher.py`'s registry on ports the system picks. `gui/tests/test_brand.py` checks that `goz.svg`
   and the painted mark agree and that the window shows it. Both run with
   `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s gui/tests`. The rest of the GUI is
-  checked against `mock_publisher.py` or a running manager.
+  checked against `mock_publisher.py` or a running manager. The GUI has to stay valid for Python 3.8 and
+  PyQt6 6.7.1, the packages of `gui/requirements-py38.txt`, since that is what an Ubuntu 20.04 machine runs;
+  run the tests with those too.
 
 ## Known limits
 

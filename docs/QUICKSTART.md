@@ -100,7 +100,8 @@ Each command prints what it did, for example `viewer: Running, pid 4321`. It exi
 
 ## 5. Open the monitor GUI
 
-The GUI needs Python 3 with PyQt6 and pyzmq: `python3 -m pip install PyQt6 pyzmq`.
+The GUI needs Python 3.8 or newer with PyQt6 and pyzmq: `python3 -m pip install --user PyQt6 pyzmq`. On Ubuntu
+20.04 that command does not work; *What it needs* in [USAGE.md](USAGE.md#what-it-needs) has the steps.
 
 On the manager's machine:
 

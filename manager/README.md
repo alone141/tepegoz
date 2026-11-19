@@ -38,8 +38,10 @@ sudo systemctl start tepegoz
   need. Installing as root on a running systemd also enables the unit, so the manager starts at boot. It is not
   started at install time. A staged install (`DESTDIR`) only installs the file.
 - **The monitor GUI:** installed in `share/tepegoz/gui/`, with its launcher `goz` in `bin/` and its menu entry
-  `share/applications/goz.desktop`, whose icon is `share/icons/hicolor/scalable/apps/goz.svg`. It needs Python 3
-  with PyQt6 and pyzmq, which the install does not provide.
+  `share/applications/goz.desktop`, whose icon is `share/icons/hicolor/scalable/apps/goz.svg`. It needs Python
+  3.8 or newer with PyQt6 6.7 or newer and pyzmq, which the install does not provide. `requirements-py38.txt`,
+  installed next to it, names the versions for Python 3.8, which Ubuntu 20.04 has; the usage guide's "What it
+  needs" has the steps.
 - **The test setup (when the tests are built):** `keepalive` and the `tpz_*` test programs next to the manager,
   and their scenario configs and driver in `share/tepegoz/test-setup/` (see `TestServices/README.md`).
 
@@ -204,6 +206,13 @@ targets `ProcessManager`, `ProcessManagerApp` and `process_manager_tests` are `T
   README shows the mark too. The new `brand.py` draws it and writes `goz.svg` from the same shapes.
 - The manager's log starts with an eye, 15 lines of Braille characters, above the version line. A console without
   UTF-8 or a Braille font shows those lines garbled.
+- Göz says what it needs, and is tested on Python 3.8: Python 3.8 or newer, PyQt6 6.7 or newer and pyzmq. On
+  Ubuntu 20.04, with its Python 3.8 and pip 20.0.2, `pip install PyQt6 pyzmq` does not work. The new
+  `gui/requirements-py38.txt`, installed in `share/tepegoz/gui/`, names the versions that fit: PyQt6 6.7.1,
+  PyQt6-Qt6 6.7.3, PyQt6-sip 13.8.0 and pyzmq 27.1.0. The usage guide's "What it needs" has the steps, also for
+  a machine without a network, and the two system packages needed there: `libxcb-cursor0` for Qt 6.7 and
+  `python3-distutils` for pip. `goz` now prints why it cannot start and the command that fits the machine's
+  Python. Göz's own code needed no change.
 
 ### 0.2.0
 - The configuration is YAML: a `Services` list with the keys of the former INI sections, any number of
