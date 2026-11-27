@@ -58,7 +58,7 @@ tepegoz::DetailedHealthReport Record(const std::string& name, tepegoz::RuntimeSt
     record.pid = pid;
     record.runtimeHealth.state = state;
     record.memoryUsageInBytes = 64 * 1024 * 1024;
-    record.snapshotTime = std::chrono::high_resolution_clock::now();
+    record.snapshotTime = std::chrono::system_clock::now();
     record.runtimeHealth.startTime = record.snapshotTime - std::chrono::seconds{90};
     record.runtimeHealth.lastSeen = record.runtimeHealth.startTime;
     return record;
@@ -180,7 +180,7 @@ private:
             const std::lock_guard<std::mutex> lock{mutex};
             for (tepegoz::DetailedHealthReport& service : services)
             {
-                service.snapshotTime = std::chrono::high_resolution_clock::now();
+                service.snapshotTime = std::chrono::system_clock::now();
                 service.cpuUsageInUsec += 20000;
             }
             const std::string bytes = Bytes(services);

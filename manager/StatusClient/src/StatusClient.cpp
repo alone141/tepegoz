@@ -39,7 +39,7 @@ static_assert(static_cast<int>(tepegoz::GpuUsageState::Stalled) ==
                   static_cast<int>(status_table::GpuState::Stalled),
               "GpuState follows the manager's GpuUsageState");
 
-std::int64_t SinceEpochNs(std::chrono::high_resolution_clock::time_point when)
+std::int64_t SinceEpochNs(std::chrono::system_clock::time_point when)
 {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(when.time_since_epoch()).count();
 }
@@ -235,7 +235,7 @@ std::string Joined(const std::vector<std::string>& names)
 
 std::int64_t NowNs()
 {
-    return SinceEpochNs(std::chrono::high_resolution_clock::now());
+    return SinceEpochNs(std::chrono::system_clock::now());
 }
 
 // A report the manager made after it answered: one taken after the answer came, or, without services to tell the

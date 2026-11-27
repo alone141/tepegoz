@@ -172,6 +172,13 @@ targets `ProcessManager`, `ProcessManagerApp` and `process_manager_tests` are `T
   kernel has no `cgroup.kill` file, which was the manager's only way: a child that had left the process group
   kept running after a stop, and after its main process had exited. Now each process the cgroup's `cgroup.procs`
   lists gets SIGKILL, in the cgroups below it too. Ubuntu 20.04's first kernel, 5.4, is such a kernel.
+- Setting the machine's time no longer moves the manager's timing. Grace periods, missed heartbeats, the SIGKILL
+  after `ForceKillTimeoutMs` and restart delays were measured on the wall clock. A step forward of a few heartbeat
+  periods made a healthy service with `CheckHealth` look silent, and the manager could stop and restart it; it
+  also cut a waiting restart's delay short. A step back held up the SIGKILL of a stop and every waiting restart
+  by as much. All of these are measured on the steady clock now. The health report's times stay wall-clock
+  times, so the uptime and the heartbeat age that `status` and the GUI show are still off after a step, until
+  the service's next start or heartbeat.
 - The usage guide says what the manager's cgroups need, under *cgroup version 2*. Ubuntu 20.04 does not start
   with it, so there every service runs without a cgroup until the machine gets one kernel parameter.
 - The keys `EnviromentVariables` and `InheritParentEnviroment` are now spelled `EnvironmentVariables` and

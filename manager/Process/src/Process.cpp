@@ -270,12 +270,14 @@ void Process::Launch()
         {
             GetRuntimeStatus().state = RuntimeState::Running;
         }
-        if (!IsUndefined(GetRuntimeStatus().startTime))
+        if (!IsUndefined(runtime.startedAt))
         {
             GetRuntimeStatus().restartCount++; // restarts: the first start is not one
         }
-        GetRuntimeStatus().startTime = Now();
-        GetRuntimeStatus().lastSeen = Now();
+        runtime.startedAt = Now();
+        runtime.lastBeatAt = runtime.startedAt;
+        GetRuntimeStatus().startTime = std::chrono::system_clock::now();
+        GetRuntimeStatus().lastSeen = GetRuntimeStatus().startTime;
         GetRuntimeStatus().missedBeats = 0;
         runtime.exitStatus = ExitStatus{};
     }
@@ -459,11 +461,14 @@ void Process::HeartbeatReceived()
     if (!IsHealthCheckActive()) return;
     if (!HasPid()) return; // late, from an instance that has exited
 
-    if (IsUndefined(GetRuntimeStatus().startTime))
+    const std::chrono::system_clock::time_point wallNow = std::chrono::system_clock::now();
+    if (IsUndefined(runtime.startedAt))
     {
-        GetRuntimeStatus().startTime = Now();
+        runtime.startedAt = Now();
+        GetRuntimeStatus().startTime = wallNow;
     }
-    GetRuntimeStatus().lastSeen = Now();
+    runtime.lastBeatAt = Now();
+    GetRuntimeStatus().lastSeen = wallNow;
     GetRuntimeStatus().state = RuntimeState::Running;
     GetRuntimeStatus().missedBeats = 0;
 }
@@ -473,11 +478,11 @@ void Process::CheckHeartbeat()
     if (!HasPid()) return; // an exited process is Stopped, not Unhealthy
     if (IsGracePeriod()) return;
     if (!IsHealthCheckActive()) return;
-    if (IsUndefined(GetRuntimeStatus().lastSeen)) return;
+    if (IsUndefined(runtime.lastBeatAt)) return;
     if (config.healthPolicy.heartbeatPeriodMs.count() <= 0) return;
 
     // Whole heartbeat periods since the last heartbeat: 0 while it keeps up.
-    GetRuntimeStatus().missedBeats = (int)((Now() - GetRuntimeStatus().lastSeen) / config.healthPolicy.heartbeatPeriodMs);
+    GetRuntimeStatus().missedBeats = (int)((Now() - runtime.lastBeatAt) / config.healthPolicy.heartbeatPeriodMs);
     if (GetRuntimeStatus().missedBeats > 0)
     {
         logger::Debug("[%s] Heartbeat missed", config.processName.c_str());
@@ -541,7 +546,11 @@ RuntimeHealth& Process::GetRuntimeStatus()
 
 bool Process::IsGracePeriod() const
 {
-    const bool isGrace = (Now() - runtime.runtimeHealth.startTime) < config.healthPolicy.gracePeriodMs;
+    // Never started: the steady clock counts from the machine's start, so soon after it "now" alone would still be
+    // inside a grace period.
+    if (IsUndefined(runtime.startedAt)) return false;
+
+    const bool isGrace = (Now() - runtime.startedAt) < config.healthPolicy.gracePeriodMs;
     return isGrace;
 }
 
@@ -655,7 +664,7 @@ bool Process::NeedsRestart() const
 
 bool Process::NeedsStart() const
 {
-    if (IsUndefined(runtime.runtimeHealth.startTime))
+    if (IsUndefined(runtime.startedAt))
     {
         return true;
     }
@@ -800,7 +809,7 @@ pid_t Process::ReapExit()
         GetRuntimeStatus().state = RuntimeState::Stopped;
 
         runtime.exitTime = Now();
-        if (runtime.exitTime - GetRuntimeStatus().startTime >= config.restartPolicy.restartResetMs)
+        if (runtime.exitTime - runtime.startedAt >= config.restartPolicy.restartResetMs)
         {
             runtime.consecutiveRestarts = 0; // it ran long enough: a new failure starts a new series
         }
@@ -851,7 +860,7 @@ DetailedHealthReport Process::GetHealthReport() const
     healthReport.pid = GetPid();
     healthReport.memoryUsageInBytes = GetMemoryUsageInBytes();
     healthReport.cpuUsageInUsec = GetCpuUsageInUsec();
-    healthReport.snapshotTime = Now();
+    healthReport.snapshotTime = std::chrono::system_clock::now();
     return healthReport;
 }
 

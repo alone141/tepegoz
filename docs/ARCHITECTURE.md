@@ -244,11 +244,11 @@ Sampled. The GUI shows a frame that fails these checks as a parse error in its s
 | 88 | `state` | `uint8` | 0 Unknown, 1 Starting, 2 Running, 3 Stopped, 4 Unhealthy |
 | 89 | `restartToApply` | `uint8` | 1 while a reloaded definition waits for the service's next start, else 0 |
 | 90 | padding | `uint8[6]` | Zero |
-| 96 | `startTime` | `int64` | ns since the epoch |
-| 104 | `lastSeen` | `int64` | ns since the epoch: the last heartbeat, or the last start if later |
+| 96 | `startTime` | `int64` | Wall-clock ns since the epoch |
+| 104 | `lastSeen` | `int64` | Wall-clock ns since the epoch: the last heartbeat, or the last start if later |
 | 112 | `missedBeats` | `int32` | |
 | 116 | `restartCount` | `int32` | Every restart, the ones asked for included |
-| 120 | `snapshotTime` | `int64` | ns since the epoch |
+| 120 | `snapshotTime` | `int64` | Wall-clock ns since the epoch |
 | 128 | `gpu.memoryUsageInBytes` | `uint64` | 0 unless the GPU state is Sampled |
 | 136 | `gpu.utilizationPercent` | `int32` | Summed over its processes and GPUs; -1 unknown |
 | 140 | `gpu.state` | `uint8` | 0 not sampled, 1 sampled, 2 no driver, 3 no device, 4 failed, 5 stalled |
@@ -258,6 +258,9 @@ The C++ layout is `DetailedHealthReport` in `Process/include/RuntimeHealth.hpp`.
 layout is `DetailedHealthReport` in `gui/health_structs.py`. A `static_assert` and a Python
 `assert` keep both at 144 bytes, and further `static_assert`s keep every field at its offset. `restartToApply`
 took a byte that was padding after `state`, so an older reader still parses the report and ignores the mark.
+
+The three times are wall-clock times because their readers may run on another machine and compare them with
+their own clocks. The manager measures nothing from them: see [Clocks](#clocks).
 
 ### Journal reads and cgroup PIDs (port 6670)
 
@@ -413,6 +416,21 @@ Whether an exit is restarted depends on three things:
 - **The work mode:** a stop command sets the service to Manual, which keeps it stopped.
 
 `MaxRestarts` limits restarts in a row, and a run of `RestartResetMs` or longer starts that count again.
+
+### Clocks
+
+`Process` measures grace periods, missed heartbeats, stop deadlines and restart delays on the steady clock
+(`std::chrono::steady_clock`), so setting the machine's time moves none of them.
+
+- **Two copies of two moments:** a service's start and its last heartbeat are kept as steady time points for
+  this arithmetic (`startedAt` and `lastBeatAt` in `ProcessRuntimeParams`) and as wall-clock times for the
+  health report (`startTime` and `lastSeen`). The two clocks have different types, so a line that mixes them
+  does not compile.
+- **Before the first start:** the steady time points hold their default, which is the moment the machine
+  started. `IsGracePeriod` checks for it, because soon after a boot "now" alone would still be inside a grace
+  period.
+- **In the tests:** the Process tests define `clock_gettime` themselves, in place of the C library's, so a test
+  can set the wall clock of the test program and leave the steady clock alone.
 
 ### cgroups
 
@@ -595,7 +613,7 @@ The service registry has a worker of its own, so a registry that does not answer
 | `service_registry_tests` | 43 | Registry requests and their parameters, names, editing a definition, YAML that reads back the same, JSON, problems a change adds, writing, removing and restoring files |
 | `reload_plan_tests` | 33 | The reload plan: added, removed, changed, kept, unchanged and skipped services, what counts as a change, and the refusals |
 | `tepegoz_tests` | 54 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all`; the reload of the manager's services, and every registry request, without its sockets |
-| `process_tests` | 106 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health, a deferred definition; killing what is left in a cgroup, with a folder standing in for the cgroup |
+| `process_tests` | 111 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health, a deferred definition; killing what is left in a cgroup, with a folder standing in for the cgroup; setting the wall clock forward and back, with the test program's own `clock_gettime` |
 | `logger_tests` | 13 | Levels, files, rotation, journald prefixes |
 | `network_manager_tests` | 35 | Routing, identities, status and events |
 | `gpu_monitor_tests` | 27 | NVML stand-in: sampling, process lists, stuck calls |
@@ -629,6 +647,10 @@ The service registry has a worker of its own, so a registry that does not answer
 - **Registered files are rewritten:** `replace` and `update` write a service's file from its keys and values, so
   the comments and the layout of a file written by hand are lost.
 - **Fixed ports:** they are compile-time constants, so one manager per machine.
+- **Shown times follow the wall clock:** `status` and the GUI take a service's uptime and the age of its last
+  heartbeat from the report's wall-clock times. After the machine's time is set, the uptime is off by the change
+  until the service's next start, and the heartbeat age until its next heartbeat. The manager's own timing does
+  not use those times.
 - **GUIs share one identity:** when two GUIs send commands at the same moment, an answer can reach the other
   GUI.
 - **A reload compares text, not effect:** a definition is changed when its keys or values differ, even when the

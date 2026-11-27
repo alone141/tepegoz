@@ -79,13 +79,15 @@ public:
     void ApplyDeferredDefinition();
 
 private:
-    static auto Now()
+    // Deadlines and waits are measured on the steady clock, which setting the machine's time does not move. Only
+    // the times in the health report are wall-clock times.
+    static std::chrono::steady_clock::time_point Now()
     {
-        return std::chrono::high_resolution_clock::now();
+        return std::chrono::steady_clock::now();
     }
-    static bool IsUndefined(const std::chrono::high_resolution_clock::time_point& timepoint)
+    static bool IsUndefined(const std::chrono::steady_clock::time_point& timepoint)
     {
-        return timepoint == std::chrono::high_resolution_clock::time_point{};
+        return timepoint == std::chrono::steady_clock::time_point{};
     }
 
     RuntimeHealth& GetRuntimeStatus();

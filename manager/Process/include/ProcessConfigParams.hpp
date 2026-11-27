@@ -63,8 +63,14 @@ struct ProcessRuntimeParams
     RuntimeHealth runtimeHealth{};
     std::filesystem::path cgroupPath;
 
+    // When this instance started and when its last heartbeat came, on the steady clock: what the grace period, the
+    // heartbeat count and the restart policy measure from. runtimeHealth holds the same two moments as wall-clock
+    // times, for the health report only. Both stay at their default until the first start.
+    std::chrono::steady_clock::time_point startedAt{};
+    std::chrono::steady_clock::time_point lastBeatAt{};
+
     StopPhase stopPhase = StopPhase::None;
-    std::chrono::high_resolution_clock::time_point stopDeadline{};
+    std::chrono::steady_clock::time_point stopDeadline{};
     pid_t stopGroup = -1; // process group being stopped; outlives the reaped leader
     bool restartRequested = false;
     bool stopRequested = false; // Stop() since the last StartProcess(): UnlessStopped keeps it stopped
@@ -72,7 +78,7 @@ struct ProcessRuntimeParams
     bool unresponsiveStop = false;
     std::string stdioLine;
 
-    std::chrono::high_resolution_clock::time_point exitTime{};
+    std::chrono::steady_clock::time_point exitTime{};
     int consecutiveRestarts = 0;
 };
 

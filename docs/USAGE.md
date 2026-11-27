@@ -217,6 +217,9 @@ vision_pipeline   Stopped        -         -      -         -      -         -  
 - **GPU % and VRAM:** shown only when the manager samples the GPUs.
 - **HEARTBEAT:** how long ago the last heartbeat came, or the missed beats in red. It shows `-` for a service
   without `CheckHealth`, or before its first heartbeat.
+- **After the machine's time is set:** UPTIME is off by the change until the service's next start, and HEARTBEAT
+  until its next heartbeat, since both come from the manager's wall-clock times. The manager's own timing of
+  heartbeats, stops and restarts does not follow that clock.
 - **Stopped services:** `-` for the process figures.
 - **`*` after a name:** the service's new definition from a reload waits for its next start ("restart to
   apply"). A line under the table explains the mark when a service has it.

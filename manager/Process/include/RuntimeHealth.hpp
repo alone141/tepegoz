@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <ctype.h>
 #include <sys/types.h>
+#include <type_traits>
 namespace tepegoz
 {
 
@@ -47,8 +48,10 @@ struct RuntimeHealth
     // It takes a byte that was padding, so the report keeps its size and every other field its offset.
     uint8_t restartToApply = 0;
 
-    std::chrono::high_resolution_clock::time_point startTime;
-    std::chrono::high_resolution_clock::time_point lastSeen;
+    // Wall-clock times, for the report's readers: the GUI and status may run on another machine and compare them
+    // with their own clocks. The manager measures nothing from them (see ProcessRuntimeParams).
+    std::chrono::system_clock::time_point startTime;
+    std::chrono::system_clock::time_point lastSeen;
 
     int missedBeats = 0;
     int restartCount = 0;
@@ -81,10 +84,12 @@ struct DetailedHealthReport
 
     RuntimeHealth runtimeHealth;
 
-    std::chrono::high_resolution_clock::time_point snapshotTime;
+    std::chrono::system_clock::time_point snapshotTime; // wall-clock, as the two times in runtimeHealth
     GpuUsage gpuUsage;
 };
 static_assert(sizeof(DetailedHealthReport) == 144, "the GUI parses 144-byte health reports");
+static_assert(std::is_same_v<std::chrono::system_clock::duration, std::chrono::nanoseconds>,
+              "the GUI reads the report's times as nanoseconds since the epoch");
 // The offsets the GUI (health_structs.py) reads the fields at.
 static_assert(offsetof(DetailedHealthReport, processName) == 0, "processName moved");
 static_assert(offsetof(DetailedHealthReport, pid) == 64, "pid moved");

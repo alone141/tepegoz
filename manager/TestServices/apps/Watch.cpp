@@ -17,7 +17,7 @@ namespace test_service
 namespace
 {
 
-long long EpochMs(std::chrono::high_resolution_clock::time_point time)
+long long EpochMs(std::chrono::system_clock::time_point time)
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count();
 }
@@ -32,7 +32,7 @@ void PrintReports(const zmq::message_t& message)
         return;
     }
 
-    const long long now = EpochMs(std::chrono::high_resolution_clock::now());
+    const long long now = EpochMs(std::chrono::system_clock::now());
     const std::size_t count = message.size() / size;
     std::printf("report %lld %zu\n", now, count);
     for (std::size_t i = 0; i < count; ++i)

@@ -6,6 +6,7 @@
 #include "Logger.hpp"
 #include "ProcessGroupBuilder.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -17,10 +18,12 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <system_error>
 #include <thread>
+#include <time.h>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -28,7 +31,7 @@
 namespace
 {
 
-using Clock = std::chrono::high_resolution_clock;
+using Clock = std::chrono::steady_clock;
 
 constexpr std::chrono::milliseconds poll_period{5};
 constexpr std::chrono::milliseconds wait_limit{3000};
@@ -418,7 +421,44 @@ bool HasJoined(const tepegoz::Process& process, const std::filesystem::path& cgr
                      { return ReadFile(cgroup / "cgroup.procs") == std::to_string(process.GetPid()); });
 }
 
+// How many seconds this test program's wall clock is ahead of the machine's: see clock_gettime below.
+std::atomic<long> wallClockOffsetSeconds{0};
+
+// Sets this test program's wall clock ahead by the step, or back with a negative one, while it lives, as setting
+// the machine's time would. The steady clock keeps its pace.
+class WallClockStep
+{
+public:
+    explicit WallClockStep(std::chrono::seconds step)
+    {
+        wallClockOffsetSeconds = static_cast<long>(step.count());
+    }
+
+    ~WallClockStep()
+    {
+        wallClockOffsetSeconds = 0;
+    }
+
+    WallClockStep(const WallClockStep&) = delete;
+    WallClockStep& operator=(const WallClockStep&) = delete;
+};
+
 } // namespace
+
+// This definition takes the place of the C library's clock_gettime for the whole test program, the standard
+// library's clocks included, so that a test can set the wall clock: CLOCK_REALTIME reads wallClockOffsetSeconds
+// ahead. Every other clock is passed through. A test that steps the clock first checks that
+// std::chrono::system_clock followed, since without that it would pass without testing anything.
+extern "C" int clock_gettime(clockid_t id, timespec* time) noexcept
+{
+    const int result = static_cast<int>(::syscall(SYS_clock_gettime, id, time));
+    if (result == 0 && id == CLOCK_REALTIME)
+    {
+        time->tv_sec += wallClockOffsetSeconds;
+    }
+
+    return result;
+}
 
 // ---- Configuration and getters
 
@@ -732,7 +772,7 @@ TEST(ProcessTest, StartGivesRunningProcessWithPidInItsOwnProcessGroup)
     EXPECT_FALSE(process.NeedsStart());
     EXPECT_FALSE(process.NeedsRestart());
     EXPECT_EQ(process.ReapExit(), -1);
-    EXPECT_NE(process.GetRuntimeStats().startTime, Clock::time_point{});
+    EXPECT_NE(process.GetRuntimeStats().startTime, std::chrono::system_clock::time_point{});
     EXPECT_GE(process.GetRuntimeStats().lastSeen, process.GetRuntimeStats().startTime);
 
     EXPECT_TRUE(process.IsMember(pid, -1, {}));
@@ -1642,7 +1682,7 @@ TEST(ProcessTest, HeartbeatBringsUnhealthyServiceBackToRunning)
             process.CheckHeartbeat();
             return process.GetRuntimeState() == tepegoz::RuntimeState::Unhealthy;
         }));
-    const Clock::time_point lastSeenBefore = process.GetRuntimeStats().lastSeen;
+    const std::chrono::system_clock::time_point lastSeenBefore = process.GetRuntimeStats().lastSeen;
 
     process.HeartbeatReceived();
     EXPECT_TRUE(process.IsRunning());
@@ -1897,6 +1937,95 @@ TEST(ProcessTest, MainProcessExitKillsWhatCgroupProcsListsOutsideTheProcessGroup
     EXPECT_TRUE(bystander.WasKilled());
 }
 
+// ---- Setting the machine's time while services run. WallClockStep moves this program's wall clock only.
+
+TEST(ProcessTest, WallClockSetForwardLeavesTheHeartbeatCountAlone)
+{
+    tepegoz::Process process{};
+    ASSERT_EQ(Configure(process, Service("stepped", "tpz_steady",
+                                         "CheckHealth: true\nGracePeriodMs: 0\nHeartbeatPeriodMs: 60000\n"
+                                         "MissedHeartbeatThreshold: 3\n")),
+              1);
+    process.StartProcess();
+    process.HeartbeatReceived();
+    ASSERT_TRUE(process.IsRunning());
+
+    const std::chrono::system_clock::time_point before = std::chrono::system_clock::now();
+    const WallClockStep step{std::chrono::hours{1}};
+    ASSERT_GE(std::chrono::system_clock::now() - before, std::chrono::minutes{59});
+
+    process.CheckHeartbeat();
+    EXPECT_EQ(process.GetRuntimeStats().missedBeats, 0);
+    EXPECT_EQ(process.GetRuntimeState(), tepegoz::RuntimeState::Running);
+    EXPECT_FALSE(process.NeedsRestart());
+    // The report's times are wall-clock times, so they do follow the step.
+    EXPECT_GE(process.GetHealthReport().snapshotTime - before, std::chrono::minutes{59});
+}
+
+TEST(ProcessTest, WallClockSetForwardDoesNotShortenTheRestartDelay)
+{
+    tepegoz::Process process{};
+    ASSERT_EQ(Configure(process, Service("early", "tpz_exit",
+                                         "Args: [--code, 1, --after-ms, 0]\nRestartMode: Always\n"
+                                         "RestartDelayMs: 2000\n")),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(WaitForExit(process));
+
+    const std::chrono::system_clock::time_point before = std::chrono::system_clock::now();
+    const WallClockStep step{std::chrono::hours{1}};
+    ASSERT_GE(std::chrono::system_clock::now() - before, std::chrono::minutes{59});
+
+    EXPECT_FALSE(process.NeedsRestart());
+}
+
+TEST(ProcessTest, WallClockSetBackDoesNotLengthenTheRestartDelay)
+{
+    tepegoz::Process process{};
+    ASSERT_EQ(Configure(process, Service("late", "tpz_exit",
+                                         "Args: [--code, 1, --after-ms, 0]\nRestartMode: Always\n"
+                                         "RestartDelayMs: 300\n")),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(WaitForExit(process));
+
+    const std::chrono::system_clock::time_point before = std::chrono::system_clock::now();
+    const WallClockStep step{-std::chrono::hours{1}};
+    ASSERT_LE(std::chrono::system_clock::now() - before, -std::chrono::minutes{59});
+
+    EXPECT_TRUE(WaitUntil([&process]() { return process.NeedsRestart(); }));
+}
+
+TEST(ProcessTest, WallClockSetBackDoesNotHoldUpTheKillOfAStop)
+{
+    const ScratchDirectory scratch{};
+    tepegoz::Process process{};
+    ASSERT_EQ(Configure(process, Service("held", "tpz_stubborn",
+                                         "Args: [--period-ms, 50]\nForceKillTimeoutMs: 1000\n" +
+                                             scratch.FileSettings("out.txt"))),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(WaitForText(scratch.Path() / "out.txt", "parent tick"));
+    process.Stop();
+
+    const std::chrono::system_clock::time_point before = std::chrono::system_clock::now();
+    const WallClockStep step{-std::chrono::hours{1}};
+    ASSERT_LE(std::chrono::system_clock::now() - before, -std::chrono::minutes{59});
+
+    EXPECT_TRUE(WaitForStop(process));
+    EXPECT_FALSE(process.HasPid());
+}
+
+TEST(ProcessTest, GracePeriodIsOverBeforeTheFirstStartHoweverLongItIs)
+{
+    // The steady clock counts from the machine's start, which can be less than a grace period ago.
+    tepegoz::Process process{};
+    ASSERT_EQ(Configure(process, Service("unstarted", "tpz_steady", "CheckHealth: true\nGracePeriodMs: 2147483647\n")),
+              1);
+    EXPECT_FALSE(process.IsGracePeriod());
+    EXPECT_TRUE(process.NeedsStart());
+}
+
 // ---- A reload's definition, waiting for the next start
 
 TEST(ProcessTest, DeferredDefinitionLeavesTheRunningChildAlone)
@@ -1909,7 +2038,7 @@ TEST(ProcessTest, DeferredDefinitionLeavesTheRunningChildAlone)
     process.StartProcess();
     ASSERT_TRUE(WaitForText(scratch.Path() / "out.txt", "env TPZ_OLD"));
     const pid_t pid = process.GetPid();
-    const Clock::time_point started = process.GetRuntimeStats().startTime;
+    const std::chrono::system_clock::time_point started = process.GetRuntimeStats().startTime;
 
     tepegoz::Process next{};
     ASSERT_EQ(Configure(next, Service("waits", "tpz_env", "Args: [--show, TPZ_NEW]\n" + scratch.FileSettings("out.txt"))),
