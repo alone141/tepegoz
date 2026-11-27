@@ -33,6 +33,8 @@ using Clock = std::chrono::high_resolution_clock;
 constexpr std::chrono::milliseconds poll_period{5};
 constexpr std::chrono::milliseconds wait_limit{3000};
 constexpr std::chrono::milliseconds stop_limit{5000};
+// How long a process that must not be signalled is watched.
+constexpr std::chrono::milliseconds unharmed_limit{200};
 
 std::string Program(std::string_view name)
 {
@@ -297,6 +299,123 @@ bool CgroupsAvailable()
     }
 
     return created;
+}
+
+void WriteText(const std::filesystem::path& path, std::string_view text)
+{
+    std::ofstream file{path};
+    file << text;
+}
+
+// Makes the cgroup.procs of a folder that stands in for a cgroup list these pids, as the kernel lists the members.
+void ListMembers(const std::filesystem::path& cgroup, const std::vector<pid_t>& pids)
+{
+    std::string text{};
+    for (const pid_t pid : pids)
+    {
+        text += std::to_string(pid) + "\n";
+    }
+
+    WriteText(cgroup / "cgroup.procs", text);
+}
+
+// A process of the test's own in a session of its own, as a service's child that called setsid() would be: no
+// service's process group holds it. It only waits, and ends by itself after 30 s if nothing ends it sooner.
+class Bystander
+{
+public:
+    Bystander()
+        : pid{::fork()}
+    {
+        if (pid == 0)
+        {
+            ::setsid();
+            ::alarm(30);
+            for (;;)
+            {
+                ::pause();
+            }
+        }
+    }
+
+    ~Bystander()
+    {
+        if (pid > 0 && !reaped)
+        {
+            ::kill(pid, SIGKILL);
+            ::waitpid(pid, nullptr, 0);
+        }
+    }
+
+    Bystander(const Bystander&) = delete;
+    Bystander& operator=(const Bystander&) = delete;
+
+    pid_t Pid() const
+    {
+        return pid;
+    }
+
+    // Whether SIGKILL ended it within the limit.
+    bool WasKilled(std::chrono::milliseconds limit = wait_limit)
+    {
+        if (pid <= 0)
+        {
+            return false;
+        }
+
+        if (!reaped)
+        {
+            reaped = WaitUntil([this]() { return ::waitpid(pid, &status, WNOHANG) == pid; }, limit);
+        }
+
+        return reaped && WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL;
+    }
+
+private:
+    pid_t pid;
+    int status = 0;
+    bool reaped = false;
+};
+
+// While it lives, a folder stands in for the manager's cgroup, so Process creates task_<name> in it. A real cgroup's
+// files are the kernel's. Here cgroup.procs is an ordinary file: the service's child writes its pid into it when it
+// joins, and the test writes what else the cgroup is to hold.
+class FakeCgroupParent
+{
+public:
+    FakeCgroupParent()
+        : previous{tepegoz::ProcessGroupBuilder::GetInstance().GetParentGroupPath()}
+    {
+        tepegoz::ProcessGroupBuilder::GetInstance().SetParentGroupPath(scratch.Path());
+    }
+
+    ~FakeCgroupParent()
+    {
+        tepegoz::ProcessGroupBuilder::GetInstance().SetParentGroupPath(previous);
+    }
+
+    FakeCgroupParent(const FakeCgroupParent&) = delete;
+    FakeCgroupParent& operator=(const FakeCgroupParent&) = delete;
+
+    // The cgroup of the service of that name, with the cgroup.procs its child needs to join.
+    std::filesystem::path AddService(std::string_view name) const
+    {
+        const std::filesystem::path cgroup = scratch.Path() / ("task_" + std::string{name});
+        std::filesystem::create_directories(cgroup);
+        WriteText(cgroup / "cgroup.procs", "");
+        return cgroup;
+    }
+
+private:
+    ScratchDirectory scratch;
+    std::filesystem::path previous;
+};
+
+// Whether the service's child wrote its pid into the stand-in cgroup.procs, which it does before exec.
+bool HasJoined(const tepegoz::Process& process, const std::filesystem::path& cgroup)
+{
+    return WaitUntil([&process, &cgroup]()
+                     { return ReadFile(cgroup / "cgroup.procs") == std::to_string(process.GetPid()); });
 }
 
 } // namespace
@@ -1662,6 +1781,120 @@ TEST(ProcessTest, UsageBeforeFirstStartIsReadRelativeToTheWorkingDirectory)
     ASSERT_EQ(Configure(process, Service("relative", "tpz_steady", "")), 1);
     EXPECT_EQ(process.GetMemoryUsageInBytes(), 4242u);
     EXPECT_EQ(process.GetCpuUsageInUsec(), 777u);
+}
+
+// ---- Killing what is left in a cgroup. A folder stands in for the cgroup, so its files are the test's own.
+
+TEST(ProcessTest, ReadGroupProcessesLeavesOutLinesThatAreNoPid)
+{
+    const ScratchDirectory cgroup{};
+    WriteText(cgroup.Path() / "cgroup.procs", "12\n0\n-7\nabc\n\n 5\n34x\n56\n");
+    const std::optional<std::vector<pid_t>> processes =
+        tepegoz::ProcessGroupBuilder::ReadGroupProcesses(cgroup.Path());
+    ASSERT_TRUE(processes.has_value());
+    EXPECT_EQ(*processes, (std::vector<pid_t>{12, 56}));
+}
+
+TEST(ProcessTest, ReadGroupProcessesWithoutCgroupProcsReturnsNullopt)
+{
+    const ScratchDirectory cgroup{};
+    EXPECT_FALSE(tepegoz::ProcessGroupBuilder::ReadGroupProcesses(cgroup.Path()).has_value());
+}
+
+TEST(ProcessTest, KillGroupLeavesTheKillingToCgroupKillWhenTheFileExists)
+{
+    const ScratchDirectory cgroup{};
+    WriteText(cgroup.Path() / "cgroup.kill", "");
+    Bystander bystander{};
+    ASSERT_GT(bystander.Pid(), 0);
+    ListMembers(cgroup.Path(), {bystander.Pid()});
+
+    EXPECT_EQ(tepegoz::ProcessGroupBuilder::KillGroup(cgroup.Path()), tepegoz::KillCode::Ok);
+    EXPECT_EQ(ReadFile(cgroup.Path() / "cgroup.kill"), "1");
+    // No kernel acts on this file, so a bystander that lives shows that nothing else signalled it.
+    EXPECT_FALSE(bystander.WasKilled(unharmed_limit));
+}
+
+TEST(ProcessTest, KillGroupWithoutCgroupKillKillsTheListedProcesses)
+{
+    const ScratchDirectory cgroup{};
+    Bystander first{};
+    Bystander second{};
+    ASSERT_GT(first.Pid(), 0);
+    ASSERT_GT(second.Pid(), 0);
+    ListMembers(cgroup.Path(), {first.Pid(), second.Pid()});
+
+    EXPECT_EQ(tepegoz::ProcessGroupBuilder::KillGroup(cgroup.Path()), tepegoz::KillCode::Ok);
+    EXPECT_TRUE(first.WasKilled());
+    EXPECT_TRUE(second.WasKilled());
+    EXPECT_FALSE(std::filesystem::exists(cgroup.Path() / "cgroup.kill"));
+}
+
+TEST(ProcessTest, KillGroupWithoutCgroupKillReachesTheCgroupsBelow)
+{
+    const ScratchDirectory cgroup{};
+    ListMembers(cgroup.Path(), {});
+    const std::filesystem::path below = cgroup.Path() / "inner" / "deeper";
+    std::filesystem::create_directories(below);
+    Bystander bystander{};
+    ASSERT_GT(bystander.Pid(), 0);
+    ListMembers(below, {bystander.Pid()});
+
+    EXPECT_EQ(tepegoz::ProcessGroupBuilder::KillGroup(cgroup.Path()), tepegoz::KillCode::Ok);
+    EXPECT_TRUE(bystander.WasKilled());
+}
+
+TEST(ProcessTest, KillGroupOfMissingCgroupReturnsNoGroup)
+{
+    const ScratchDirectory scratch{};
+    EXPECT_EQ(tepegoz::ProcessGroupBuilder::KillGroup(scratch.Path() / "none"), tepegoz::KillCode::NoGroup);
+}
+
+TEST(ProcessTest, KillGroupOfEmptyPathLeavesTheWorkingDirectoryAlone)
+{
+    const ScratchDirectory scratch{};
+    Bystander bystander{};
+    ASSERT_GT(bystander.Pid(), 0);
+    ListMembers(scratch.Path(), {bystander.Pid()});
+    const WorkingDirectory here{scratch.Path()};
+
+    EXPECT_EQ(tepegoz::ProcessGroupBuilder::KillGroup(std::filesystem::path{}), tepegoz::KillCode::NoGroup);
+    EXPECT_FALSE(bystander.WasKilled(unharmed_limit));
+}
+
+TEST(ProcessTest, StopKillsWhatCgroupProcsListsOutsideTheProcessGroup)
+{
+    const FakeCgroupParent parent{};
+    const std::filesystem::path cgroup = parent.AddService("listed");
+    tepegoz::Process process{};
+    ASSERT_EQ(Configure(process, Service("listed", "tpz_steady", "")), 1);
+    process.StartProcess();
+    ASSERT_TRUE(HasJoined(process, cgroup));
+    Bystander bystander{};
+    ASSERT_GT(bystander.Pid(), 0);
+    ListMembers(cgroup, {bystander.Pid()});
+
+    ASSERT_TRUE(StopAndWait(process));
+    EXPECT_TRUE(bystander.WasKilled());
+}
+
+TEST(ProcessTest, MainProcessExitKillsWhatCgroupProcsListsOutsideTheProcessGroup)
+{
+    const FakeCgroupParent parent{};
+    const std::filesystem::path cgroup = parent.AddService("ended");
+    tepegoz::Process process{};
+    ASSERT_EQ(Configure(process, Service("ended", "tpz_exit",
+                                         "Args: [--code, 0, --after-ms, 50]\nRestartMode: Never\n")),
+              1);
+    process.StartProcess();
+    ASSERT_TRUE(HasJoined(process, cgroup));
+    Bystander bystander{};
+    ASSERT_GT(bystander.Pid(), 0);
+    ListMembers(cgroup, {bystander.Pid()});
+
+    ASSERT_TRUE(WaitForExit(process));
+    EXPECT_FALSE(process.IsStopping());
+    EXPECT_TRUE(bystander.WasKilled());
 }
 
 // ---- A reload's definition, waiting for the next start

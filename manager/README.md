@@ -168,6 +168,12 @@ targets `ProcessManager`, `ProcessManagerApp` and `process_manager_tests` are `T
   gets SIGTERM, then SIGKILL after `ForceKillTimeoutMs`, and whatever is left in its cgroup is killed. Such
   children used to run on beside the next instance, and a stop could no longer reach them. A restart, or a
   start command, waits until they are gone.
+- On a kernel older than Linux 5.14 the manager now kills what is left in a service's cgroup as well. Such a
+  kernel has no `cgroup.kill` file, which was the manager's only way: a child that had left the process group
+  kept running after a stop, and after its main process had exited. Now each process the cgroup's `cgroup.procs`
+  lists gets SIGKILL, in the cgroups below it too. Ubuntu 20.04's first kernel, 5.4, is such a kernel.
+- The usage guide says what the manager's cgroups need, under *cgroup version 2*. Ubuntu 20.04 does not start
+  with it, so there every service runs without a cgroup until the machine gets one kernel parameter.
 - The keys `EnviromentVariables` and `InheritParentEnviroment` are now spelled `EnvironmentVariables` and
   `InheritParentEnvironment`. The old spellings still work, but `validate` and the start-up check report them,
   so `validate` exits with 1 for a configuration that uses them until it is renamed. A service that sets both

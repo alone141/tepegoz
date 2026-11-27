@@ -150,10 +150,10 @@ Remote use needs TCP ports 5557, 6667, 6669 and 6670 of the manager's machine to
 |---|---|
 | The toolbar shows "Waiting for data…" or "No data for …" instead of "Live" | Whether the manager runs (`systemctl status tepegoz`), and, for a remote GUI, whether a firewall blocks the ports. |
 | "no answer from the journal server" in a log view or the cgroup PIDs tab | Port 6670 is blocked, or the manager is older than its journal server. |
-| The cgroup PIDs tab says the service runs without a cgroup | The manager could not create cgroups: run it through its systemd unit, as root. |
+| The cgroup PIDs tab says the service runs without a cgroup | The manager could not create cgroups: run it through its systemd unit, as root. On Ubuntu 20.04 the machine also has to start with cgroup version 2: see *cgroup version 2* in [USAGE.md](USAGE.md#cgroup-version-2). |
 | A service keeps restarting, then stays stopped | Its Journal tab, and lines such as `[name] pid 1234 exited with code 1` in the manager's log. After `MaxRestarts` restarts in a row, the manager leaves it stopped. |
 | A service turns **Unhealthy** | It has `CheckHealth: true` but sends no heartbeats. See *Health checks* in [USAGE.md](USAGE.md). |
-| CPU and memory read 0 | The manager has no cgroups: it is not running under the installed systemd unit, or not as root. |
+| CPU and memory read 0 | The manager has no cgroups: it is not running under the installed systemd unit, or not as root, or the machine has no cgroup version 2, which is how Ubuntu 20.04 starts. |
 | The log starts with 15 lines of boxes or odd characters | Nothing is wrong: that is the manager's eye, drawn in Braille characters, on a console without UTF-8 or a Braille font. |
 | `validate` says `ExecutablePath does not exists` | The path is wrong. Paths must be absolute. |
 | `validate` says `ExecutablePath access denied` | The file is not executable: `chmod +x` it. |

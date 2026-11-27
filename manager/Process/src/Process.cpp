@@ -1041,19 +1041,7 @@ bool Process::TerminateProcessGroup() const
 {
     if (!config.createProcessGroup) return true;
 
-    fs::path kill_file = runtime.cgroupPath / "cgroup.kill";
-    std::ofstream kill_stream(kill_file);
-    if (kill_stream.is_open())
-    {
-        kill_stream << "1" << std::flush;
-        kill_stream.close();
-    }
-    else
-    {
-        return false;
-    }
-    return true;
-
+    return ProcessGroupBuilder::KillGroup(runtime.cgroupPath) == KillCode::Ok;
 }
 
 bool Process::RemoveProcessGroup() const

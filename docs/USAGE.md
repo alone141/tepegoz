@@ -69,7 +69,8 @@ journalctl -u tepegoz -f
 ```
 
 The installed unit has these settings:
-- **`Delegate=yes`:** the manager can create a cgroup for itself and for each service.
+- **`Delegate=yes`:** the manager can create a cgroup for itself and for each service, on a machine with
+  [cgroup version 2](#cgroup-version-2).
 - **`KillMode=mixed`:** a stop sends SIGTERM to the manager alone, and the manager stops its services itself.
   Each service gets up to twice its `ForceKillTimeoutMs`.
 - **`TimeoutStopSec=180`:** after 180 s, systemd kills whatever is still running.
@@ -77,6 +78,40 @@ The installed unit has these settings:
   stops because its broker failed exits with 0, so it is not restarted.
 - **`ExecReload`:** `systemctl reload` runs `tepegoz reload`. See
   [Reloading the configuration](#reloading-the-configuration). A refused reload makes `systemctl reload` fail.
+
+### cgroup version 2
+
+The manager gives each service with `CreateProcessGroup` a cgroup of its own, below the unit's. For that the
+machine needs cgroup version 2 at `/sys/fs/cgroup`:
+
+```bash
+stat -fc %T /sys/fs/cgroup
+```
+
+`cgroup2fs` is version 2. `tmpfs` is version 1, or the two versions side by side.
+
+Without version 2 the manager still runs every service, but none gets a cgroup. For each service the log has
+`Failed to create cgroup directory` and `Starting directly...`, and then:
+- **CPU and memory** read 0.
+- **The GUI's cgroup PIDs tab** says the service runs without a cgroup.
+- **A stop** reaches only the service's process group. A child that left the group keeps running: see *Stopping*
+  under [How services are run](#how-services-are-run).
+
+#### Ubuntu 20.04
+
+Ubuntu 20.04 starts with the two versions side by side and gives the CPU and memory controllers to version 1.
+The manager gets no cgroups there until the machine starts with version 2 alone:
+
+1. In `/etc/default/grub`, add `systemd.unified_cgroup_hierarchy=1` to `GRUB_CMDLINE_LINUX`.
+2. Run `sudo update-grub`.
+3. Restart the machine, and check with the `stat` command above.
+
+Other software on the machine that manages cgroups then has to work with version 2 as well; Docker does from
+20.10. Check that first on a machine that runs more than the manager.
+
+Ubuntu 20.04's first kernel, 5.4, has no `cgroup.kill` file, which came with Linux 5.14. There the manager kills
+what is left in a service's cgroup one process at a time, from the cgroup's `cgroup.procs`. Nothing has to be
+set for that.
 
 ### By hand
 
@@ -534,8 +569,9 @@ The variables are set in this order:
 
 ### Resource figures
 
-- **CPU and memory:** read from the service's cgroup, so they need `CreateProcessGroup` and a manager allowed to
-  create cgroups (the installed unit, run as root). Without a cgroup, both read 0.
+- **CPU and memory:** read from the service's cgroup, so they need `CreateProcessGroup`, a manager allowed to
+  create cgroups (the installed unit, run as root) and [cgroup version 2](#cgroup-version-2) on the machine.
+  Without a cgroup, both read 0.
 - **GPU memory and use:** sampled through the NVIDIA driver (NVML) once a second, for the main process, its
   process group and its cgroup. Without the driver, the GUI shows "GPU unavailable".
 

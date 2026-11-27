@@ -428,8 +428,18 @@ The installed systemd unit has `Delegate=yes`, so the manager may manage the cgr
 - **Manager first:** the manager moves itself into `task_pm` before it enables the controllers, as cgroup v2
   requires.
 - **Placing a service:** the child writes its own pid into `task_<name>/cgroup.procs` before `exec`.
+- **Killing what is left:** `ProcessGroupBuilder::KillGroup` writes `1` to the cgroup's `cgroup.kill`, and the
+  kernel kills everything in the cgroup and in the cgroups below it. A kernel older than Linux 5.14 has no such
+  file. There `KillGroup` sends SIGKILL to each process the `cgroup.procs` files of the cgroup and of those below
+  it list. A process that forks meanwhile leaves a child the read did not see, so it reads the files again until
+  they name nothing new, eight times at most.
 - **Fallback:** if the cgroup cannot be created, for example without permission or without cgroup v2, the
-  service runs without one. Its CPU and memory then read 0, and a stop reaches only its process group.
+  service runs without one. Its CPU and memory then read 0, and a stop reaches only its process group. Ubuntu
+  20.04 starts without cgroup v2 at `/sys/fs/cgroup`; *cgroup version 2* in [USAGE.md](USAGE.md#cgroup-version-2)
+  has the kernel parameter that changes it.
+- **In the tests:** `ProcessGroupBuilder::SetParentGroupPath` puts the services' cgroups under another
+  directory. The Process tests give it a folder of their own and write its `cgroup.procs` themselves, so the
+  kill without `cgroup.kill` is tested where the manager has no cgroups.
 
 ### Output and the journal
 
@@ -585,7 +595,7 @@ The service registry has a worker of its own, so a registry that does not answer
 | `service_registry_tests` | 43 | Registry requests and their parameters, names, editing a definition, YAML that reads back the same, JSON, problems a change adds, writing, removing and restoring files |
 | `reload_plan_tests` | 33 | The reload plan: added, removed, changed, kept, unchanged and skipped services, what counts as a change, and the refusals |
 | `tepegoz_tests` | 54 | Services built from a main file with `services.d`: the `Mode` default, `Enabled`, dependencies both ways, key checks, `--start all`; the reload of the manager's services, and every registry request, without its sockets |
-| `process_tests` | 97 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health, a deferred definition |
+| `process_tests` | 106 | One service run against the TestServices programs: configuration, restarts, stops, leftovers, environment, output, health, a deferred definition; killing what is left in a cgroup, with a folder standing in for the cgroup |
 | `logger_tests` | 13 | Levels, files, rotation, journald prefixes |
 | `network_manager_tests` | 35 | Routing, identities, status and events |
 | `gpu_monitor_tests` | 27 | NVML stand-in: sampling, process lists, stuck calls |
